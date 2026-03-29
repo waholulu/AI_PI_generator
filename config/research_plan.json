@@ -1,0 +1,80 @@
+{
+  "project_title": "Assessing the Impact of Zoning Policy Changes on Urban Compactness via Causal Inference and Satellite Time-Series",
+  "study_type": "Quantitative Causal Inference",
+  "topic_screening": {
+    "brief_rationale": "Employs synthetic control methods on longitudinal land-cover data to evaluate the effectiveness of urban density policies in metropolitan corridors.",
+    "publishability": "Computers, Environment and Urban Systems; Landscape and Urban Planning; Journal of the American Planning Association"
+  },
+  "research_questions": [
+    "How do specific zoning policy changes, such as urban growth boundaries and transit-oriented development upzoning, affect urban compactness in metropolitan statistical areas?",
+    "To what extent do these zoning policies reduce spatial fragmentation and increase built-up area density over a 20-year period?"
+  ],
+  "hypotheses": [
+    "Implementation of urban growth boundaries and upzoning policies significantly increases the urban compactness index compared to a synthetic counterfactual.",
+    "Zoning policy changes lead to a measurable decrease in the spatial fragmentation index and an increase in built-up area density in treated MSAs."
+  ],
+  "unit_of_analysis": "Metropolitan statistical areas (MSAs) and 1km x 1km grid cells over a 20-year annual panel.",
+  "outcomes": [
+    {
+      "name": "Urban compactness index",
+      "type": "continuous"
+    },
+    {
+      "name": "Built-up area density",
+      "type": "continuous"
+    },
+    {
+      "name": "Spatial fragmentation index",
+      "type": "continuous"
+    }
+  ],
+  "exposures": [
+    {
+      "name": "Zoning policy changes",
+      "definition": "Binary treatment indicator for the implementation year of specific zoning policy changes (e.g., urban growth boundaries, transit-oriented development upzoning)",
+      "type": "binary"
+    }
+  ],
+  "keywords": [
+    "Zoning Policy",
+    "Urban Compactness",
+    "Causal Inference",
+    "Synthetic Control Method",
+    "Satellite Time-Series",
+    "Urban Sprawl"
+  ],
+  "data_sources": [
+    {
+      "name": "National Land Cover Database (NLCD) / ESA WorldCover",
+      "accessibility": "Freely available via public API and bulk download without paywalls, providing longitudinal satellite-derived land cover classifications."
+    },
+    {
+      "name": "National Zoning and Land Use Database",
+      "accessibility": "Publicly accessible repository of municipal zoning records and enactment dates, freely available for academic use."
+    },
+    {
+      "name": "US Census Bureau API",
+      "accessibility": "Free, public API providing demographic and economic covariates at the MSA and tract levels without manual approval."
+    }
+  ],
+  "methodology": {
+    "estimand_and_strategy": "Average Treatment Effect on the Treated (ATT). The strategy relies on the Synthetic Control Method (SCM) to construct a counterfactual for treated cities using a donor pool of untreated cities, assuming parallel trajectories in the pre-treatment period conditional on matched covariates.",
+    "model_family": "Synthetic Control Method (SCM) and Generalized Synthetic Control",
+    "robustness_checks": [
+      "In-space placebo tests assigning treatment to untreated units in the donor pool",
+      "In-time placebo tests shifting the treatment year backwards to check for anticipation effects",
+      "Leave-one-out sensitivity analysis iteratively dropping cities from the donor pool",
+      "Alternative compactness metrics such as Moran's I versus simple density",
+      "Varying the pre-treatment matching window length",
+      "Controlling for time-varying covariates like local GDP and population growth",
+      "Alternative estimators including Staggered Difference-in-Differences (Callaway & Sant'Anna)"
+    ],
+    "expected_tables_figures": [
+      "Treatment vs. Synthetic Control trend lines pre and post-treatment",
+      "Gap plot showing the difference between treated and synthetic control over time",
+      "Placebo distribution plot with permutation test p-values",
+      "Table of pre-treatment covariate balance between treated and synthetic units",
+      "Map of the study area showing treated units and donor pool weights"
+    ]
+  }
+}
