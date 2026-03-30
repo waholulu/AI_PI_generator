@@ -4,6 +4,11 @@ import os
 from datetime import datetime
 from typing import List, Dict, Any
 
+from agents import settings
+from agents.logging_config import get_logger
+
+logger = get_logger(__name__)
+
 
 class MemoryRetriever:
     """
@@ -13,8 +18,8 @@ class MemoryRetriever:
     so that the Ideation Agent can avoid repeating clearly失败的方向。
     """
 
-    def __init__(self, csv_path: str = "memory/idea_memory.csv"):
-        self.csv_path = csv_path
+    def __init__(self, csv_path: str | None = None):
+        self.csv_path = csv_path or settings.idea_memory_csv_path()
         self._ensure_dir()
 
     def _ensure_dir(self) -> None:

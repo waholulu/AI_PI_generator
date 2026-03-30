@@ -4,12 +4,16 @@ from typing import Any, Dict, List
 
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from agents import settings
+from agents.logging_config import get_logger
 from agents.openalex_utils import (
     configure_openalex,
     download_pdf,
     extract_work_metadata,
 )
 from agents.keyword_planner import KeywordPlanner
+
+logger = get_logger(__name__)
 
 try:
     from pyalex import Works
@@ -20,21 +24,19 @@ except ImportError:  # pragma: no cover - exercised in dependency-light test env
 class LiteratureHarvester:
     def __init__(self):
         configure_openalex()
-        self.output_dir = "data/literature"
-        self.cards_dir = os.path.join(self.output_dir, "cards")
-        self.pdfs_dir = os.path.join(self.output_dir, "pdfs")
-        os.makedirs(self.cards_dir, exist_ok=True)
-        os.makedirs(self.pdfs_dir, exist_ok=True)
-        self.references_bib = "output/references.bib"
-        self.index_json = os.path.join(self.output_dir, "index.json")
+        self.output_dir = str(settings.literature_dir())
+        self.cards_dir = str(settings.literature_cards_dir())
+        self.pdfs_dir = str(settings.literature_pdfs_dir())
+        self.references_bib = settings.references_bib_path()
+        self.index_json = settings.literature_index_path()
         self._planner = KeywordPlanner()
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=30))
     def search_openalex(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
         """Searches OpenAlex for works matching the query."""
-        print(f"Querying OpenAlex for: {query}")
+        logger.info("Querying OpenAlex for: %s", query)
         if Works is None:
-            print("OpenAlex search skipped: pyalex is not installed.")
+            logger.warning("OpenAlex search skipped: pyalex is not installed.")
             return []
         try:
             works = (
@@ -51,7 +53,7 @@ class LiteratureHarvester:
                 results.append(metadata)
             return results
         except Exception as e:
-            print(f"OpenAlex API Error: {e}")
+            logger.error("OpenAlex API Error: %s", e)
             return []
 
     def _multi_search(
@@ -62,9 +64,6 @@ class LiteratureHarvester:
         """
         Run search_openalex for each query in *query_pool*, deduplicate by
         openalex_id, and return up to *final_limit* papers.
-
-        Returns (papers, queries_used) where queries_used lists the queries
-        that actually returned at least one result.
         """
         per_query_limit = int(os.getenv("OPENALEX_QUERY_REWRITE_PER_QUERY_LIMIT", "5"))
         seen_ids: set[str] = set()
@@ -75,7 +74,7 @@ class LiteratureHarvester:
             try:
                 results = self.search_openalex(query, limit=per_query_limit)
             except Exception as exc:
-                print(f"[LiteratureHarvester] Query '{query}' failed: {exc}")
+                logger.warning("Query '%s' failed: %s", query, exc)
                 continue
 
             if not results:
@@ -96,7 +95,6 @@ class LiteratureHarvester:
                 merged.append(paper)
 
             if len(merged) >= final_limit * 3:
-                # Collect a broad pool; we'll slice to final_limit later
                 break
 
         return merged[:final_limit], queries_used
@@ -158,29 +156,26 @@ class LiteratureHarvester:
 
     def run(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """Executes the literature harvesting."""
-        print("--- Module 2: Literature Harvester ---")
+        logger.info("--- Module 2: Literature Harvester ---")
 
-        plan_path = state.get("current_plan_path", "config/research_plan.json")
-        context_path = state.get("research_context_path", "output/research_context.json")
+        plan_path = state.get("current_plan_path", settings.research_plan_path())
+        context_path = state.get("research_context_path", settings.research_context_path())
         try:
             with open(plan_path, "r", encoding="utf-8") as f:
                 plan = json.load(f)
         except Exception as e:
-            print(f"Failed to load plan: {e}")
+            logger.error("Failed to load plan: %s", e)
             return state
 
-        # Build context from shared research_context.json when available
         context: Dict[str, Any] = {}
         if os.path.exists(context_path):
             try:
                 with open(context_path, "r", encoding="utf-8") as f:
                     context = json.load(f)
             except Exception as e:
-                print(f"Warning: Failed to load research context: {e}")
+                logger.warning("Failed to load research context: %s", e)
 
-        # --- Build an extra-context string for the planner ---------------
         extra_parts: List[str] = []
-
         selected = context.get("selected_topic", {}) if isinstance(context, dict) else {}
         title = selected.get("title")
         if isinstance(title, str) and title:
@@ -198,8 +193,6 @@ class LiteratureHarvester:
 
         extra_context = "; ".join(extra_parts)
 
-        # --- Build domain string for planner -----------------------------
-        # Prefer the selected topic title; fall back to plan keywords / domain
         domain_for_planner = (
             title
             or " ".join(
@@ -209,18 +202,16 @@ class LiteratureHarvester:
             or "geoai"
         )
 
-        # --- Use KeywordPlanner to get a multi-query pool ----------------
         final_limit = int(os.getenv("LITERATURE_FINAL_LIMIT", "3"))
         keyword_plan = self._planner.plan(domain_for_planner, extra_context=extra_context)
         query_pool: List[str] = keyword_plan.get("query_pool") or [domain_for_planner]
         used_fallback: bool = keyword_plan.get("used_fallback", True)
 
-        print(
-            f"[LiteratureHarvester] Query pool ({len(query_pool)} queries, "
-            f"fallback={used_fallback}): {query_pool}"
+        logger.info(
+            "Query pool (%d queries, fallback=%s): %s",
+            len(query_pool), used_fallback, query_pool,
         )
 
-        # --- Multi-query search + dedup + limit --------------------------
         papers, queries_used = self._multi_search(query_pool, final_limit=final_limit)
 
         inventory = []
@@ -231,13 +222,12 @@ class LiteratureHarvester:
         with open(self.index_json, "w", encoding="utf-8") as f:
             json.dump(inventory, f, indent=2, ensure_ascii=False)
 
-        # Optionally write a compact literature summary back into shared context
         if os.path.exists(context_path):
             try:
                 with open(context_path, "r", encoding="utf-8") as f:
                     ctx = json.load(f)
             except Exception as e:
-                print(f"Warning: Failed to reload research context for literature summary: {e}")
+                logger.warning("Failed to reload research context for literature summary: %s", e)
                 ctx = {}
 
             if isinstance(ctx, dict):
@@ -253,7 +243,7 @@ class LiteratureHarvester:
                     with open(context_path, "w", encoding="utf-8") as f:
                         json.dump(ctx, f, indent=2, ensure_ascii=False)
                 except Exception as e:
-                    print(f"Warning: Failed to write literature summary into research context: {e}")
+                    logger.warning("Failed to write literature summary into research context: %s", e)
 
         with open(self.references_bib, "w", encoding="utf-8") as f:
             f.write("% Generated BibTeX\n")
@@ -269,7 +259,7 @@ class LiteratureHarvester:
                     f"}}\n\n"
                 )
 
-        print(f"Literature harvested. {len(inventory)} items saved.")
+        logger.info("Literature harvested. %d items saved.", len(inventory))
         return {
             "execution_status": "drafting",
             "literature_inventory_path": self.index_json,

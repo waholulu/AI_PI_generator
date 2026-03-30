@@ -1,8 +1,12 @@
 from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
-from langgraph.checkpoint.sqlite import SqliteSaver
 import sqlite3
-import os
+
+from agents import settings
+from agents.logging_config import get_logger
+
+logger = get_logger(__name__)
+
 
 class ResearchState(TypedDict):
     """
@@ -19,6 +23,19 @@ class ResearchState(TypedDict):
     research_context_path: str
     execution_status: str
 
+
+def _build_checkpointer():
+    """Build a LangGraph checkpointer based on DATABASE_URL env var."""
+    if settings.is_postgres():
+        from langgraph.checkpoint.postgres import PostgresSaver
+        return PostgresSaver.from_conn_string(settings.get_db_url())
+    else:
+        from langgraph.checkpoint.sqlite import SqliteSaver
+        db_path = settings.checkpoints_db_path()
+        conn = sqlite3.connect(db_path, check_same_thread=False)
+        return SqliteSaver(conn)
+
+
 def build_orchestrator():
     """Builds and compiles the LangGraph workflow."""
     from agents.field_scanner_agent import field_scanner_node
@@ -28,14 +45,14 @@ def build_orchestrator():
     from agents.data_fetcher_agent import data_fetcher_node
 
     builder = StateGraph(ResearchState)
-    
+
     # Add actual nodes
     builder.add_node("field_scanner", field_scanner_node)
     builder.add_node("ideation", ideation_node)
     builder.add_node("literature", literature_node)
     builder.add_node("drafter", drafter_node)
     builder.add_node("data_fetcher", data_fetcher_node)
-    
+
     # Define edges (linear default path)
     builder.add_edge(START, "field_scanner")
     builder.add_edge("field_scanner", "ideation")
@@ -43,16 +60,14 @@ def build_orchestrator():
     builder.add_edge("literature", "drafter")
     builder.add_edge("drafter", "data_fetcher")
     builder.add_edge("data_fetcher", END)
-    
-    # Establish SQLite Checkpointer
-    os.makedirs("output", exist_ok=True)
-    conn = sqlite3.connect("output/checkpoints.sqlite", check_same_thread=False)
-    memory = SqliteSaver(conn)
-    
+
+    # Establish Checkpointer
+    memory = _build_checkpointer()
+
     # Compile graph with HITL after ideation
     graph = builder.compile(checkpointer=memory, interrupt_before=["literature"])
     return graph
 
 if __name__ == "__main__":
     graph = build_orchestrator()
-    print("Orchestrator graph wired and compiled successfully.")
+    logger.info("Orchestrator graph wired and compiled successfully.")

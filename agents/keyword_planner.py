@@ -15,6 +15,10 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
+from agents.logging_config import get_logger
+
+logger = get_logger(__name__)
+
 try:
     from langchain_google_genai import ChatGoogleGenerativeAI
 except ImportError:  # pragma: no cover
@@ -102,7 +106,7 @@ class KeywordPlanner:
             try:
                 self._llm = ChatGoogleGenerativeAI(model=model_name, temperature=0.3)
             except Exception as exc:
-                print(f"[KeywordPlanner] Failed to initialise LLM ({exc}); will use fallback.")
+                logger.warning("Failed to initialise LLM (%s); will use fallback.", exc)
 
     # ------------------------------------------------------------------
     # Public API
@@ -127,7 +131,7 @@ class KeywordPlanner:
         try:
             return self._call_llm(domain_input, extra_context)
         except Exception as exc:
-            print(f"[KeywordPlanner] LLM call failed ({exc}); using fallback.")
+            logger.warning("LLM call failed (%s); using fallback.", exc)
             return self._fallback(domain_input, reason=str(exc))
 
     # ------------------------------------------------------------------
@@ -165,7 +169,7 @@ class KeywordPlanner:
     def _fallback(self, domain_input: str, reason: str = "") -> Dict[str, Any]:
         """Return a single-element query pool using the raw domain_input."""
         if reason:
-            print(f"[KeywordPlanner] Fallback activated: {reason}")
+            logger.info("Fallback activated: %s", reason)
         return {
             "query_pool": [domain_input],
             "topics": [{"label": domain_input, "queries": [domain_input]}],

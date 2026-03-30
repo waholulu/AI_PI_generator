@@ -1,0 +1,6 @@
+# Nixpacks config - used if Railway falls back from Dockerfile
+[phases.setup]
+nixPkgs = ["python310"]
+
+[start]
+cmd = "uvicorn api.server:app --host 0.0.0.0 --port $PORT"
