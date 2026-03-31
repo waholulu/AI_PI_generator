@@ -11,6 +11,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.6.10 /uv /usr/local/bin/uv
 # Install dependencies first (layer cache)
 # Copy lockfile so the install is reproducible and fast (no resolution step)
 COPY pyproject.toml uv.lock ./
+ENV UV_PROJECT_ENVIRONMENT=/app/.venv
 RUN uv sync --no-dev --frozen
 
 # Copy application source
@@ -23,10 +24,9 @@ COPY main.py ./
 # Expose FastAPI port
 EXPOSE 8000
 
-# Health check
+# Health check — use the venv Python so uvicorn import isn't needed
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+  CMD /app/.venv/bin/python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
 
-# Use the venv directly — avoids uv run overhead and re-sync checks at startup
 # $PORT is injected by Railway; fallback to 8000 for local Docker runs
 CMD ["sh", "-c", "/app/.venv/bin/uvicorn api.server:app --host 0.0.0.0 --port ${PORT:-8000}"]
