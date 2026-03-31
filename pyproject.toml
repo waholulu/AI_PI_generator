@@ -3,6 +3,7 @@ name = "ai-pi-generator"
 version = "0.1.0"
 description = "Auto-PI Research Scaffold"
 authors = [{name = "AutoPI", email = "auto@pi.org"}]
+requires-python = ">=3.10,<3.11"
 dependencies = [
     "arxiv>=2.4.0",
     "fastapi>=0.115.0",
@@ -29,7 +30,6 @@ postgres = [
     "langgraph-checkpoint-postgres>=2.0.0",
     "psycopg2-binary>=2.9.10",
 ]
-requires-python = ">=3.10,<3.11"
 
 [tool.pytest.ini_options]
 markers = [
