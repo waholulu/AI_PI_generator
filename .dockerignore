@@ -14,7 +14,7 @@ memory/
 *.sqlite
 *.db
 tests/
-ui/
+ui/app.py
 *.md
 !README.md
 .claude/
