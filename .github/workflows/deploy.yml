@@ -16,58 +16,60 @@ jobs:
 
       - name: Deploy to Railway
         id: deploy
-        run: railway up --detach
+        continue-on-error: true
+        run: |
+          railway up 2>&1 | tee /tmp/railway_deploy.log
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
 
-      - name: Wait for deployment to stabilize
-        run: sleep 30
-
       - name: Health check
         id: healthcheck
-        if: ${{ vars.AUTOPI_API_URL != '' }}
+        if: steps.deploy.outcome == 'success' && vars.AUTOPI_API_URL != ''
         continue-on-error: true
         run: |
+          echo "Waiting 20s for deployment to stabilize..."
+          sleep 20
           URL="${{ vars.AUTOPI_API_URL }}/health"
-          echo "Checking $URL ..."
           for i in 1 2 3 4 5; do
             HTTP_CODE=$(curl -s -o /tmp/health_response.txt -w "%{http_code}" "$URL" --max-time 10 2>/dev/null || echo "000")
             echo "Attempt $i: HTTP $HTTP_CODE"
             if [ "$HTTP_CODE" = "200" ]; then
               echo "healthy=true" >> "$GITHUB_OUTPUT"
-              cat /tmp/health_response.txt
               exit 0
             fi
             sleep 10
           done
           echo "healthy=false" >> "$GITHUB_OUTPUT"
-          echo "::error::Health check failed after 5 attempts"
-          echo "Last response (HTTP $HTTP_CODE):"
-          cat /tmp/health_response.txt 2>/dev/null || echo "(no response body)"
           exit 1
 
-      - name: Capture Railway logs on failure
-        id: capture_logs
-        if: steps.healthcheck.outcome == 'failure'
-        continue-on-error: true
-        run: |
-          echo "## Railway Deploy Logs" > /tmp/error_report.md
-          echo '```' >> /tmp/error_report.md
-          railway logs --tail 80 2>&1 | tee -a /tmp/error_report.md || echo "(failed to fetch railway logs)"
-          echo '```' >> /tmp/error_report.md
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-
       - name: Create GitHub Issue on failure
-        if: steps.healthcheck.outcome == 'failure'
+        if: steps.deploy.outcome == 'failure' || steps.healthcheck.outcome == 'failure'
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
-            let logs = '(no logs captured)';
-            try { logs = fs.readFileSync('/tmp/error_report.md', 'utf8'); } catch {}
 
-            // Close previous auto-created deploy issues
+            // Gather error details
+            let deployLog = '(no deploy log)';
+            try { deployLog = fs.readFileSync('/tmp/railway_deploy.log', 'utf8'); } catch {}
+            let healthResp = '';
+            try { healthResp = fs.readFileSync('/tmp/health_response.txt', 'utf8'); } catch {}
+
+            const deployFailed = '${{ steps.deploy.outcome }}' === 'failure';
+            const healthFailed = '${{ steps.healthcheck.outcome }}' === 'failure';
+
+            let body = `**Commit:** ${context.sha}\n`;
+            body += `**Workflow:** ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}\n\n`;
+
+            if (deployFailed) {
+              body += `## Build / Deploy Error\n\`\`\`\n${deployLog.slice(-3000)}\n\`\`\`\n`;
+            }
+            if (healthFailed) {
+              body += `## Health Check Failed\nResponse: ${healthResp || '(no response)'}\n`;
+            }
+
+            // Close previous deploy-error issues
             const existing = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -84,16 +86,10 @@ jobs:
               });
             }
 
-            // Create new issue
             await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
               title: `[Auto] Railway deploy failed — ${new Date().toISOString().slice(0,16)}`,
-              body: [
-                `Commit: ${context.sha}`,
-                `Workflow: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
-                '',
-                logs,
-              ].join('\n'),
+              body,
               labels: ['deploy-error'],
             });
