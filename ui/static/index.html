@@ -779,8 +779,8 @@ function renderOutputsTab(el, run) {
           <div class="output-card-name" title="${escHtml(f.filename)}">${escHtml(shortName)}</div>
           <div class="output-card-size">${fmtBytes(f.size_bytes)}</div>
           <div style="display:flex;gap:12px;margin-top:4px">
-            ${viewable ? `<a href="#" onclick="openFileViewer('${run.run_id}','${escHtml(f.filename)}');return false" style="font-size:.8rem;color:#a78bfa;text-decoration:none;cursor:pointer">◎ 查看</a>` : ''}
-            <a href="/runs/${run.run_id}/outputs/${encodeURIComponent(f.filename)}" download="${escHtml(shortName)}" style="font-size:.8rem;color:#a78bfa;text-decoration:none">
+            ${viewable ? `<a href="#" onclick="openFileViewer('${escAttr(run.run_id)}','${escAttr(f.filename)}');return false" style="font-size:.8rem;color:#a78bfa;text-decoration:none;cursor:pointer">◎ 查看</a>` : ''}
+            <a href="/runs/${run.run_id}/outputs/${encodePath(f.filename)}" download="${escHtml(shortName)}" style="font-size:.8rem;color:#a78bfa;text-decoration:none">
               ↓ 下载
             </a>
           </div>
@@ -824,6 +824,13 @@ function fmtBytes(b) {
   if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
   return (b/1048576).toFixed(1) + ' MB';
 }
+function encodePath(p) {
+  return p.split('/').map(encodeURIComponent).join('/');
+}
+function escAttr(s) {
+  // Escape for use inside single-quoted HTML attribute (JS string literal context)
+  return String(s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/</g,'\\x3c');
+}
 function escHtml(s) {
   return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
@@ -848,12 +855,12 @@ async function openFileViewer(runId, filename) {
 
   title.textContent = filename;
   body.innerHTML = '<div style="color:#64748b">加载中...</div>';
-  dl.href = `/runs/${runId}/outputs/${encodeURIComponent(filename)}`;
+  dl.href = `/runs/${runId}/outputs/${encodePath(filename)}`;
   dl.download = filename.split('/').pop();
   modal.style.display = 'flex';
 
   try {
-    const res = await fetch(`/runs/${runId}/outputs/${encodeURIComponent(filename)}`);
+    const res = await fetch(`/runs/${runId}/outputs/${encodePath(filename)}`);
     if (!res.ok) throw new Error(res.statusText);
     let text = await res.text();
     const ext = getExt(filename);
