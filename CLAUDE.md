@@ -25,91 +25,123 @@ API server (local): `uvicorn api.server:app --reload`
 START → field_scanner → ideation → [HITL checkpoint] → literature → drafter → data_fetcher → END
 ```
 
-- **Field Scanner** (`agents/field_scanner_agent.py`) — Scans OpenAlex for landscape analysis, extracts high-traction concepts
-- **Ideation** (`agents/ideation_agent.py`) — Generates 30 candidates → screens to 10 → ranks top 3 → enriches → produces `research_plan.json`
-- **Literature** (`agents/literature_agent.py`) — Multi-query OpenAlex search, dedup, evidence cards, BibTeX
-- **Drafter** (`agents/drafter_agent.py`) — Synthesizes academic draft from plan + literature via Gemini Pro
-- **Data Fetcher** (`agents/data_fetcher_agent.py`) — Collects/simulates public datasets (currently mock)
+- **Field Scanner** (`agents/field_scanner_agent.py`) — Scans OpenAlex for landscape analysis; uses KeywordPlanner to reformulate domain into multi-query searches; extracts high-traction concepts, citation counts, year trends. Outputs `output/field_scan.json`. Fails gracefully if OpenAlex is unavailable.
+- **Ideation** (`agents/ideation_agent.py`) — 5-step pipeline: generate 30 candidates (Gemini Fast) → gate-screen to 10 (impact/novelty/publishability) → rank top 3 (Gemini Pro) → enrich with full specs → produce `research_plan.json`. Uses MemoryRetriever to avoid repeating failed directions. Outputs: `topic_screening.json`, `research_plan.json`, `research_context.json`, `topic_ranking.csv`, `ideas_graveyard.json`, JSONL archive.
+- **Literature** (`agents/literature_agent.py`) — Multi-query OpenAlex search, dedup by openalex_id/DOI, generates evidence cards (metadata, abstract, citations, open-access info), attempts PDF download, generates BibTeX. Outputs: `data/literature/cards/*.json`, `data/literature/index.json`, `output/references.bib`.
+- **Drafter** (`agents/drafter_agent.py`) — Reads research plan + evidence cards, synthesizes structured markdown draft via Gemini Pro. Falls back to placeholder if LLM fails. Outputs: `output/Draft_v1.md`.
+- **Data Fetcher** (`agents/data_fetcher_agent.py`) — Mock implementation; extracts data sources from research plan, creates manifest with placeholder datasets, generates `run_index.json` linking all artifacts. Outputs: `data/raw/manifest.json`.
 
 ### Shared Utilities
 
-- **KeywordPlanner** (`agents/keyword_planner.py`) — LLM-based query reformulation for OpenAlex searches
-- **MemoryRetriever** (`agents/memory_retriever.py`) — CSV-based persistent idea memory to avoid repeating failed directions
-- **Settings** (`agents/settings.py`) — Centralized path configuration; all paths relative to `AUTOPI_DATA_ROOT`
-- **Logging** (`agents/logging_config.py`) — Structured JSON logging; use `get_logger(__name__)` in all agents
+- **KeywordPlanner** (`agents/keyword_planner.py`) — LLM-based query reformulation into structured OpenAlex search queries; falls back to raw domain input if LLM unavailable.
+- **MemoryRetriever** (`agents/memory_retriever.py`) — CSV append-only log + JSONL archive for tracking past candidates/rejections; supports domain-based retrieval to avoid repeating failed directions. Files: `memory/idea_memory.csv`, `memory/enriched_top_candidates.jsonl`.
+- **OpenAlex Utils** (`agents/openalex_utils.py`) — Work metadata extraction, abstract reconstruction, PDF download helpers.
+- **Settings** (`agents/settings.py`) — Centralized path configuration; all paths relative to `AUTOPI_DATA_ROOT`.
+- **Logging** (`agents/logging_config.py`) — Structured JSON logging with `run_id`/`node`/`step` context fields; use `get_logger(__name__)` in all agents.
 
 ### Orchestrator (`agents/orchestrator.py`)
 
-- State (`ResearchState`) passes data between agents via **file path references**, not inline data
-- Checkpointer: SQLite locally, PostgreSQL in cloud (auto-selected based on `DATABASE_URL`)
-- HITL interrupt before the `literature` node
+- State (`ResearchState`) passes data between agents via **file path references**, not inline data.
+- Checkpointer: SQLite locally (`output/checkpoints.sqlite`), PostgreSQL in cloud (auto-selected based on `DATABASE_URL`).
+- HITL interrupt before the `literature` node.
 
 ## Key Directories
 
 ```
-agents/     Core agent implementations
+agents/     Core agent implementations + shared utilities
 api/        FastAPI REST API (server.py, run_manager.py, log_store.py, models.py)
 config/     Research plan template (research_plan.json)
-data/       Generated artifacts: literature cards, raw data
-memory/     Persistent idea memory (CSV + JSONL)
-output/     Final outputs: field scan, drafts, BibTeX, checkpoints
-prompts/    System prompts for LLM calls
+data/       Generated artifacts
+  literature/cards/   Per-paper evidence card JSON files
+  literature/pdfs/    Downloaded PDF files
+  raw/                Dataset manifests
+memory/     Persistent idea memory (idea_memory.csv + enriched_top_candidates.jsonl)
+output/     Final outputs: field_scan.json, Draft_v1.md, references.bib, run_index.json
+prompts/    System prompts for LLM calls (academic_drafter.txt)
 scripts/    CLI wrappers for cloud operations
-tests/      Pytest test suite
-ui/         Streamlit monitoring interface
+tests/      Pytest test suite (23 files)
+ui/         Streamlit monitoring interface (app.py)
 ```
 
 ## Tech Stack
 
 - **Python 3.10** (strictly pinned)
-- **LangGraph** — Agent orchestration, state graph, checkpointing
-- **LangChain** — LLM abstraction layer
-- **FastAPI + uvicorn** — REST API for cloud management
+- **LangGraph 1.0.10+** — Agent orchestration, state graph, checkpointing, HITL interrupts
+- **LangChain** — LLM abstraction layer (Anthropic + Google adapters)
+- **FastAPI 0.115+ + uvicorn** — REST API for cloud management
 - **Google Gemini** — Primary LLM (`gemini-2.0-flash-lite` for fast tasks, `gemini-2.5-pro` for complex tasks)
 - **Anthropic Claude** — Fallback for data fetcher
-- **pyalex** — OpenAlex API client
-- **Pydantic** — Data validation schemas throughout
+- **pyalex 0.21+** — OpenAlex API client
+- **Pydantic** — Strict data validation schemas throughout (LightCandidateTopic, TopicScore, QuantitativeSpecs, ResearchPlanSchema, KeywordPlan, etc.)
 - **SQLite/PostgreSQL** — LangGraph state persistence (SQLite local, Postgres cloud)
+- **Streamlit 1.40+** — Web monitoring UI
 
 ## Environment Variables
 
 See `.env.example` for the full list. Key variables:
 
-| Variable | Purpose |
-|----------|---------|
-| `GEMINI_API_KEY` | Google AI API key (required) |
-| `GEMINI_FAST_MODEL` | Fast model name (default: `gemini-2.0-flash-lite`) |
-| `GEMINI_PRO_MODEL` | Pro model name (default: `gemini-2.5-pro`) |
-| `OPENALEX_API_KEY` | OpenAlex API key |
-| `OPENALEX_EMAIL` | OpenAlex polite pool email |
-| `OPENALEX_QUERY_REWRITE_ENABLED` | Toggle LLM query reformulation |
-| `LITERATURE_FINAL_LIMIT` | Papers kept after dedup (default: 3) |
-| `AUTOPI_DATA_ROOT` | Root dir for all outputs (default: `.`; set to `/app/storage` in cloud) |
-| `DATABASE_URL` | PostgreSQL URL for cloud checkpointing; omit for SQLite |
-| `LOG_LEVEL` | Logging level (default: `INFO`) |
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `GEMINI_API_KEY` | Google AI API key (required; also `GOOGLE_API_KEY`) | — |
+| `GEMINI_FAST_MODEL` | Fast model for screening/generation | `gemini-2.0-flash-lite` |
+| `GEMINI_PRO_MODEL` | Pro model for ranking/drafting | `gemini-2.5-pro` |
+| `OPENALEX_API_KEY` | OpenAlex API key | — |
+| `OPENALEX_EMAIL` | OpenAlex polite-pool email | — |
+| `OPENALEX_QUERY_REWRITE_ENABLED` | Toggle LLM query reformulation | `true` |
+| `OPENALEX_QUERY_REWRITE_MAX_QUERIES` | Max queries per pool | `10` |
+| `OPENALEX_QUERY_REWRITE_PER_QUERY_LIMIT` | Results per query | `20` |
+| `OPENALEX_QUERY_REWRITE_MODEL` | Model override for query rewrite | GEMINI_FAST_MODEL |
+| `MIN_CANDIDATE_TOPICS` | Candidates to generate in ideation | `30` |
+| `INITIAL_SCREEN_TOPN` | Finalists after initial screening | `10` |
+| `FINAL_TOP_N` | Top candidates for enrichment | `3` |
+| `SCORING_MODEL` | Model for screening: `"pro"` or `"fast"` | `pro` |
+| `LITERATURE_FINAL_LIMIT` | Papers kept after dedup | `3` |
+| `AUTOPI_DATA_ROOT` | Root dir for all outputs | `.` (local) / `/app/storage` (cloud) |
+| `DATABASE_URL` | PostgreSQL URL for cloud checkpointing; omit for SQLite | — |
+| `LOG_LEVEL` | Logging level | `INFO` |
+| `AUTOPI_API_URL` | Cloud API endpoint for remote scripts | `http://localhost:8000` |
 
 ## Testing
 
 ```bash
-pytest                                    # All tests (excludes live API)
-pytest tests/ -m "not live_openalex and not live_llm"  # Mock tests only
-pytest tests/test_field_scan_live.py -v   # Live OpenAlex test
+pytest                                                        # All tests (excludes live API)
+pytest tests/ -m "not live_openalex and not live_llm"        # Mock tests only
+pytest tests/test_field_scan_live.py -v                      # Live OpenAlex test
 ```
 
 **Markers** (defined in `pyproject.toml`):
 - `live_openalex` — Requires `OPENALEX_API_KEY` and `OPENALEX_EMAIL`
-- `live_llm` — Requires `GEMINI_API_KEY`
+- `live_llm` — Requires `GEMINI_API_KEY` / `GOOGLE_API_KEY`
+
+**Key test files:** `test_field_scanner.py`, `test_ideation.py`, `test_literature.py`, `test_drafter.py`, `test_orchestrator.py`, `e2e_simple_test.py`, `test_modules_1_and_2.py`.
+
+**Known flakiness:** `test_literature_live.py` may fail with empty OpenAlex results in some environments (not a code bug).
+
+## API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/runs` | Start new pipeline run (returns run_id) |
+| `GET` | `/runs` | List all runs |
+| `GET` | `/runs/{run_id}/status` | Get run status |
+| `GET` | `/runs/{run_id}/state` | Get LangGraph checkpoint state |
+| `GET` | `/runs/{run_id}/logs` | Stream logs (filterable by level) |
+| `POST` | `/runs/{run_id}/approve` | Approve HITL and resume pipeline |
+| `POST` | `/runs/{run_id}/reject` | Abort run |
+| `GET` | `/runs/{run_id}/outputs` | List generated files |
+| `GET` | `/runs/{run_id}/outputs/{filename}` | Download output file |
+| `GET` | `/health` | Health check |
 
 ## Conventions
 
-- **State passing**: Agents communicate via file paths in `ResearchState`, not by passing data inline
-- **Paths**: Always use `agents/settings.py` helpers (never hardcode `"output/"` etc.)
-- **Logging**: Use `get_logger(__name__)` from `agents/logging_config.py` — no `print()` in agents
-- **Pydantic schemas**: All data contracts (topics, plans, evidence cards) use strict Pydantic models
-- **Idea memory**: CSV append-only log + JSONL archive for enriched candidates
-- **Fallback/degradation**: Agents handle missing API keys gracefully; KeywordPlanner falls back to raw input
-- **UI strings**: `main.py` uses Chinese for CLI prompts and status messages
-- **Output files**: Generated artifacts go to `output/` and `data/`, both gitignored
+- **State passing**: Agents communicate via file paths in `ResearchState`, not by passing data inline.
+- **Paths**: Always use `agents/settings.py` helpers (never hardcode `"output/"` etc.).
+- **Logging**: Use `get_logger(__name__)` from `agents/logging_config.py` — no `print()` in agents.
+- **Pydantic schemas**: All data contracts (topics, plans, evidence cards) use strict Pydantic models.
+- **Idea memory**: CSV append-only log + JSONL archive for enriched candidates.
+- **Fallback/degradation**: Agents handle missing API keys gracefully; KeywordPlanner falls back to raw input.
+- **UI strings**: `main.py` uses Chinese for CLI prompts and status messages.
+- **Output files**: Generated artifacts go to `output/` and `data/`, both gitignored.
 
 ## Cloud Operations (via Claude Code)
 
@@ -204,7 +236,8 @@ docker run -p 8000:8000 \
 
 ## Known Limitations
 
-- **Data Fetcher**: Mock implementation only — no real public data adapters yet
-- **Drafter prompt**: `prompts/academic_drafter.txt` is a placeholder
-- **Literature sources**: Only OpenAlex (no arXiv, Crossref, or Unpaywall integration yet)
-- **Run isolation**: All runs share the same output directory (per `AUTOPI_DATA_ROOT`)
+- **Data Fetcher**: Mock implementation only — no real public data adapters.
+- **Drafter prompt**: `prompts/academic_drafter.txt` is a minimal placeholder.
+- **Literature sources**: Only OpenAlex (no arXiv, Crossref, or Unpaywall integration yet).
+- **Run isolation**: All runs share the same output directory (per `AUTOPI_DATA_ROOT`) — concurrent runs can overwrite each other's files.
+- **PDF download**: Attempted from OpenAlex candidate URLs but often unavailable.
