@@ -259,20 +259,30 @@ async def reject_hitl(run_id: str):
     return ApproveResponse(run_id=run_id, status="aborted", message="Run aborted by user.")
 
 
+_BINARY_EXTENSIONS = {".sqlite", ".parquet", ".pdf", ".db"}
+
+
 @app.get("/runs/{run_id}/outputs", response_model=OutputsResponse)
 async def list_outputs(run_id: str):
-    """List all output files for a run."""
+    """List all output files for a run (output/, config/, data/ directories)."""
     run = run_manager.get_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found.")
 
-    output_dir = settings.output_dir()
+    root = settings._root()
     files: list[OutputFile] = []
 
-    for path in output_dir.iterdir():
-        if path.is_file():
+    for scan_dir in [settings.output_dir(), settings.config_dir(), settings.data_dir()]:
+        if not scan_dir.exists():
+            continue
+        for path in sorted(scan_dir.rglob("*")):
+            if not path.is_file():
+                continue
+            if path.suffix.lower() in _BINARY_EXTENSIONS:
+                continue
+            rel = path.relative_to(root)
             files.append(OutputFile(
-                filename=path.name,
+                filename=str(rel),
                 path=str(path),
                 size_bytes=path.stat().st_size,
             ))
@@ -280,15 +290,21 @@ async def list_outputs(run_id: str):
     return OutputsResponse(run_id=run_id, files=files)
 
 
-@app.get("/runs/{run_id}/outputs/{filename}")
+@app.get("/runs/{run_id}/outputs/{filename:path}")
 async def download_output(run_id: str, filename: str):
-    """Download a specific output file."""
+    """Download or preview a specific output file."""
     run = run_manager.get_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found.")
 
-    file_path = settings.output_dir() / filename
+    root = settings._root()
+    file_path = (root / filename).resolve()
+
+    # Path traversal protection
+    if not file_path.is_relative_to(root.resolve()):
+        raise HTTPException(status_code=403, detail="Access denied.")
+
     if not file_path.exists() or not file_path.is_file():
         raise HTTPException(status_code=404, detail=f"File {filename!r} not found.")
 
-    return FileResponse(path=str(file_path), filename=filename)
+    return FileResponse(path=str(file_path), filename=file_path.name)

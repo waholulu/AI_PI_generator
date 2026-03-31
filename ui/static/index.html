@@ -273,6 +273,116 @@
     }
     .output-card a:hover { text-decoration: underline; }
 
+    /* Modal */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal {
+      background: #1a1d27;
+      border: 1px solid #2d3148;
+      border-radius: 12px;
+      width: 92vw;
+      max-width: 960px;
+      max-height: 88vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 20px;
+      border-bottom: 1px solid #2d3148;
+      flex-shrink: 0;
+    }
+    .modal-title {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: #a78bfa;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .modal-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+      font-size: 0.85rem;
+      line-height: 1.6;
+    }
+    .modal-body pre {
+      white-space: pre-wrap;
+      word-break: break-all;
+      font-family: "JetBrains Mono", "Fira Code", monospace;
+      font-size: 0.8rem;
+      line-height: 1.55;
+      color: #cbd5e1;
+    }
+    .modal-body .json-key    { color: #a78bfa; }
+    .modal-body .json-str    { color: #34d399; }
+    .modal-body .json-num    { color: #60a5fa; }
+    .modal-body .json-bool   { color: #fbbf24; }
+    .modal-body .json-null   { color: #94a3b8; }
+    .modal-body table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+    }
+    .modal-body th, .modal-body td {
+      padding: 7px 12px;
+      border: 1px solid #2d3148;
+      text-align: left;
+    }
+    .modal-body th { background: #252840; color: #a78bfa; font-weight: 600; }
+    .modal-body tr:nth-child(even) { background: #1a1d27; }
+    .modal-body tr:nth-child(odd)  { background: #15171f; }
+    .modal-body .md-content h1 { font-size: 1.4rem; font-weight: 700; margin: 16px 0 8px; color: #e2e8f0; }
+    .modal-body .md-content h2 { font-size: 1.15rem; font-weight: 600; margin: 14px 0 6px; color: #e2e8f0; }
+    .modal-body .md-content h3 { font-size: 1rem; font-weight: 600; margin: 12px 0 4px; color: #e2e8f0; }
+    .modal-body .md-content p  { margin: 6px 0; color: #cbd5e1; }
+    .modal-body .md-content ul, .modal-body .md-content ol { padding-left: 24px; margin: 6px 0; }
+    .modal-body .md-content li { margin: 3px 0; color: #cbd5e1; }
+    .modal-body .md-content code {
+      background: #252840;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: "JetBrains Mono", "Fira Code", monospace;
+      font-size: 0.82rem;
+    }
+    .modal-body .md-content pre {
+      background: #0a0c12;
+      border: 1px solid #2d3148;
+      border-radius: 8px;
+      padding: 12px;
+      margin: 8px 0;
+    }
+    .modal-body .md-content pre code { background: none; padding: 0; }
+    .modal-body .md-content blockquote {
+      border-left: 3px solid #7c3aed;
+      padding-left: 12px;
+      margin: 8px 0;
+      color: #94a3b8;
+    }
+    .modal-body .md-content strong { font-weight: 600; color: #e2e8f0; }
+    .modal-body .md-content em { font-style: italic; color: #cbd5e1; }
+    .modal-body .md-content a { color: #a78bfa; }
+    .modal-body .truncation-notice {
+      margin-top: 12px;
+      padding: 10px 14px;
+      background: #2a1f00;
+      border: 1px solid #78350f;
+      border-radius: 8px;
+      color: #fbbf24;
+      font-size: 0.82rem;
+    }
+
     /* Toast */
     #toast {
       position: fixed;
@@ -350,6 +460,19 @@
 </div>
 
 <div id="toast"></div>
+
+<div class="modal-overlay" id="fileModal" style="display:none" onclick="if(event.target===this)closeFileModal()">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title" id="modalTitle"></span>
+      <div style="display:flex;gap:8px;align-items:center">
+        <a id="modalDownload" class="btn btn-ghost" style="padding:5px 12px;font-size:.78rem;text-decoration:none" download>下载</a>
+        <button class="btn btn-ghost" onclick="closeFileModal()" style="padding:5px 10px;font-size:.9rem">✕</button>
+      </div>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+  </div>
+</div>
 
 <script>
 const PIPELINE_NODES = ['field_scanner','ideation','literature','drafter','data_fetcher'];
@@ -552,8 +675,11 @@ function renderStatusTab(el, run) {
     ${run.status === 'awaiting_approval' ? `
       <div class="status-card">
         <h3>查看研究计划</h3>
-        <p style="font-size:.85rem;color:#94a3b8;margin-bottom:12px">在"输出文件"标签页下载 <code>topic_screening.json</code> 查看完整构思结果。</p>
-        <button class="btn btn-ghost" onclick="switchTab('outputs')">查看输出文件 →</button>
+        <p style="font-size:.85rem;color:#94a3b8;margin-bottom:12px">在"输出文件"标签页查看 <code>topic_screening.json</code> 完整构思结果。</p>
+        <div style="display:flex;gap:10px">
+          <button class="btn btn-ghost" onclick="openFileViewer('${run.run_id}','output/topic_screening.json')">直接查看 →</button>
+          <button class="btn btn-ghost" onclick="switchTab('outputs')">全部文件</button>
+        </div>
       </div>
     ` : ''}
   `;
@@ -632,15 +758,36 @@ function renderOutputsTab(el, run) {
       el.innerHTML = '<div style="color:#64748b;font-size:.875rem">暂无输出文件</div>';
       return;
     }
-    el.innerHTML = `<div class="output-grid">${data.files.map(f => `
-      <div class="output-card">
-        <div class="output-card-name">${escHtml(f.filename)}</div>
-        <div class="output-card-size">${fmtBytes(f.size_bytes)}</div>
-        <a href="/runs/${run.run_id}/outputs/${encodeURIComponent(f.filename)}" download="${escHtml(f.filename)}">
-          ↓ 下载
-        </a>
-      </div>
-    `).join('')}</div>`;
+
+    // Group files by top-level directory
+    const groups = {};
+    const groupLabels = {output:'输出文件', config:'配置文件', data:'数据文件'};
+    data.files.forEach(f => {
+      const dir = f.filename.includes('/') ? f.filename.split('/')[0] : 'output';
+      if (!groups[dir]) groups[dir] = [];
+      groups[dir].push(f);
+    });
+
+    let html = '';
+    for (const [dir, files] of Object.entries(groups)) {
+      html += `<h3 style="font-size:.8rem;text-transform:uppercase;letter-spacing:.06em;color:#64748b;margin:16px 0 10px">${groupLabels[dir]||dir}</h3>`;
+      html += `<div class="output-grid">${files.map(f => {
+        const viewable = isViewable(f.filename);
+        const shortName = f.filename.includes('/') ? f.filename.split('/').slice(1).join('/') : f.filename;
+        return `
+        <div class="output-card">
+          <div class="output-card-name" title="${escHtml(f.filename)}">${escHtml(shortName)}</div>
+          <div class="output-card-size">${fmtBytes(f.size_bytes)}</div>
+          <div style="display:flex;gap:12px;margin-top:4px">
+            ${viewable ? `<a href="#" onclick="openFileViewer('${run.run_id}','${escHtml(f.filename)}');return false" style="font-size:.8rem;color:#a78bfa;text-decoration:none;cursor:pointer">◎ 查看</a>` : ''}
+            <a href="/runs/${run.run_id}/outputs/${encodeURIComponent(f.filename)}" download="${escHtml(shortName)}" style="font-size:.8rem;color:#a78bfa;text-decoration:none">
+              ↓ 下载
+            </a>
+          </div>
+        </div>`;
+      }).join('')}</div>`;
+    }
+    el.innerHTML = html;
   }).catch(() => {
     el.innerHTML = '<div style="color:#f87171;font-size:.875rem">加载失败</div>';
   });
@@ -679,6 +826,154 @@ function fmtBytes(b) {
 }
 function escHtml(s) {
   return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── File viewer modal ───────────────────────────────────────────────
+const VIEWABLE_EXT = ['.json','.md','.csv','.bib','.txt','.jsonl'];
+
+function isViewable(filename) {
+  const ext = '.' + filename.split('.').pop().toLowerCase();
+  return VIEWABLE_EXT.includes(ext);
+}
+
+function getExt(filename) {
+  return ('.' + filename.split('.').pop()).toLowerCase();
+}
+
+async function openFileViewer(runId, filename) {
+  const modal = document.getElementById('fileModal');
+  const title = document.getElementById('modalTitle');
+  const body = document.getElementById('modalBody');
+  const dl = document.getElementById('modalDownload');
+
+  title.textContent = filename;
+  body.innerHTML = '<div style="color:#64748b">加载中...</div>';
+  dl.href = `/runs/${runId}/outputs/${encodeURIComponent(filename)}`;
+  dl.download = filename.split('/').pop();
+  modal.style.display = 'flex';
+
+  try {
+    const res = await fetch(`/runs/${runId}/outputs/${encodeURIComponent(filename)}`);
+    if (!res.ok) throw new Error(res.statusText);
+    let text = await res.text();
+    const ext = getExt(filename);
+    let truncated = false;
+    if (text.length > 500000) {
+      text = text.substring(0, 500000);
+      truncated = true;
+    }
+
+    let html = '';
+    if (ext === '.json') html = renderJsonContent(text);
+    else if (ext === '.csv') html = renderCsvContent(text);
+    else if (ext === '.md') html = renderMarkdownContent(text);
+    else html = renderPlainContent(text);
+
+    if (truncated) {
+      html += '<div class="truncation-notice">文件过大，仅显示前 500KB 内容。请下载查看完整文件。</div>';
+    }
+    body.innerHTML = html;
+  } catch(e) {
+    body.innerHTML = `<div style="color:#f87171">加载失败: ${escHtml(e.message)}</div>`;
+  }
+}
+
+function closeFileModal() {
+  document.getElementById('fileModal').style.display = 'none';
+  document.getElementById('modalBody').innerHTML = '';
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeFileModal();
+});
+
+function renderJsonContent(text) {
+  try {
+    const obj = JSON.parse(text);
+    const pretty = JSON.stringify(obj, null, 2);
+    const highlighted = escHtml(pretty)
+      .replace(/"([^"]+)"(\s*:)/g, '<span class="json-key">"$1"</span>$2')
+      .replace(/:\s*"([^"]*?)"/g, ': <span class="json-str">"$1"</span>')
+      .replace(/:\s*(-?\d+\.?\d*)/g, ': <span class="json-num">$1</span>')
+      .replace(/:\s*(true|false)/g, ': <span class="json-bool">$1</span>')
+      .replace(/:\s*(null)/g, ': <span class="json-null">$1</span>');
+    return `<pre>${highlighted}</pre>`;
+  } catch {
+    return renderPlainContent(text);
+  }
+}
+
+function renderCsvContent(text) {
+  const lines = text.trim().split('\n').filter(l => l.trim());
+  if (!lines.length) return '<div style="color:#64748b">空文件</div>';
+
+  function parseCsvLine(line) {
+    const cells = [];
+    let cur = '', inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (c === '"') { inQ = !inQ; }
+      else if (c === ',' && !inQ) { cells.push(cur.trim()); cur = ''; }
+      else { cur += c; }
+    }
+    cells.push(cur.trim());
+    return cells;
+  }
+
+  const header = parseCsvLine(lines[0]);
+  let html = '<table><thead><tr>' + header.map(h => `<th>${escHtml(h)}</th>`).join('') + '</tr></thead><tbody>';
+  for (let i = 1; i < lines.length; i++) {
+    const cols = parseCsvLine(lines[i]);
+    html += '<tr>' + cols.map(c => `<td>${escHtml(c)}</td>`).join('') + '</tr>';
+  }
+  html += '</tbody></table>';
+  return html;
+}
+
+function renderMarkdownContent(text) {
+  let html = escHtml(text);
+
+  // Code blocks (``` ... ```)
+  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => `<pre><code>${code}</code></pre>`);
+
+  // Headings
+  html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+  html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+  html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+
+  // Bold and italic
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+
+  // Inline code
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+  // Blockquotes
+  html = html.replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>');
+
+  // Unordered lists
+  html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
+  html = html.replace(/(<li>[\s\S]*?<\/li>)/g, '<ul>$1</ul>');
+  html = html.replace(/<\/ul>\s*<ul>/g, '');
+
+  // Paragraphs - wrap remaining bare lines
+  html = html.replace(/\n\n/g, '</p><p>');
+  html = '<p>' + html + '</p>';
+  html = html.replace(/<p>\s*(<h[123]>)/g, '$1');
+  html = html.replace(/(<\/h[123]>)\s*<\/p>/g, '$1');
+  html = html.replace(/<p>\s*(<pre>)/g, '$1');
+  html = html.replace(/(<\/pre>)\s*<\/p>/g, '$1');
+  html = html.replace(/<p>\s*(<ul>)/g, '$1');
+  html = html.replace(/(<\/ul>)\s*<\/p>/g, '$1');
+  html = html.replace(/<p>\s*(<blockquote>)/g, '$1');
+  html = html.replace(/(<\/blockquote>)\s*<\/p>/g, '$1');
+  html = html.replace(/<p>\s*<\/p>/g, '');
+
+  return `<div class="md-content">${html}</div>`;
+}
+
+function renderPlainContent(text) {
+  return `<pre>${escHtml(text)}</pre>`;
 }
 
 // ── Init ─────────────────────────────────────────────────────────────────────
