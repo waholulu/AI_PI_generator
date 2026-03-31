@@ -9,10 +9,11 @@ WORKDIR /app
 COPY --from=ghcr.io/astral-sh/uv:0.6.10 /uv /usr/local/bin/uv
 
 # Install dependencies first (layer cache)
-# Copy lockfile so the install is reproducible and fast (no resolution step)
 COPY pyproject.toml uv.lock ./
 ENV UV_PROJECT_ENVIRONMENT=/app/.venv
-RUN uv sync --no-dev --frozen
+RUN uv sync --no-dev --frozen --no-install-project \
+ && ls -la /app/.venv/bin/uvicorn \
+ && echo "uvicorn found OK"
 
 # Copy application source
 COPY agents/ agents/
@@ -24,7 +25,7 @@ COPY main.py ./
 # Expose FastAPI port
 EXPOSE 8000
 
-# Health check — use the venv Python so uvicorn import isn't needed
+# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
   CMD /app/.venv/bin/python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
 
