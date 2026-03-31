@@ -1,0 +1,63 @@
+name: Check Railway Health
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Health check
+        id: health
+        run: |
+          URL="${{ vars.AUTOPI_API_URL }}/health"
+          echo "Checking $URL ..."
+          HTTP_CODE=$(curl -s -o /tmp/health.json -w "%{http_code}" "$URL" --max-time 15 2>/dev/null || echo "000")
+          echo "HTTP status: $HTTP_CODE"
+          cat /tmp/health.json 2>/dev/null || true
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "healthy=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "healthy=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fetch Railway logs
+        run: |
+          echo "=== Last 100 lines of Railway logs ==="
+          railway logs --tail 100 2>&1 || echo "(failed to fetch logs)"
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+
+      - name: Fetch recent API errors
+        if: ${{ vars.AUTOPI_API_URL != '' }}
+        continue-on-error: true
+        run: |
+          echo "=== Recent pipeline runs ==="
+          curl -s "${{ vars.AUTOPI_API_URL }}/runs" --max-time 10 | python3 -m json.tool 2>/dev/null || echo "(no runs or API unreachable)"
+
+          echo ""
+          echo "=== Failed runs details ==="
+          RUNS=$(curl -s "${{ vars.AUTOPI_API_URL }}/runs" --max-time 10 2>/dev/null || echo "[]")
+          echo "$RUNS" | python3 -c "
+          import sys, json
+          runs = json.load(sys.stdin)
+          failed = [r for r in runs if r.get('status') in ('failed', 'error')]
+          for r in failed[:3]:
+              print(f\"Run {r['run_id']}: {r.get('status')} - {r.get('error', 'no error msg')}\")
+          if not failed:
+              print('No failed runs found.')
+          " 2>/dev/null || echo "(could not parse runs)"
+
+      - name: Summary
+        run: |
+          if [ "${{ steps.health.outputs.healthy }}" = "true" ]; then
+            echo "::notice::Railway app is healthy"
+          else
+            echo "::error::Railway app is NOT healthy"
+            exit 1
+          fi

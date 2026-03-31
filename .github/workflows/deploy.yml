@@ -3,7 +3,7 @@ name: Deploy to Railway
 on:
   push:
     branches: [main]
-  workflow_dispatch:  # Allow manual trigger from Claude Code via: gh workflow run deploy.yml
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -15,6 +15,85 @@ jobs:
         run: npm install -g @railway/cli
 
       - name: Deploy to Railway
+        id: deploy
         run: railway up --detach
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+
+      - name: Wait for deployment to stabilize
+        run: sleep 30
+
+      - name: Health check
+        id: healthcheck
+        if: ${{ vars.AUTOPI_API_URL != '' }}
+        continue-on-error: true
+        run: |
+          URL="${{ vars.AUTOPI_API_URL }}/health"
+          echo "Checking $URL ..."
+          for i in 1 2 3 4 5; do
+            HTTP_CODE=$(curl -s -o /tmp/health_response.txt -w "%{http_code}" "$URL" --max-time 10 2>/dev/null || echo "000")
+            echo "Attempt $i: HTTP $HTTP_CODE"
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "healthy=true" >> "$GITHUB_OUTPUT"
+              cat /tmp/health_response.txt
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "healthy=false" >> "$GITHUB_OUTPUT"
+          echo "::error::Health check failed after 5 attempts"
+          echo "Last response (HTTP $HTTP_CODE):"
+          cat /tmp/health_response.txt 2>/dev/null || echo "(no response body)"
+          exit 1
+
+      - name: Capture Railway logs on failure
+        id: capture_logs
+        if: steps.healthcheck.outcome == 'failure'
+        continue-on-error: true
+        run: |
+          echo "## Railway Deploy Logs" > /tmp/error_report.md
+          echo '```' >> /tmp/error_report.md
+          railway logs --tail 80 2>&1 | tee -a /tmp/error_report.md || echo "(failed to fetch railway logs)"
+          echo '```' >> /tmp/error_report.md
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+
+      - name: Create GitHub Issue on failure
+        if: steps.healthcheck.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let logs = '(no logs captured)';
+            try { logs = fs.readFileSync('/tmp/error_report.md', 'utf8'); } catch {}
+
+            // Close previous auto-created deploy issues
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'deploy-error',
+              state: 'open',
+            });
+            for (const issue of existing.data) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: 'closed',
+                state_reason: 'not_planned',
+              });
+            }
+
+            // Create new issue
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `[Auto] Railway deploy failed — ${new Date().toISOString().slice(0,16)}`,
+              body: [
+                `Commit: ${context.sha}`,
+                `Workflow: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                '',
+                logs,
+              ].join('\n'),
+              labels: ['deploy-error'],
+            });
