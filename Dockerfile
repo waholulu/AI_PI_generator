@@ -17,6 +17,7 @@ RUN uv sync --no-dev --frozen
 COPY agents/ agents/
 COPY api/ api/
 COPY prompts/ prompts/
+COPY ui/ ui/
 COPY main.py ./
 
 # Expose FastAPI port

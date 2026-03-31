@@ -31,7 +31,7 @@ from typing import List, Optional
 
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 
 from agents import settings
 from agents.logging_config import setup_logging, get_logger
@@ -85,6 +85,14 @@ app = FastAPI(
     version="2.0.0",
     lifespan=lifespan,
 )
+
+# ── Static UI ─────────────────────────────────────────────────────────────────
+_UI_DIR = Path(__file__).parent.parent / "ui" / "static"
+
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+async def serve_ui():
+    index = _UI_DIR / "index.html"
+    return HTMLResponse(content=index.read_text(encoding="utf-8"))
 
 
 # ── Background pipeline execution ────────────────────────────────────
