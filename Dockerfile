@@ -10,10 +10,12 @@ COPY --from=ghcr.io/astral-sh/uv:0.6.10 /uv /usr/local/bin/uv
 
 # Install dependencies first (layer cache)
 COPY pyproject.toml uv.lock ./
-ENV UV_PROJECT_ENVIRONMENT=/app/.venv
-RUN uv sync --no-dev --frozen --no-install-project \
+RUN uv venv /app/.venv \
+ && . /app/.venv/bin/activate \
+ && uv pip install -r pyproject.toml \
  && ls -la /app/.venv/bin/uvicorn \
  && echo "uvicorn found OK"
+ENV PATH="/app/.venv/bin:$PATH"
 
 # Copy application source
 COPY agents/ agents/
