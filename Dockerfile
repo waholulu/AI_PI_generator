@@ -6,7 +6,7 @@ FROM python:3.10-slim
 WORKDIR /app
 
 # Install uv for fast, reproducible installs
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.6.10 /uv /usr/local/bin/uv
 
 # Install dependencies first (layer cache)
 COPY pyproject.toml ./
