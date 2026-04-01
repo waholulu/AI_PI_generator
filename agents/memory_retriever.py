@@ -1,6 +1,7 @@
 import csv
 import json
 import os
+from collections import Counter
 from datetime import datetime
 from typing import List, Dict, Any
 
@@ -129,3 +130,106 @@ class MemoryRetriever:
                     break
 
         return results
+
+    def build_prompt_context(
+        self,
+        domain: str,
+        enriched_jsonl_path: str | None = None,
+        graveyard_path: str | None = None,
+        recent_limit: int = 10,
+        archive_limit: int = 8,
+        rejected_limit: int = 8,
+    ) -> Dict[str, Any]:
+        """
+        Build a compact prompt context by aggregating:
+        - recent CSV memory
+        - enriched top-candidate JSONL archive
+        - rejected/graveyard topics
+        """
+        recent_memory = self.retrieve_domain_context(domain, limit=recent_limit)
+        enriched_archive = self._load_enriched_archive(
+            domain=domain,
+            archive_path=enriched_jsonl_path or settings.enriched_top_candidates_path(),
+            limit=archive_limit,
+        )
+        rejected_history = self._load_graveyard(
+            domain=domain,
+            graveyard_path=graveyard_path or settings.ideas_graveyard_path(),
+            limit=rejected_limit,
+        )
+
+        statuses = Counter(str(item.get("status", "")).lower() for item in recent_memory)
+        return {
+            "domain": domain,
+            "recent_memory": recent_memory,
+            "enriched_archive": enriched_archive,
+            "rejected_history": rejected_history,
+            "summary": {
+                "recent_count": len(recent_memory),
+                "archive_count": len(enriched_archive),
+                "rejected_count": len(rejected_history),
+                "selected_count": statuses.get("selected", 0),
+                "discarded_count": statuses.get("discarded", 0),
+            },
+        }
+
+    def _load_enriched_archive(self, domain: str, archive_path: str, limit: int) -> List[Dict[str, Any]]:
+        if limit <= 0 or not os.path.exists(archive_path):
+            return []
+        domain_lower = (domain or "").lower()
+        matches: List[Dict[str, Any]] = []
+        try:
+            with open(archive_path, "r", encoding="utf-8") as f:
+                lines = [line.strip() for line in f if line.strip()]
+        except Exception:
+            return []
+
+        for raw in reversed(lines):
+            try:
+                item = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            item_domain = str(item.get("domain") or "").lower()
+            item_title = str(item.get("title") or "").lower()
+            if domain_lower and domain_lower not in item_domain and domain_lower not in item_title:
+                continue
+            matches.append(
+                {
+                    "title": item.get("title", ""),
+                    "rank": item.get("rank"),
+                    "final_score": item.get("final_score"),
+                    "novelty_gap_type": item.get("novelty_gap_type", ""),
+                    "quantitative_specs": item.get("quantitative_specs", {}),
+                    "created_at": item.get("created_at", ""),
+                }
+            )
+            if len(matches) >= limit:
+                break
+        return matches
+
+    def _load_graveyard(self, domain: str, graveyard_path: str, limit: int) -> List[Dict[str, Any]]:
+        if limit <= 0 or not os.path.exists(graveyard_path):
+            return []
+        domain_lower = (domain or "").lower()
+        try:
+            with open(graveyard_path, "r", encoding="utf-8") as f:
+                rows = json.load(f)
+        except Exception:
+            return []
+        if not isinstance(rows, list):
+            return []
+
+        matches: List[Dict[str, Any]] = []
+        for item in reversed(rows):
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title", ""))
+            t = title.lower()
+            reason = str(item.get("rejection_reason", ""))
+            d = str(item.get("domain", "")).lower()
+            if domain_lower and domain_lower not in d and domain_lower not in t:
+                continue
+            matches.append({"title": title, "rejection_reason": reason})
+            if len(matches) >= limit:
+                break
+        return matches

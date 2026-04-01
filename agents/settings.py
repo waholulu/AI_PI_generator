@@ -7,35 +7,96 @@ this to a persistent volume mount (e.g., /app/storage).
 """
 
 import os
+from contextvars import ContextVar, Token
 from pathlib import Path
 
 
-def _root() -> Path:
+_RUN_SCOPE_ID: ContextVar[str | None] = ContextVar("autopi_run_scope_id", default=None)
+
+
+def _base_root() -> Path:
     return Path(os.getenv("AUTOPI_DATA_ROOT", "."))
+
+
+def _root() -> Path:
+    """Backward-compatible alias to the global data root."""
+    return _base_root()
+
+
+def current_run_scope() -> str | None:
+    return _RUN_SCOPE_ID.get()
+
+
+def activate_run_scope(run_id: str) -> Token:
+    """Activate run-scoped artifact paths for the current context."""
+    return _RUN_SCOPE_ID.set(run_id)
+
+
+def deactivate_run_scope(token: Token) -> None:
+    _RUN_SCOPE_ID.reset(token)
+
+
+def run_root(run_id: str, create: bool = True) -> Path:
+    d = _base_root() / "runs" / run_id
+    if create:
+        d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _scoped_root() -> Path:
+    run_id = current_run_scope()
+    if run_id:
+        return run_root(run_id)
+    return _base_root()
 
 
 # ── Directory helpers ─────────────────────────────────────────────────
 
+def global_output_dir() -> Path:
+    d = _base_root() / "output"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def global_config_dir() -> Path:
+    d = _base_root() / "config"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def global_data_dir() -> Path:
+    d = _base_root() / "data"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 def output_dir() -> Path:
-    d = _root() / "output"
+    d = _scoped_root() / "output"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
 def config_dir() -> Path:
-    d = _root() / "config"
+    d = _scoped_root() / "config"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
 def data_dir() -> Path:
-    d = _root() / "data"
+    d = _scoped_root() / "data"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
 def memory_dir() -> Path:
-    d = _root() / "memory"
+    # Keep memory global so historical reuse spans runs.
+    d = _base_root() / "memory"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def cache_dir() -> Path:
+    d = global_data_dir() / "cache"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -57,7 +118,8 @@ def topic_screening_path() -> str:
 
 
 def ideas_graveyard_path() -> str:
-    return str(output_dir() / "ideas_graveyard.json")
+    # Keep graveyard global so rejected-history reuse spans runs.
+    return str(global_output_dir() / "ideas_graveyard.json")
 
 
 def topic_ranking_path() -> str:
@@ -81,7 +143,8 @@ def run_index_path() -> str:
 
 
 def checkpoints_db_path() -> str:
-    return str(output_dir() / "checkpoints.sqlite")
+    # Keep checkpoints global for stable graph compilation in API process.
+    return str(global_output_dir() / "checkpoints.sqlite")
 
 
 # Config files
