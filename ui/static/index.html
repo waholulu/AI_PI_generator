@@ -606,16 +606,22 @@ async function startRun() {
   const domain = document.getElementById('domainInput').value.trim();
   if (!domain) { toast('请输入研究方向', 'error'); return; }
   const btn = document.getElementById('startBtn');
+  const origHTML = btn.innerHTML;
   btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> 提交中...';
   try {
     const run = await api('POST', '/runs', {domain_input: domain});
+    // Push placeholder into local list so sidebar updates immediately
+    state.runs.unshift(run);
+    renderRunList();
     toast('任务已启动', 'success');
-    await loadRuns();
     selectRun(run.run_id);
+    loadRuns(); // refresh list in background (no await)
   } catch(e) {
     toast('启动失败：' + e.message, 'error');
   } finally {
     btn.disabled = false;
+    btn.innerHTML = origHTML;
   }
 }
 
@@ -886,7 +892,7 @@ function schedulePoll() {
     await refreshDetail();
     if (state.activeTab === 'logs') fetchLogs();
     if (state.activeTab === 'status') fetchMilestones();
-  }, 4000);
+  }, 2000);
 }
 function clearPoll() {
   if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; }

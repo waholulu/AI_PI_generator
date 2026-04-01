@@ -93,6 +93,11 @@ class DrafterAgent:
         chain = prompt | self.llm
         result = chain.invoke(prompt_inputs)
         draft_content = getattr(result, "content", str(result))
+        if isinstance(draft_content, list):
+            draft_content = "".join(
+                part.get("text", "") if isinstance(part, dict) else str(part)
+                for part in draft_content
+            )
 
         os.makedirs(os.path.dirname(self.output_md), exist_ok=True)
         with open(self.output_md, "w", encoding="utf-8") as f:
