@@ -5,6 +5,7 @@ from typing import Any, Dict, List
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from agents import settings
+from agents.cache_utils import build_cache_key, load_json_cache, save_json_cache
 from agents.logging_config import get_logger
 from agents.openalex_utils import (
     configure_openalex,
@@ -69,10 +70,20 @@ class LiteratureHarvester:
         seen_ids: set[str] = set()
         merged: List[Dict[str, Any]] = []
         queries_used: List[str] = []
+        cache_hours = float(os.getenv("OPENALEX_CACHE_HOURS", "48"))
 
         for query in query_pool:
+            cache_key = build_cache_key(
+                "literature_openalex_query",
+                {"query": query, "limit": per_query_limit},
+            )
             try:
-                results = self.search_openalex(query, limit=per_query_limit)
+                cached = load_json_cache("openalex", cache_key, max_age_hours=cache_hours)
+                if isinstance(cached, list):
+                    results = cached
+                else:
+                    results = self.search_openalex(query, limit=per_query_limit)
+                    save_json_cache("openalex", cache_key, results)
             except Exception as exc:
                 logger.warning("Query '%s' failed: %s", query, exc)
                 continue
@@ -203,7 +214,15 @@ class LiteratureHarvester:
         )
 
         final_limit = int(os.getenv("LITERATURE_FINAL_LIMIT", "3"))
-        keyword_plan = self._planner.plan(domain_for_planner, extra_context=extra_context)
+        plan_cache_hours = float(os.getenv("KEYWORD_PLAN_CACHE_HOURS", "24"))
+        plan_cache_key = build_cache_key(
+            "literature_keyword_plan",
+            {"domain_for_planner": domain_for_planner, "extra_context": extra_context},
+        )
+        keyword_plan = load_json_cache("keyword_plans", plan_cache_key, max_age_hours=plan_cache_hours)
+        if not isinstance(keyword_plan, dict):
+            keyword_plan = self._planner.plan(domain_for_planner, extra_context=extra_context)
+            save_json_cache("keyword_plans", plan_cache_key, keyword_plan)
         query_pool: List[str] = keyword_plan.get("query_pool") or [domain_for_planner]
         used_fallback: bool = keyword_plan.get("used_fallback", True)
 

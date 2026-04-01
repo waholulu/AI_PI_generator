@@ -24,7 +24,8 @@ _lock = threading.Lock()
 
 
 def _db_path() -> str:
-    return str(settings.output_dir() / "runs.sqlite")
+    # Keep run registry global, independent from per-run artifact scope.
+    return str(settings.global_output_dir() / "runs.sqlite")
 
 
 def _get_conn() -> sqlite3.Connection:
@@ -60,6 +61,7 @@ def create_run(domain_input: str, thread_id: Optional[str] = None) -> RunStatus:
     run_id = str(uuid.uuid4())
     tid = thread_id or run_id
     now = datetime.now(timezone.utc).isoformat()
+    settings.run_root(run_id, create=True)
 
     with _lock, _get_conn() as conn:
         conn.execute(

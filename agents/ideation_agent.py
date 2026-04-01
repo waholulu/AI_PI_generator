@@ -14,6 +14,7 @@ from agents.logging_config import get_logger
 from agents.memory_retriever import MemoryRetriever
 from agents.orchestrator import ResearchState
 from agents.field_scanner_agent import summarize_field_scan
+from agents.cache_utils import build_cache_key, load_json_cache, save_json_cache
 
 logger = get_logger(__name__)
 
@@ -183,9 +184,20 @@ class IdeationAgent:
             except Exception as e:
                 logger.warning("Could not read field scan: %s", e)
 
-        # 1. Memory RAG
-        past_ideas = self.memory.retrieve_domain_context(domain)
-        past_context = json.dumps(past_ideas, indent=2) if past_ideas else "No prior memory for this domain."
+        # 1. Memory RAG (recent CSV + enriched archive + graveyard)
+        memory_context = self.memory.build_prompt_context(
+            domain=domain,
+            enriched_jsonl_path=settings.enriched_top_candidates_path(),
+            graveyard_path=settings.ideas_graveyard_path(),
+        )
+        if (
+            memory_context.get("summary", {}).get("recent_count", 0) == 0
+            and memory_context.get("summary", {}).get("archive_count", 0) == 0
+            and memory_context.get("summary", {}).get("rejected_count", 0) == 0
+        ):
+            past_context = "No prior memory for this domain."
+        else:
+            past_context = json.dumps(memory_context, indent=2, ensure_ascii=False)
 
         # Step 1: Lightweight idea generation
         logger.info("Scouting field and generating candidate topics...")
@@ -203,9 +215,10 @@ class IdeationAgent:
                 "- Publishability: top-tier target journals\n"
                 "- Quantitative feasibility: measurable outcomes and exposures, suitable model family\n"
                 "- Data availability: publicly accessible, free datasets\n\n"
+                "Historical Memory Context (recent selections/rejections + enriched archive):\n{past_ideas}\n\n"
                 "Output ONLY: a formal title and a 1-2 sentence rationale hinting at method, data, and gap.\n"
                 "Ensure HIGH DIVERSITY across spatial scales, methods, and data sources.\n"
-                "Avoid repeating past ideas: {past_ideas}"
+                "Avoid repeating rejected ideas and near-duplicates from memory context."
             ),
             ("user", "Domain: {domain}"),
         ])
@@ -511,6 +524,20 @@ class IdeationAgent:
         # Step 5: Final plan generation
         logger.info("Generating final research_plan.json using Pro model...")
         top1 = enriched_top3[0] if enriched_top3 else {}
+        top3_context = json.dumps(
+            [
+                {
+                    "rank": c.get("rank"),
+                    "title": c.get("title", ""),
+                    "brief_rationale": c.get("brief_rationale", ""),
+                    "quantitative_specs": c.get("quantitative_specs", {}),
+                    "data_sources": c.get("data_sources", []),
+                }
+                for c in enriched_top3[:3]
+            ],
+            ensure_ascii=False,
+            indent=2,
+        )
         top1_context = json.dumps(
             {
                 "title": top1.get("title", ""),
@@ -542,11 +569,25 @@ class IdeationAgent:
                     "methodology": {"design": "placeholder"},
                 }
             structured_llm = self.pro_llm.with_structured_output(ResearchPlanSchema)
-            plan = structured_llm.invoke(
-                "Design a comprehensive quantitative research plan based on the following selected topic:\n\n"
-                + top1_context
+            plan_prompt_cache_hours = float(os.getenv("PLAN_PROMPT_CACHE_HOURS", "24"))
+            plan_cache_key = build_cache_key(
+                "ideation_research_plan",
+                {"domain": domain, "top1_context": top1_context, "top3_context": top3_context},
             )
-            return plan.model_dump()
+            cached_plan = load_json_cache("research_plans", plan_cache_key, max_age_hours=plan_prompt_cache_hours)
+            if isinstance(cached_plan, dict) and cached_plan:
+                return cached_plan
+
+            plan = structured_llm.invoke(
+                "Design a comprehensive quantitative research plan based on the selected top candidates.\n\n"
+                "Primary selected topic (rank 1):\n"
+                + top1_context
+                + "\n\nAdditional ranked context (top 3 shortlist):\n"
+                + top3_context
+            )
+            plan_data_cached = plan.model_dump()
+            save_json_cache("research_plans", plan_cache_key, plan_data_cached)
+            return plan_data_cached
 
         plan_data = generate_plan()
         with open(plan_path, "w", encoding="utf-8") as f:

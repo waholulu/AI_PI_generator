@@ -100,6 +100,7 @@ async def serve_ui():
 async def _run_pipeline(run_id: str, thread_id: str, domain_input: str) -> None:
     """Run the pipeline phases in the background, handling HITL interrupt."""
     log_store.set_current_run(run_id)
+    scope_token = settings.activate_run_scope(run_id)
     graph = _get_graph()
     config = {"configurable": {"thread_id": thread_id}}
     initial_state = {"domain_input": domain_input, "execution_status": "starting"}
@@ -130,12 +131,14 @@ async def _run_pipeline(run_id: str, thread_id: str, domain_input: str) -> None:
         run_manager.update_status(run_id, "failed", error=str(exc))
         logger.error("Run %s failed: %s", run_id, exc)
     finally:
+        settings.deactivate_run_scope(scope_token)
         log_store.set_current_run(None)
 
 
 async def _resume_pipeline(run_id: str, thread_id: str) -> None:
     """Resume a HITL-paused pipeline."""
     log_store.set_current_run(run_id)
+    scope_token = settings.activate_run_scope(run_id)
     graph = _get_graph()
     config = {"configurable": {"thread_id": thread_id}}
 
@@ -157,6 +160,7 @@ async def _resume_pipeline(run_id: str, thread_id: str) -> None:
         run_manager.update_status(run_id, "failed", error=str(exc))
         logger.error("Run %s failed during resume: %s", run_id, exc)
     finally:
+        settings.deactivate_run_scope(scope_token)
         log_store.set_current_run(None)
 
 
@@ -264,15 +268,22 @@ _BINARY_EXTENSIONS = {".sqlite", ".parquet", ".pdf", ".db"}
 
 @app.get("/runs/{run_id}/outputs", response_model=OutputsResponse)
 async def list_outputs(run_id: str):
-    """List all output files for a run (output/, config/, data/ directories)."""
+    """List output/config/data files for a run."""
     run = run_manager.get_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found.")
 
-    root = settings._root()
+    run_root = settings.run_root(run_id, create=False)
+    if run_root.exists():
+        root = run_root
+        scan_dirs = [run_root / "output", run_root / "config", run_root / "data"]
+    else:
+        # Backward compatibility for historical non-scoped runs.
+        root = settings._root()
+        scan_dirs = [settings.output_dir(), settings.config_dir(), settings.data_dir()]
     files: list[OutputFile] = []
 
-    for scan_dir in [settings.output_dir(), settings.config_dir(), settings.data_dir()]:
+    for scan_dir in scan_dirs:
         if not scan_dir.exists():
             continue
         for path in sorted(scan_dir.rglob("*")):
@@ -297,7 +308,8 @@ async def download_output(run_id: str, filename: str):
     if run is None:
         raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found.")
 
-    root = settings._root()
+    run_root = settings.run_root(run_id, create=False)
+    root = run_root if run_root.exists() else settings._root()
     file_path = (root / filename).resolve()
 
     # Path traversal protection

@@ -91,3 +91,66 @@ def test_retrieve_handles_corrupt_metadata_gracefully(tmp_path) -> None:
     assert len(history) == 1
     assert history[0]["metadata"] == {}
 
+
+def test_build_prompt_context_aggregates_csv_jsonl_and_graveyard(tmp_path) -> None:
+    csv_path = tmp_path / "memory" / "idea_memory.csv"
+    archive_path = tmp_path / "memory" / "enriched_top_candidates.jsonl"
+    graveyard_path = tmp_path / "output" / "ideas_graveyard.json"
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    graveyard_path.parent.mkdir(parents=True, exist_ok=True)
+
+    retriever = MemoryRetriever(csv_path=str(csv_path))
+    retriever.store_idea(
+        topic="GeoAI causal topic",
+        domain="GeoAI and Urban Planning",
+        status="selected",
+        metadata={"score": 91},
+        source_file="output/topic_screening.json",
+    )
+
+    with open(archive_path, "w", encoding="utf-8") as f:
+        f.write(json.dumps({
+            "created_at": "2025-01-01T00:00:00+00:00",
+            "domain": "GeoAI and Urban Planning",
+            "run_id": "r1",
+            "rank": 1,
+            "title": "GeoAI archival topic",
+            "final_score": 93,
+            "novelty_gap_type": "Measurement Gap",
+            "quantitative_specs": {"outcomes": ["Y"]},
+        }) + "\n")
+        f.write(json.dumps({
+            "created_at": "2025-01-01T00:00:00+00:00",
+            "domain": "Other domain",
+            "run_id": "r2",
+            "rank": 1,
+            "title": "Other topic",
+        }) + "\n")
+
+    with open(graveyard_path, "w", encoding="utf-8") as f:
+        json.dump(
+            [
+                {"title": "Rejected GeoAI idea", "rejection_reason": "No data"},
+                {"title": "Irrelevant idea", "rejection_reason": "Off-topic"},
+            ],
+            f,
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    context = retriever.build_prompt_context(
+        domain="GeoAI",
+        enriched_jsonl_path=str(archive_path),
+        graveyard_path=str(graveyard_path),
+        recent_limit=5,
+        archive_limit=5,
+        rejected_limit=5,
+    )
+
+    assert context["summary"]["recent_count"] >= 1
+    assert context["summary"]["archive_count"] == 1
+    assert context["summary"]["rejected_count"] == 1
+    assert context["recent_memory"][0]["topic"] == "GeoAI causal topic"
+    assert context["enriched_archive"][0]["title"] == "GeoAI archival topic"
+    assert context["rejected_history"][0]["title"] == "Rejected GeoAI idea"
+
