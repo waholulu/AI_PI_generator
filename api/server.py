@@ -106,23 +106,29 @@ async def _run_pipeline(run_id: str, thread_id: str, domain_input: str) -> None:
     config = {"configurable": {"thread_id": thread_id}}
     initial_state = {"domain_input": domain_input, "execution_status": "starting"}
 
-    try:
-        run_manager.update_status(run_id, "running", current_node="field_scanner")
-        run_manager.record_milestone(run_id, "pipeline_started", f"研究方向: {domain_input}")
-
-        # Phase 1: run until HITL interrupt (after ideation, before literature)
+    def _stream_phase1() -> Optional[str]:
+        """Synchronous streaming phase; returns first pending node if HITL, else None."""
         for output in graph.stream(initial_state, config):
             for node_key in output:
                 run_manager.update_status(run_id, "running", current_node=node_key)
                 logger.info("Node completed: %s", node_key)
                 run_manager.record_milestone(run_id, "node_completed", f"完成节点: {node_key}")
-
-        # Check if paused at HITL
         snapshot = graph.get_state(config)
         if snapshot.next:
-            pending = list(snapshot.next)
-            logger.info("Pipeline paused at HITL checkpoint. Pending: %s", pending)
-            run_manager.update_status(run_id, "awaiting_approval", current_node=pending[0])
+            return list(snapshot.next)[0]
+        return None
+
+    try:
+        run_manager.update_status(run_id, "running", current_node="field_scanner")
+        run_manager.record_milestone(run_id, "pipeline_started", f"研究方向: {domain_input}")
+
+        # graph.stream() uses synchronous HTTP (requests/pyalex); run in a thread
+        # so the event loop stays free to handle polling requests from the UI.
+        pending_node = await asyncio.to_thread(_stream_phase1)
+
+        if pending_node:
+            logger.info("Pipeline paused at HITL checkpoint. Pending: %s", pending_node)
+            run_manager.update_status(run_id, "awaiting_approval", current_node=pending_node)
             run_manager.record_milestone(run_id, "hitl_paused", "等待人工审批，请在状态页面批准或终止")
         else:
             run_manager.update_status(run_id, "completed")
@@ -148,15 +154,18 @@ async def _resume_pipeline(run_id: str, thread_id: str) -> None:
     graph = _get_graph()
     config = {"configurable": {"thread_id": thread_id}}
 
-    try:
-        run_manager.update_status(run_id, "running", current_node="literature")
-        run_manager.record_milestone(run_id, "approved", "已批准，继续执行文献收集 → 初稿撰写 → 数据获取")
-
+    def _stream_phase2() -> None:
         for output in graph.stream(None, config):
             for node_key in output:
                 run_manager.update_status(run_id, "running", current_node=node_key)
                 logger.info("Node completed: %s", node_key)
                 run_manager.record_milestone(run_id, "node_completed", f"完成节点: {node_key}")
+
+    try:
+        run_manager.update_status(run_id, "running", current_node="literature")
+        run_manager.record_milestone(run_id, "approved", "已批准，继续执行文献收集 → 初稿撰写 → 数据获取")
+
+        await asyncio.to_thread(_stream_phase2)
 
         run_manager.update_status(run_id, "completed")
         run_manager.record_milestone(run_id, "completed", "流水线执行完毕")
