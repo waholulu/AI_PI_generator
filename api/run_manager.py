@@ -50,6 +50,17 @@ def _init_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS milestones (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id    TEXT NOT NULL,
+                ts        TEXT NOT NULL,
+                event     TEXT NOT NULL,
+                detail    TEXT NOT NULL
+            )
+            """
+        )
         conn.commit()
 
 
@@ -119,6 +130,25 @@ def update_status(
             (status, current_node, now, error, run_id),
         )
         conn.commit()
+
+
+def record_milestone(run_id: str, event: str, detail: str) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    with _lock, _get_conn() as conn:
+        conn.execute(
+            "INSERT INTO milestones (run_id, ts, event, detail) VALUES (?,?,?,?)",
+            (run_id, now, event, detail),
+        )
+        conn.commit()
+
+
+def get_milestones(run_id: str) -> List[dict]:
+    with _get_conn() as conn:
+        rows = conn.execute(
+            "SELECT ts, event, detail FROM milestones WHERE run_id=? ORDER BY id",
+            (run_id,),
+        ).fetchall()
+    return [{"ts": r["ts"], "event": r["event"], "detail": r["detail"]} for r in rows]
 
 
 def _row_to_status(row: sqlite3.Row) -> RunStatus:

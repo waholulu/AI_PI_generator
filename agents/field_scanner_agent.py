@@ -71,9 +71,8 @@ class FieldScannerAgent:
                     "is_retracted": m["is_retracted"],
                 })
         except Exception as e:
-            logger.warning("Failed to scan OpenAlex (%s).", e)
-            top_results = []
-            query_hits = {q: 0 for q in query_pool}
+            logger.error("Failed to scan OpenAlex: %s", e)
+            raise RuntimeError(f"Field scanner OpenAlex search failed: {e}") from e
 
         concept_counter: Counter[str] = Counter()
         for work in top_results:

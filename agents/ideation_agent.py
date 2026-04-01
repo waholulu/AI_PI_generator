@@ -405,8 +405,8 @@ class IdeationAgent:
                 enriched = _enrich_single(candidate)
                 enriched_top3.append(enriched)
             except Exception as e:
-                logger.warning("Enrichment failed for candidate %d: %s", i + 1, e)
-                enriched_top3.append(candidate)
+                logger.error("Enrichment failed for candidate %d: %s", i + 1, e)
+                raise RuntimeError(f"Enrichment failed for candidate {i + 1}: {e}") from e
 
         logger.info("Step 3 complete: %d candidates enriched.", len(enriched_top3))
 

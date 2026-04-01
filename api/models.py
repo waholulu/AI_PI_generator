@@ -60,3 +60,9 @@ class ApproveResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     version: str = "2.0.0"
+
+
+class Milestone(BaseModel):
+    ts: str
+    event: str    # pipeline_started | node_completed | hitl_paused | approved | completed | failed
+    detail: str

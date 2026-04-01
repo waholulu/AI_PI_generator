@@ -41,6 +41,7 @@ from api.models import (
     ApproveResponse,
     HealthResponse,
     LogEntry,
+    Milestone,
     OutputFile,
     OutputsResponse,
     RunListItem,
@@ -107,12 +108,14 @@ async def _run_pipeline(run_id: str, thread_id: str, domain_input: str) -> None:
 
     try:
         run_manager.update_status(run_id, "running", current_node="field_scanner")
+        run_manager.record_milestone(run_id, "pipeline_started", f"研究方向: {domain_input}")
 
         # Phase 1: run until HITL interrupt (after ideation, before literature)
         for output in graph.stream(initial_state, config):
             for node_key in output:
                 run_manager.update_status(run_id, "running", current_node=node_key)
                 logger.info("Node completed: %s", node_key)
+                run_manager.record_milestone(run_id, "node_completed", f"完成节点: {node_key}")
 
         # Check if paused at HITL
         snapshot = graph.get_state(config)
@@ -120,8 +123,10 @@ async def _run_pipeline(run_id: str, thread_id: str, domain_input: str) -> None:
             pending = list(snapshot.next)
             logger.info("Pipeline paused at HITL checkpoint. Pending: %s", pending)
             run_manager.update_status(run_id, "awaiting_approval", current_node=pending[0])
+            run_manager.record_milestone(run_id, "hitl_paused", "等待人工审批，请在状态页面批准或终止")
         else:
             run_manager.update_status(run_id, "completed")
+            run_manager.record_milestone(run_id, "completed", "流水线执行完毕")
             logger.info("Pipeline completed (no HITL interrupt).")
 
     except asyncio.CancelledError:
@@ -129,6 +134,7 @@ async def _run_pipeline(run_id: str, thread_id: str, domain_input: str) -> None:
         logger.info("Run %s was cancelled.", run_id)
     except Exception as exc:
         run_manager.update_status(run_id, "failed", error=str(exc))
+        run_manager.record_milestone(run_id, "failed", str(exc)[:300])
         logger.error("Run %s failed: %s", run_id, exc)
     finally:
         settings.deactivate_run_scope(scope_token)
@@ -144,13 +150,16 @@ async def _resume_pipeline(run_id: str, thread_id: str) -> None:
 
     try:
         run_manager.update_status(run_id, "running", current_node="literature")
+        run_manager.record_milestone(run_id, "approved", "已批准，继续执行文献收集 → 初稿撰写 → 数据获取")
 
         for output in graph.stream(None, config):
             for node_key in output:
                 run_manager.update_status(run_id, "running", current_node=node_key)
                 logger.info("Node completed: %s", node_key)
+                run_manager.record_milestone(run_id, "node_completed", f"完成节点: {node_key}")
 
         run_manager.update_status(run_id, "completed")
+        run_manager.record_milestone(run_id, "completed", "流水线执行完毕")
         logger.info("Run %s completed successfully.", run_id)
 
     except asyncio.CancelledError:
@@ -158,6 +167,7 @@ async def _resume_pipeline(run_id: str, thread_id: str) -> None:
         logger.info("Run %s was cancelled during resume.", run_id)
     except Exception as exc:
         run_manager.update_status(run_id, "failed", error=str(exc))
+        run_manager.record_milestone(run_id, "failed", str(exc)[:300])
         logger.error("Run %s failed during resume: %s", run_id, exc)
     finally:
         settings.deactivate_run_scope(scope_token)
@@ -206,6 +216,15 @@ async def get_logs(
     if run is None:
         raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found.")
     return log_store.get_logs(run_id, level=level, limit=limit)
+
+
+@app.get("/runs/{run_id}/milestones", response_model=List[Milestone])
+async def get_milestones(run_id: str):
+    """Return the key-operation milestone log for this run."""
+    run = run_manager.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found.")
+    return run_manager.get_milestones(run_id)
 
 
 @app.get("/runs/{run_id}/state")

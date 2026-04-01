@@ -103,10 +103,7 @@ class KeywordPlanner:
         )
         self._llm: Optional[Any] = None
         if self._enabled and ChatGoogleGenerativeAI is not None:
-            try:
-                self._llm = ChatGoogleGenerativeAI(model=model_name, temperature=0.3)
-            except Exception as exc:
-                logger.warning("Failed to initialise LLM (%s); will use fallback.", exc)
+            self._llm = ChatGoogleGenerativeAI(model=model_name, temperature=0.3)
 
     # ------------------------------------------------------------------
     # Public API
@@ -131,8 +128,8 @@ class KeywordPlanner:
         try:
             return self._call_llm(domain_input, extra_context)
         except Exception as exc:
-            logger.warning("LLM call failed (%s); using fallback.", exc)
-            return self._fallback(domain_input, reason=str(exc))
+            logger.error("KeywordPlanner LLM call failed: %s", exc)
+            raise RuntimeError(f"KeywordPlanner failed: {exc}") from exc
 
     # ------------------------------------------------------------------
     # Private helpers

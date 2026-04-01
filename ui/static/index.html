@@ -418,6 +418,60 @@
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: #2d3148; border-radius: 3px; }
+
+    /* ── Mobile responsive ── */
+    @media (max-width: 768px) {
+      header { padding: 12px 16px; }
+      header span { display: none; }
+
+      .layout {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto 1fr;
+        height: auto;
+        min-height: calc(100vh - 49px);
+      }
+
+      .sidebar {
+        border-right: none;
+        border-bottom: 1px solid #2d3148;
+        max-height: none;
+      }
+      .new-run-form { padding: 14px 16px; }
+      .run-list { max-height: 200px; padding: 8px; }
+
+      .main { min-height: 60vh; }
+
+      .detail-header {
+        padding: 14px 16px 12px;
+        flex-direction: column;
+        gap: 8px;
+        align-items: stretch;
+      }
+      .detail-actions { flex-wrap: wrap; }
+
+      .tabs { padding: 0 16px; }
+      .tab { padding: 10px 12px; font-size: 0.82rem; }
+      .tab-content { padding: 14px 16px; }
+
+      .pipeline-steps { flex-wrap: wrap; gap: 4px; }
+      .step {
+        flex: 1 1 auto;
+        min-width: 80px;
+        border-radius: 6px !important;
+        border-left: 1px solid #2d3148 !important;
+      }
+      .step.done  { border-left-color: #166534 !important; }
+      .step.active { border-left-color: #1d4ed8 !important; }
+      .step.waiting { border-left-color: #78350f !important; }
+
+      .kv-grid { grid-template-columns: 100px 1fr; }
+
+      .hitl-actions { flex-direction: column; }
+      .hitl-actions .btn { width: 100%; }
+
+      .log-box { max-height: 300px; }
+      .modal { width: 98vw; max-height: 92vh; }
+    }
   </style>
 </head>
 <body>
@@ -682,7 +736,16 @@ function renderStatusTab(el, run) {
         </div>
       </div>
     ` : ''}
+
+    <div class="status-card">
+      <h3>关键操作记录</h3>
+      <div id="milestoneList" style="max-height:200px;overflow-y:auto">加载中…</div>
+    </div>
   `;
+}
+
+  // Populate milestone list immediately after rendering
+  fetchMilestones();
 }
 
 // ── HITL actions ─────────────────────────────────────────────────────────────
@@ -793,12 +856,37 @@ function renderOutputsTab(el, run) {
   });
 }
 
+// ── Milestone timeline ────────────────────────────────────────────────────────
+const _milestoneIcons = {
+  pipeline_started: '🚀', node_completed: '✅', hitl_paused: '⏸',
+  approved: '▶️', failed: '❌', completed: '🎉'
+};
+
+async function fetchMilestones() {
+  if (!state.activeRunId || state.activeTab !== 'status') return;
+  const box = document.getElementById('milestoneList');
+  if (!box) return;
+  try {
+    const items = await api('GET', `/runs/${state.activeRunId}/milestones`);
+    if (!items.length) { box.innerHTML = '<span style="color:#475569">暂无记录</span>'; return; }
+    box.innerHTML = items.map(m => `
+      <div style="display:flex;gap:10px;padding:6px 0;border-bottom:1px solid #2d3148">
+        <span style="color:#475569;flex-shrink:0;font-size:.75rem">${m.ts.slice(11,19)}</span>
+        <span style="flex-shrink:0">${_milestoneIcons[m.event] || '·'}</span>
+        <span style="font-size:.85rem;color:#cbd5e1">${escHtml(m.detail)}</span>
+      </div>
+    `).join('');
+    box.scrollTop = box.scrollHeight;
+  } catch(e) { /* silent */ }
+}
+
 // ── Polling ──────────────────────────────────────────────────────────────────
 function schedulePoll() {
   clearPoll();
   state.pollTimer = setInterval(async () => {
     await refreshDetail();
     if (state.activeTab === 'logs') fetchLogs();
+    if (state.activeTab === 'status') fetchMilestones();
   }, 4000);
 }
 function clearPoll() {
