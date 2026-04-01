@@ -51,20 +51,14 @@ class TopicScore(BaseModel):
         description="If passed_gates is false, strictly explain which gate it failed and why. Otherwise, empty string.",
         default="",
     )
+    rank: int = Field(
+        description="Final ranking position among passed topics (1 = best). Set to 0 if passed_gates is false.",
+        default=0,
+    )
 
 
 class TopicScoresList(BaseModel):
     scores: List[TopicScore]
-
-
-class FinalRankScore(BaseModel):
-    title: str = Field(description="Title of the candidate topic.")
-    rank: int = Field(description="Final ranking position (1 = best overall).")
-    final_score: int = Field(description="Refined quality score out of 100 after careful re-evaluation.")
-
-
-class FinalRankScoresList(BaseModel):
-    top_candidates: List[FinalRankScore]
 
 
 # ---------------------------------------------------------------------------
@@ -93,10 +87,6 @@ class RawCandidateTopic(BaseModel):
     publishability: str = Field(description="2-3 specific target journals with brief matching justification.")
     quantitative_specs: QuantitativeSpecs
     data_sources: List[DataSource]
-
-
-class RawCandidateTopicsList(BaseModel):
-    candidates: List[RawCandidateTopic]
 
 
 class ResearchPlanSchema(BaseModel):
@@ -278,28 +268,35 @@ class IdeationAgent:
                 "research_context_path": context_path,
             }
 
-        # Step 2: Initial screening
-        logger.info("Scoring and screening candidate topics (Step 2)...")
-        initial_screen_topn = int(os.getenv("INITIAL_SCREEN_TOPN", "10"))
+        # Step 2: Combined screening + ranking (single LLM call)
+        final_top_n = int(os.getenv("FINAL_TOP_N", "3"))
+        logger.info("Scoring, screening, and ranking candidates (Step 2) — selecting top %d...", final_top_n)
 
-        def _initial_screen() -> List[Dict[str, Any]]:
+        def _screen_and_rank() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
             scoring_model_choice = os.getenv("SCORING_MODEL", "pro").lower()
             scoring_llm = self.fast_llm if scoring_model_choice == "fast" else (self.pro_llm or self.fast_llm)
             if not scoring_llm:
-                raise ValueError("No LLM available for initial screening")
+                raise ValueError("No LLM available for screening")
 
             scoring_prompt = ChatPromptTemplate.from_messages([
                 (
                     "system",
-                    "You are an expert academic evaluator. Score each candidate research topic out of 100 and "
-                    "decide whether it passes all hard gates. Consider: impact, quantitative operability, "
-                    "novelty, publishability, data availability, method automatability. "
-                    "Return ONLY structured scores per topic."
+                    "You are a senior research committee member and expert academic evaluator.\n\n"
+                    "For EACH candidate topic:\n"
+                    "1. Score it out of 100 considering: impact, quantitative operability, novelty, "
+                    "publishability, data availability, method automatability, policy relevance, "
+                    "methodological rigor, and top-tier outlet fit.\n"
+                    "2. Decide whether it passes all hard gates (passed_gates=true/false). "
+                    "If it fails, provide a rejection_reason.\n"
+                    f"3. Among the topics that pass gates, rank the BEST {final_top_n} "
+                    f"(rank 1 = best, rank 2 = second best, ..., rank {final_top_n}). "
+                    "Set rank=0 for all topics that fail gates or are not in the top selection.\n\n"
+                    "Return structured scores for ALL candidates."
                 ),
                 (
                     "user",
                     "Domain: {domain}\n\nField Scan Context:\n{field_scan_context}\n\n"
-                    "Past Ideas (avoid repeating):\n{past_ideas}\n\nCandidates to score:\n{candidates_json}\n",
+                    "Past Ideas (avoid repeating):\n{past_ideas}\n\nCandidates to evaluate:\n{candidates_json}\n",
                 ),
             ])
 
@@ -313,94 +310,48 @@ class IdeationAgent:
             result = structured_llm.invoke(prompt_value)
             scores_by_title = {s.title.strip().lower(): s for s in result.scores}
 
-            scored = []
+            scored_all = []
             for c in light_candidates:
                 title = str(c.get("title", "")).strip()
                 s = scores_by_title.get(title.lower())
                 entry = dict(c)
                 if s:
                     entry["initial_score"] = s.score
+                    entry["final_score"] = s.score
                     entry["passed_gates"] = s.passed_gates
                     entry["rejection_reason"] = s.rejection_reason or ""
+                    entry["rank"] = s.rank
                 else:
                     entry["initial_score"] = 0
+                    entry["final_score"] = 0
                     entry["passed_gates"] = False
-                    entry["rejection_reason"] = "Not evaluated by initial screening model."
-                scored.append(entry)
-            return scored
+                    entry["rejection_reason"] = "Not evaluated by screening model."
+                    entry["rank"] = 0
+                scored_all.append(entry)
 
-        initially_scored = _initial_screen()
-        logger.info("Step 2 complete: scored %d candidates.", len(initially_scored))
-
-        passed_initial = [c for c in initially_scored if c.get("passed_gates")]
-        rejected_candidates = [c for c in initially_scored if not c.get("passed_gates")]
-
-        passed_initial.sort(key=lambda x: x.get("initial_score", 0), reverse=True)
-        finalists = passed_initial[:initial_screen_topn]
-
-        if not finalists:
-            finalists = sorted(initially_scored, key=lambda x: x.get("initial_score", 0), reverse=True)[:initial_screen_topn]
-            logger.warning("All candidates failed initial gates; using top-scoring as finalists anyway.")
-
-        logger.info("%d candidates advanced to final selection.", len(finalists))
-
-        # Step 3: Final selection
-        final_top_n = int(os.getenv("FINAL_TOP_N", "3"))
-        logger.info("Step 3: Re-ranking %d finalists to choose top %d...", len(finalists), final_top_n)
-
-        def _final_selection() -> List[Dict[str, Any]]:
-            scoring_model_choice = os.getenv("SCORING_MODEL", "pro").lower()
-            scoring_llm = self.fast_llm if scoring_model_choice == "fast" else (self.pro_llm or self.fast_llm)
-
-            selection_prompt = ChatPromptTemplate.from_messages([
-                (
-                    "system",
-                    "You are a senior research committee member. Apply stricter criteria: "
-                    "policy relevance, methodological rigor, novel gap, top-tier outlet fit, automatable pipeline. "
-                    f"Select and rank EXACTLY the top {final_top_n} candidates (rank 1 = best). "
-                    "Assign refined final_score out of 100. Return ONLY structured data."
-                ),
-                (
-                    "user",
-                    "Domain: {domain}\n\nField Scan Context:\n{field_scan_context}\n\n"
-                    "Shortlisted candidates:\n{candidates_json}\n",
-                ),
-            ])
-
-            structured_llm = scoring_llm.with_structured_output(FinalRankScoresList)
-            prompt_value = selection_prompt.invoke({
-                "domain": domain,
-                "field_scan_context": field_scan_context,
-                "candidates_json": json.dumps(finalists, ensure_ascii=False),
-            })
-            result = structured_llm.invoke(prompt_value)
-
-            final_by_title = {r.title.strip().lower(): r for r in result.top_candidates}
-            ranked = []
-            for c in finalists:
-                title = str(c.get("title", "")).strip()
-                r = final_by_title.get(title.lower())
-                if r:
-                    entry = dict(c)
-                    entry["rank"] = r.rank
-                    entry["final_score"] = r.final_score
-                    ranked.append(entry)
-
+            rejected = [c for c in scored_all if not c.get("passed_gates")]
+            ranked = [c for c in scored_all if c.get("rank", 0) > 0]
             ranked.sort(key=lambda x: x.get("rank", 999))
-            return ranked[:final_top_n]
+            return ranked[:final_top_n], rejected
 
-        top3 = _final_selection()
+        top3, rejected_candidates = _screen_and_rank()
+
         if not top3:
-            logger.warning("Final selection returned no ranked candidates; falling back to top initial scorers.")
-            top3 = [dict(c) for c in finalists[:final_top_n]]
+            logger.warning("No ranked candidates from screening; falling back to top scorers.")
+            all_scored = [c for c in light_candidates]
+            all_scored.sort(key=lambda x: x.get("initial_score", 0), reverse=True)
+            top3 = all_scored[:final_top_n]
             for i, c in enumerate(top3):
                 c["rank"] = i + 1
                 c["final_score"] = c.get("initial_score", 0)
 
-        logger.info("Step 3 complete: %d candidates selected for enrichment.", len(top3))
+        # Derive finalists for downstream use (all passed candidates)
+        finalists = top3
 
-        # Step 4: Enrichment
-        logger.info("Step 4: Enriching top candidates with full research details...")
+        logger.info("Step 2 complete: %d candidates selected for enrichment.", len(top3))
+
+        # Step 3: Enrichment
+        logger.info("Step 3: Enriching top candidates with full research details...")
 
         enrichment_prompt = ChatPromptTemplate.from_messages([
             (
@@ -436,7 +387,7 @@ class IdeationAgent:
                     },
                     "data_sources": [{"name": "US Census", "accessibility": "Public API"}],
                 }
-            structured_llm = enrichment_llm.with_structured_output(RawCandidateTopicsList)
+            structured_llm = enrichment_llm.with_structured_output(RawCandidateTopic)
             prompt_value = enrichment_prompt.invoke({
                 "domain": domain,
                 "field_scan_context": field_scan_context,
@@ -444,10 +395,8 @@ class IdeationAgent:
                 "brief_rationale": candidate.get("brief_rationale", ""),
             })
             result = structured_llm.invoke(prompt_value)
-            if result.candidates:
-                enriched_fields = result.candidates[0].model_dump()
-                return {**candidate, **enriched_fields}
-            return candidate
+            enriched_fields = result.model_dump()
+            return {**candidate, **enriched_fields}
 
         enriched_top3: List[Dict[str, Any]] = []
         for i, candidate in enumerate(top3):
@@ -459,7 +408,7 @@ class IdeationAgent:
                 logger.warning("Enrichment failed for candidate %d: %s", i + 1, e)
                 enriched_top3.append(candidate)
 
-        logger.info("Step 4 complete: %d candidates enriched.", len(enriched_top3))
+        logger.info("Step 3 complete: %d candidates enriched.", len(enriched_top3))
 
         # Save outputs
         with open(screening_path, "w", encoding="utf-8") as f:
@@ -468,9 +417,7 @@ class IdeationAgent:
                 f, indent=2, ensure_ascii=False,
             )
 
-        finalist_titles = {str(c.get("title", "")).strip().lower() for c in finalists}
-        non_finalist_passers = [c for c in passed_initial if str(c.get("title", "")).strip().lower() not in finalist_titles]
-        all_rejected = rejected_candidates + non_finalist_passers
+        all_rejected = rejected_candidates
 
         graveyard_path = settings.ideas_graveyard_path()
         existing_graveyard: list = []
@@ -521,7 +468,7 @@ class IdeationAgent:
             for c in enriched_top3:
                 writer.writerow([c.get("rank", ""), c.get("title", ""), c.get("initial_score", ""), c.get("final_score", "")])
 
-        # Step 5: Final plan generation
+        # Step 4: Final plan generation
         logger.info("Generating final research_plan.json using Pro model...")
         top1 = enriched_top3[0] if enriched_top3 else {}
         top3_context = json.dumps(
@@ -622,7 +569,7 @@ class IdeationAgent:
         except Exception as e:
             logger.warning("Failed to write research context: %s", e)
 
-        # Step 6: Persist enriched top-3 to long-term JSONL archive
+        # Step 5: Persist enriched top-3 to long-term JSONL archive
         _persist_enriched_top3(enriched_top3, domain=domain, run_id=run_id)
 
         logger.info("Ideation complete. Plan saved to %s", plan_path)

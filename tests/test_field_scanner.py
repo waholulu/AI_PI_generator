@@ -3,8 +3,11 @@ import os
 from typing import Any, Dict, List
 from unittest.mock import MagicMock
 
+import pytest
+
 from agents.field_scanner_agent import FieldScannerAgent, field_scanner_node, summarize_field_scan
 from agents.orchestrator import ResearchState
+from agents import openalex_utils
 
 
 # ---------------------------------------------------------------------------
@@ -36,38 +39,41 @@ def _make_fake_result(openalex_id: str, title: str, concepts: List[str] | None =
     }
 
 
-class _OfflineFieldScanner(FieldScannerAgent):
-    """
-    Overrides _search_openalex to skip network calls.
-    Returns a deterministic result set keyed on the query string.
-    """
-
-    def _search_openalex(self, query: str, limit: int = 20) -> Dict[str, Any]:  # type: ignore[override]
-        # Return a unique paper per query so multi-query expansion is testable.
-        return {
-            "organic_results": [
-                _make_fake_result(
-                    openalex_id=f"https://openalex.org/W{abs(hash(query)) % 1000}",
-                    title=f"Paper for '{query}'",
-                )
-            ],
-            "total_results": 1,
-        }
-
-
-class _OfflineDuplicateScanner(FieldScannerAgent):
-    """Returns the same openalex_id regardless of query to test deduplication."""
-
-    def _search_openalex(self, query: str, limit: int = 20) -> Dict[str, Any]:  # type: ignore[override]
-        return {
-            "organic_results": [
-                _make_fake_result(
-                    openalex_id="https://openalex.org/W_FIXED",
-                    title="Always the same paper",
-                )
-            ],
-            "total_results": 1,
-        }
+def _make_fake_metadata(openalex_id: str, title: str, concepts: List[str] | None = None) -> Dict[str, Any]:
+    """Return a dict matching extract_work_metadata output format."""
+    concept_names = concepts or ["GeoAI", "Remote Sensing"]
+    return {
+        "title": title,
+        "openalex_id": openalex_id,
+        "paperId": openalex_id.replace("https://openalex.org/", ""),
+        "doi": f"10.1234/{openalex_id[-2:]}",
+        "year": 2023,
+        "publication_date": "2023-01-01",
+        "type": "article",
+        "language": "en",
+        "citationCount": 20,
+        "authors": [{"name": "Author X"}],
+        "author_names": ["Author X"],
+        "first_author": "Author X",
+        "journal": "Journal X",
+        "journal_id": "J1",
+        "host_organization": "Org",
+        "biblio": {},
+        "abstract": "",
+        "concepts": [{"name": c, "level": 0, "score": 0.9} for c in concept_names],
+        "broad_concepts": [{"name": c, "level": 0, "score": 0.9} for c in concept_names],
+        "isOpenAccess": True,
+        "oa_status": "gold",
+        "oa_url": "",
+        "best_oa_location": {},
+        "landing_page_url": "",
+        "pdf_url": "",
+        "candidate_download_urls": [],
+        "has_fulltext": False,
+        "referenced_works": [],
+        "referenced_works_count": 8,
+        "is_retracted": False,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -90,18 +96,17 @@ def _patch_planner(scanner: FieldScannerAgent, queries: List[str], used_fallback
 # Tests
 # ---------------------------------------------------------------------------
 
-def test_field_scanner_node_offline() -> None:
+def test_field_scanner_node_offline(monkeypatch: pytest.MonkeyPatch) -> None:
     """Ensure field scanner node runs offline and produces a valid field_scan.json."""
-    import agents.field_scanner_agent as fsa_module
+    paper = _make_fake_metadata("https://openalex.org/W1234", "Test Paper")
 
-    original_cls = fsa_module.FieldScannerAgent
+    def _fake_search(query: str, limit: int = 20) -> List[Dict[str, Any]]:
+        return [paper]
 
-    fsa_module.FieldScannerAgent = _OfflineFieldScanner  # type: ignore[misc]
-    try:
-        state = ResearchState(domain_input="GeoAI and Urban Planning", execution_status="starting")
-        new_state = field_scanner_node(state)
-    finally:
-        fsa_module.FieldScannerAgent = original_cls  # type: ignore[misc]
+    monkeypatch.setattr(openalex_utils, "search_openalex", _fake_search)
+
+    state = ResearchState(domain_input="GeoAI and Urban Planning", execution_status="starting")
+    new_state = field_scanner_node(state)
 
     assert new_state["execution_status"] == "ideation"
     assert "field_scan_path" in new_state
@@ -122,9 +127,17 @@ def test_field_scanner_node_offline() -> None:
         assert "author" in result
 
 
-def test_field_scanner_multi_query_expands_results() -> None:
+def test_field_scanner_multi_query_expands_results(monkeypatch: pytest.MonkeyPatch) -> None:
     """Multiple queries should yield more (or equal) results than a single query."""
-    scanner = _OfflineFieldScanner()
+    def _fake_search(query: str, limit: int = 20) -> List[Dict[str, Any]]:
+        return [_make_fake_metadata(
+            openalex_id=f"https://openalex.org/W{abs(hash(query)) % 1000}",
+            title=f"Paper for '{query}'",
+        )]
+
+    monkeypatch.setattr(openalex_utils, "search_openalex", _fake_search)
+
+    scanner = FieldScannerAgent()
     _patch_planner(scanner, queries=["query alpha", "query beta", "query gamma"])
 
     state = {"domain_input": "broad multi-topic domain", "execution_status": "starting"}
@@ -142,9 +155,17 @@ def test_field_scanner_multi_query_expands_results() -> None:
     assert set(strategy["query_pool"]) == {"query alpha", "query beta", "query gamma"}
 
 
-def test_field_scanner_deduplicates_results() -> None:
+def test_field_scanner_deduplicates_results(monkeypatch: pytest.MonkeyPatch) -> None:
     """If multiple queries return the same openalex_id, only one copy should appear."""
-    scanner = _OfflineDuplicateScanner()
+    def _fake_search(query: str, limit: int = 20) -> List[Dict[str, Any]]:
+        return [_make_fake_metadata(
+            openalex_id="https://openalex.org/W_FIXED",
+            title="Always the same paper",
+        )]
+
+    monkeypatch.setattr(openalex_utils, "search_openalex", _fake_search)
+
+    scanner = FieldScannerAgent()
     _patch_planner(scanner, queries=["q1", "q2", "q3"])
 
     state = {"domain_input": "duplicate test domain", "execution_status": "starting"}
@@ -159,9 +180,17 @@ def test_field_scanner_deduplicates_results() -> None:
     assert len(top_results) == 1, "Expected exactly 1 unique paper after dedup"
 
 
-def test_field_scan_includes_search_strategy() -> None:
+def test_field_scan_includes_search_strategy(monkeypatch: pytest.MonkeyPatch) -> None:
     """field_scan.json must contain the search_strategy block with expected keys."""
-    scanner = _OfflineFieldScanner()
+    def _fake_search(query: str, limit: int = 20) -> List[Dict[str, Any]]:
+        return [_make_fake_metadata(
+            openalex_id=f"https://openalex.org/W{abs(hash(query)) % 1000}",
+            title=f"Paper for '{query}'",
+        )]
+
+    monkeypatch.setattr(openalex_utils, "search_openalex", _fake_search)
+
+    scanner = FieldScannerAgent()
     _patch_planner(scanner, queries=["built environment health", "walkability"], used_fallback=False)
 
     state = {"domain_input": "public health urban", "execution_status": "starting"}
@@ -182,9 +211,17 @@ def test_field_scan_includes_search_strategy() -> None:
         assert q in data["query_hits"]
 
 
-def test_field_scanner_fallback_path() -> None:
+def test_field_scanner_fallback_path(monkeypatch: pytest.MonkeyPatch) -> None:
     """When planner returns used_fallback=True the scanner still runs correctly."""
-    scanner = _OfflineFieldScanner()
+    def _fake_search(query: str, limit: int = 20) -> List[Dict[str, Any]]:
+        return [_make_fake_metadata(
+            openalex_id="https://openalex.org/W_FB",
+            title="Fallback Paper",
+        )]
+
+    monkeypatch.setattr(openalex_utils, "search_openalex", _fake_search)
+
+    scanner = FieldScannerAgent()
     _patch_planner(scanner, queries=["my raw domain"], used_fallback=True)
 
     state = {"domain_input": "my raw domain", "execution_status": "starting"}

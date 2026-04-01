@@ -2,24 +2,17 @@ import json
 import os
 from typing import Any, Dict, List
 
-from tenacity import retry, stop_after_attempt, wait_exponential
-
 from agents import settings
 from agents.cache_utils import build_cache_key, load_json_cache, save_json_cache
 from agents.logging_config import get_logger
 from agents.openalex_utils import (
     configure_openalex,
     download_pdf,
-    extract_work_metadata,
+    multi_search_openalex,
 )
 from agents.keyword_planner import KeywordPlanner
 
 logger = get_logger(__name__)
-
-try:
-    from pyalex import Works
-except ImportError:  # pragma: no cover - exercised in dependency-light test envs
-    Works = None
 
 
 class LiteratureHarvester:
@@ -31,84 +24,6 @@ class LiteratureHarvester:
         self.references_bib = settings.references_bib_path()
         self.index_json = settings.literature_index_path()
         self._planner = KeywordPlanner()
-
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=30))
-    def search_openalex(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
-        """Searches OpenAlex for works matching the query."""
-        logger.info("Querying OpenAlex for: %s", query)
-        if Works is None:
-            logger.warning("OpenAlex search skipped: pyalex is not installed.")
-            return []
-        try:
-            works = (
-                Works()
-                .search(query)
-                .sort(cited_by_count="desc")
-                .get(per_page=limit)
-            )
-            results = []
-            for work in works[:limit]:
-                metadata = extract_work_metadata(work)
-                if not metadata["paperId"]:
-                    metadata["paperId"] = f"oa_{len(results)}"
-                results.append(metadata)
-            return results
-        except Exception as e:
-            logger.error("OpenAlex API Error: %s", e)
-            return []
-
-    def _multi_search(
-        self,
-        query_pool: List[str],
-        final_limit: int = 3,
-    ) -> tuple[List[Dict[str, Any]], List[str]]:
-        """
-        Run search_openalex for each query in *query_pool*, deduplicate by
-        openalex_id, and return up to *final_limit* papers.
-        """
-        per_query_limit = int(os.getenv("OPENALEX_QUERY_REWRITE_PER_QUERY_LIMIT", "5"))
-        seen_ids: set[str] = set()
-        merged: List[Dict[str, Any]] = []
-        queries_used: List[str] = []
-        cache_hours = float(os.getenv("OPENALEX_CACHE_HOURS", "48"))
-
-        for query in query_pool:
-            cache_key = build_cache_key(
-                "literature_openalex_query",
-                {"query": query, "limit": per_query_limit},
-            )
-            try:
-                cached = load_json_cache("openalex", cache_key, max_age_hours=cache_hours)
-                if isinstance(cached, list):
-                    results = cached
-                else:
-                    results = self.search_openalex(query, limit=per_query_limit)
-                    save_json_cache("openalex", cache_key, results)
-            except Exception as exc:
-                logger.warning("Query '%s' failed: %s", query, exc)
-                continue
-
-            if not results:
-                continue
-
-            queries_used.append(query)
-            for paper in results:
-                oa_id = (
-                    paper.get("openalex_id")
-                    or paper.get("paperId")
-                    or paper.get("doi")
-                    or paper.get("title", "")
-                )
-                if oa_id and oa_id in seen_ids:
-                    continue
-                if oa_id:
-                    seen_ids.add(oa_id)
-                merged.append(paper)
-
-            if len(merged) >= final_limit * 3:
-                break
-
-        return merged[:final_limit], queries_used
 
     def save_paper_info(self, paper: Dict[str, Any]) -> Dict[str, Any]:
         """Generates evidence card and updates indices."""
@@ -231,7 +146,14 @@ class LiteratureHarvester:
             len(query_pool), used_fallback, query_pool,
         )
 
-        papers, queries_used = self._multi_search(query_pool, final_limit=final_limit)
+        per_query_limit = int(os.getenv("OPENALEX_QUERY_REWRITE_PER_QUERY_LIMIT", "5"))
+        papers, query_hits = multi_search_openalex(
+            query_pool,
+            per_query_limit=per_query_limit,
+            final_limit=final_limit,
+            cache_prefix="literature_openalex_query",
+        )
+        queries_used = [q for q, hits in query_hits.items() if hits > 0]
 
         inventory = []
         for paper in papers:

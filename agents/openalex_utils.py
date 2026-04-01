@@ -163,6 +163,102 @@ def extract_work_metadata(work: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def search_openalex(query: str, limit: int = 20) -> List[Dict[str, Any]]:
+    """
+    Search OpenAlex for works matching *query*, sorted by citation count.
+
+    Returns a list of metadata dicts (via extract_work_metadata).  If pyalex
+    is not installed or the call fails, returns an empty list.
+    """
+    from agents.logging_config import get_logger
+    _logger = get_logger(__name__)
+
+    try:
+        from pyalex import Works as _Works
+    except ImportError:
+        _logger.warning("OpenAlex search skipped: pyalex is not installed.")
+        return []
+
+    _logger.info("Querying OpenAlex for: %s", query)
+    try:
+        works = (
+            _Works()
+            .search(query)
+            .sort(cited_by_count="desc")
+            .get(per_page=limit)
+        )
+        return [extract_work_metadata(w) for w in works[:limit]]
+    except Exception as e:
+        _logger.error("OpenAlex API Error: %s", e)
+        return []
+
+
+def multi_search_openalex(
+    query_pool: List[str],
+    *,
+    per_query_limit: int = 20,
+    final_limit: int | None = None,
+    cache_namespace: str = "openalex",
+    cache_prefix: str = "openalex_query",
+) -> tuple[List[Dict[str, Any]], Dict[str, int]]:
+    """
+    Execute one OpenAlex search per query, deduplicate by openalex_id,
+    and return (merged_results, query_hits).
+
+    If *final_limit* is set, stop collecting once enough unique papers are
+    gathered and truncate the result.
+    """
+    import os as _os
+    from agents.cache_utils import build_cache_key, load_json_cache, save_json_cache
+    from agents.logging_config import get_logger
+    _logger = get_logger(__name__)
+
+    cache_hours = float(_os.getenv("OPENALEX_CACHE_HOURS", "48"))
+    seen_ids: set[str] = set()
+    merged: List[Dict[str, Any]] = []
+    query_hits: Dict[str, int] = {}
+
+    for query in query_pool:
+        cache_key = build_cache_key(
+            cache_prefix,
+            {"query": query, "limit": per_query_limit},
+        )
+        cached = load_json_cache(cache_namespace, cache_key, max_age_hours=cache_hours)
+        try:
+            if isinstance(cached, list):
+                results = cached
+            else:
+                results = search_openalex(query, limit=per_query_limit)
+                save_json_cache(cache_namespace, cache_key, results)
+        except Exception as exc:
+            _logger.warning("Query '%s' failed: %s", query, exc)
+            query_hits[query] = 0
+            continue
+
+        query_hits[query] = len(results)
+
+        for paper in results:
+            oa_id = (
+                paper.get("openalex_id")
+                or paper.get("paperId")
+                or paper.get("doi")
+                or paper.get("title", "")
+            )
+            if oa_id and oa_id in seen_ids:
+                continue
+            if oa_id:
+                seen_ids.add(oa_id)
+            merged.append(paper)
+
+        if final_limit and len(merged) >= final_limit * 3:
+            break
+
+    if final_limit:
+        merged = merged[:final_limit]
+
+    return merged, query_hits
+
+
 def download_pdf(url: str, target_path: str, timeout: int = 20) -> Dict[str, Any]:
     """
     Download a PDF when the URL points to one.

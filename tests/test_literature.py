@@ -7,6 +7,7 @@ import pytest
 
 from agents.orchestrator import ResearchState
 from agents import literature_agent
+from agents import openalex_utils
 
 
 # ---------------------------------------------------------------------------
@@ -58,18 +59,6 @@ def _setup_dirs_and_plan(plan_content: str = '{"keywords": ["artificial intellig
         f.write(plan_content)
 
 
-def _patch_planner(harvester: literature_agent.LiteratureHarvester, queries: List[str]) -> None:
-    mock_plan = {
-        "query_pool": queries,
-        "topics": [{"label": q, "queries": [q]} for q in queries],
-        "primary_domains": [],
-        "methods": [],
-        "used_fallback": False,
-    }
-    harvester._planner = MagicMock()
-    harvester._planner.plan.return_value = mock_plan
-
-
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -80,11 +69,11 @@ def test_literature_node_offline(monkeypatch: pytest.MonkeyPatch) -> None:
 
     paper = _fake_paper()
 
-    def _fake_search(self: literature_agent.LiteratureHarvester, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+    def _fake_search(query: str, limit: int = 20) -> List[Dict[str, Any]]:
         assert query  # ensure query was built
         return [paper]
 
-    monkeypatch.setattr(literature_agent.LiteratureHarvester, "search_openalex", _fake_search)  # type: ignore[arg-type]
+    monkeypatch.setattr(openalex_utils, "search_openalex", _fake_search)
     monkeypatch.setattr(literature_agent, "download_pdf", _fake_download)
 
     state = ResearchState(
@@ -111,18 +100,16 @@ def test_literature_multi_query_deduplication(monkeypatch: pytest.MonkeyPatch) -
     call_count = {"n": 0}
     shared_paper = _fake_paper(paper_id="W_SHARED", title="Shared Paper")
 
-    def _fake_search(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+    def _fake_search(query: str, limit: int = 20) -> List[Dict[str, Any]]:
         call_count["n"] += 1
         return [shared_paper]
 
-    monkeypatch.setattr(literature_agent.LiteratureHarvester, "search_openalex", _fake_search)  # type: ignore[arg-type]
+    monkeypatch.setattr(openalex_utils, "search_openalex", _fake_search)
     monkeypatch.setattr(literature_agent, "download_pdf", _fake_download)
 
-    harvester = literature_agent.LiteratureHarvester()
-    _patch_planner(harvester, queries=["query alpha", "query beta", "query gamma"])
-
-    papers, queries_used = harvester._multi_search(
+    papers, query_hits = openalex_utils.multi_search_openalex(
         query_pool=["query alpha", "query beta", "query gamma"],
+        per_query_limit=5,
         final_limit=5,
     )
 
@@ -135,21 +122,22 @@ def test_literature_multi_query_collects_distinct_papers(monkeypatch: pytest.Mon
     """Distinct papers from different queries should all be collected."""
     _setup_dirs_and_plan()
 
-    def _fake_search(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+    def _fake_search(query: str, limit: int = 20) -> List[Dict[str, Any]]:
         return [_fake_paper(paper_id=f"W_{query.replace(' ', '_')}", title=f"Paper for {query}")]
 
-    monkeypatch.setattr(literature_agent.LiteratureHarvester, "search_openalex", _fake_search)  # type: ignore[arg-type]
+    monkeypatch.setattr(openalex_utils, "search_openalex", _fake_search)
     monkeypatch.setattr(literature_agent, "download_pdf", _fake_download)
 
-    harvester = literature_agent.LiteratureHarvester()
-    papers, queries_used = harvester._multi_search(
+    papers, query_hits = openalex_utils.multi_search_openalex(
         query_pool=["query alpha", "query beta", "query gamma"],
+        per_query_limit=5,
         final_limit=10,
     )
 
     titles = [p["title"] for p in papers]
     assert len(papers) == 3
-    assert len(queries_used) == 3
+    queries_with_hits = [q for q, h in query_hits.items() if h > 0]
+    assert len(queries_with_hits) == 3
 
 
 def test_literature_queries_used_written_to_context(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -163,10 +151,10 @@ def test_literature_queries_used_written_to_context(monkeypatch: pytest.MonkeyPa
 
     paper = _fake_paper()
 
-    def _fake_search(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+    def _fake_search(query: str, limit: int = 20) -> List[Dict[str, Any]]:
         return [paper]
 
-    monkeypatch.setattr(literature_agent.LiteratureHarvester, "search_openalex", _fake_search)  # type: ignore[arg-type]
+    monkeypatch.setattr(openalex_utils, "search_openalex", _fake_search)
     monkeypatch.setattr(literature_agent, "download_pdf", _fake_download)
 
     state = ResearchState(
@@ -194,10 +182,10 @@ def test_literature_fallback_when_planner_disabled(monkeypatch: pytest.MonkeyPat
 
     paper = _fake_paper()
 
-    def _fake_search(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+    def _fake_search(query: str, limit: int = 20) -> List[Dict[str, Any]]:
         return [paper]
 
-    monkeypatch.setattr(literature_agent.LiteratureHarvester, "search_openalex", _fake_search)  # type: ignore[arg-type]
+    monkeypatch.setattr(openalex_utils, "search_openalex", _fake_search)
     monkeypatch.setattr(literature_agent, "download_pdf", _fake_download)
 
     state = ResearchState(

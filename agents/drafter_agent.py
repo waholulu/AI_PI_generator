@@ -39,11 +39,38 @@ class DrafterAgent:
         except Exception:
             return "Failed to parse literature evidence."
 
+    def load_research_context(self, context_path: str) -> str:
+        if not os.path.exists(context_path):
+            return ""
+        try:
+            with open(context_path, "r", encoding="utf-8") as f:
+                ctx = json.load(f)
+            # Extract the most useful parts for drafting
+            parts = []
+            selected = ctx.get("selected_topic", {})
+            if selected.get("title"):
+                parts.append(f"Selected Topic: {selected['title']}")
+            if selected.get("quantitative_specs"):
+                parts.append(f"Quantitative Specs: {json.dumps(selected['quantitative_specs'], indent=2)}")
+            if selected.get("publishability"):
+                parts.append(f"Target Journals: {selected['publishability']}")
+            plan_ess = ctx.get("plan_essentials", {})
+            if plan_ess.get("research_questions"):
+                parts.append(f"Research Questions: {json.dumps(plan_ess['research_questions'])}")
+            if plan_ess.get("hypotheses"):
+                parts.append(f"Hypotheses: {json.dumps(plan_ess['hypotheses'])}")
+            if plan_ess.get("methodology"):
+                parts.append(f"Methodology: {json.dumps(plan_ess['methodology'], indent=2)}")
+            return "\n\n".join(parts)
+        except Exception:
+            return ""
+
     def run(self, state: ResearchState) -> ResearchState:
         logger.info("--- Module 3: Academic Drafter ---")
 
         plan_path = state.get("current_plan_path", settings.research_plan_path())
         index_path = state.get("literature_inventory_path", settings.literature_index_path())
+        context_path = state.get("research_context_path", settings.research_context_path())
 
         try:
             with open(plan_path, "r", encoding="utf-8") as f:
@@ -53,6 +80,7 @@ class DrafterAgent:
             plan = "Draft fallback plan"
 
         evidence = self.load_literature_evidence(index_path)
+        research_context = self.load_research_context(context_path)
         system_prompt = self.load_prompt()
 
         logger.info("Synthesizing Draft_v1.md via Gemini Pro...")
@@ -61,13 +89,17 @@ class DrafterAgent:
             if not self.llm:
                 raise ValueError("LLM not initialized")
 
-            prompt = PromptTemplate.from_template(
-                "{system}\n\nPLAN:\n{plan}\n\nEVIDENCE CARDS:\n{evidence}"
-            )
+            template = "{system}\n\nPLAN:\n{plan}\n\n"
+            if research_context:
+                template += "RESEARCH CONTEXT:\n{research_context}\n\n"
+            template += "EVIDENCE CARDS:\n{evidence}"
+
+            prompt = PromptTemplate.from_template(template)
             prompt_inputs = {
                 "system": system_prompt,
                 "plan": plan,
                 "evidence": evidence,
+                "research_context": research_context,
             }
 
             if isinstance(self.llm, ChatGoogleGenerativeAI):

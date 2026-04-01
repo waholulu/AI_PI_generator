@@ -3,122 +3,19 @@ import os
 from collections import Counter
 from typing import Any, Dict, List
 
-from tenacity import retry, stop_after_attempt, wait_exponential
-
 from agents import settings
 from agents.cache_utils import build_cache_key, load_json_cache, save_json_cache
 from agents.logging_config import get_logger
-from agents.openalex_utils import configure_openalex, extract_work_metadata
+from agents.openalex_utils import configure_openalex, multi_search_openalex
 from agents.keyword_planner import KeywordPlanner
 
 logger = get_logger(__name__)
-
-try:
-    from pyalex import Works
-except ImportError:  # pragma: no cover - exercised in dependency-light test envs
-    Works = None
 
 
 class FieldScannerAgent:
     def __init__(self):
         configure_openalex()
         self._planner = KeywordPlanner()
-
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=30))
-    def _search_openalex(self, query: str, limit: int = 20) -> Dict[str, Any]:
-        """Queries OpenAlex for top cited works matching the given domain query."""
-        logger.info("Querying OpenAlex for: %s", query)
-        if Works is None:
-            logger.warning("OpenAlex search skipped: pyalex is not installed.")
-            return {"organic_results": [], "total_results": 0}
-        try:
-            works = (
-                Works()
-                .search(query)
-                .sort(cited_by_count="desc")
-                .get(per_page=limit)
-            )
-            results = []
-            for work in works[:limit]:
-                metadata = extract_work_metadata(work)
-                results.append({
-                    "title": metadata["title"],
-                    "citations": metadata["citationCount"],
-                    "year": metadata["year"],
-                    "author": metadata["first_author"],
-                    "authors": metadata["author_names"],
-                    "concepts": [
-                        concept.get("name")
-                        for concept in metadata["broad_concepts"]
-                        if concept.get("name")
-                    ],
-                    "concept_details": metadata["broad_concepts"],
-                    "openalex_id": metadata["openalex_id"],
-                    "doi": metadata["doi"],
-                    "type": metadata["type"],
-                    "journal": metadata["journal"],
-                    "publication_date": metadata["publication_date"],
-                    "is_open_access": metadata["isOpenAccess"],
-                    "oa_status": metadata["oa_status"],
-                    "oa_url": metadata["oa_url"],
-                    "landing_page_url": metadata["landing_page_url"],
-                    "pdf_url": metadata["pdf_url"],
-                    "candidate_download_urls": metadata["candidate_download_urls"],
-                    "referenced_works_count": metadata["referenced_works_count"],
-                    "is_retracted": metadata["is_retracted"],
-                })
-            return {
-                "organic_results": results,
-                "total_results": len(results),
-            }
-        except Exception as e:
-            logger.error("OpenAlex search error: %s", e)
-            return {"organic_results": [], "total_results": 0}
-
-    def _multi_search(
-        self,
-        query_pool: List[str],
-        per_query_limit: int = 20,
-    ) -> tuple[List[Dict[str, Any]], Dict[str, int]]:
-        """
-        Execute one OpenAlex search per query in *query_pool*, deduplicate by
-        openalex_id, and return (merged_results, query_hits).
-        """
-        seen_ids: set[str] = set()
-        merged: List[Dict[str, Any]] = []
-        query_hits: Dict[str, int] = {}
-        cache_hours = float(os.getenv("OPENALEX_CACHE_HOURS", "48"))
-
-        for query in query_pool:
-            cache_key = build_cache_key(
-                "field_scan_openalex_query",
-                {"query": query, "limit": per_query_limit},
-            )
-            cached = load_json_cache("openalex", cache_key, max_age_hours=cache_hours)
-            try:
-                if isinstance(cached, dict):
-                    data = cached
-                else:
-                    data = self._search_openalex(query, limit=per_query_limit)
-                    save_json_cache("openalex", cache_key, data)
-            except Exception as exc:
-                logger.warning("Query '%s' failed: %s", query, exc)
-                query_hits[query] = 0
-                continue
-
-            results = data.get("organic_results") or []
-            query_hits[query] = len(results)
-
-            for result in results:
-                oa_id = result.get("openalex_id") or result.get("doi") or result.get("title", "")
-                if oa_id and oa_id in seen_ids:
-                    continue
-                if oa_id:
-                    seen_ids.add(oa_id)
-                result.setdefault("matched_query", query)
-                merged.append(result)
-
-        return merged, query_hits
 
     def run(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """Executes the field scan to generate constraints for ideation."""
@@ -141,7 +38,38 @@ class FieldScannerAgent:
         )
 
         try:
-            top_results, query_hits = self._multi_search(query_pool, per_query_limit=per_query_limit)
+            top_results_raw, query_hits = multi_search_openalex(
+                query_pool,
+                per_query_limit=per_query_limit,
+                cache_prefix="field_scan_openalex_query",
+            )
+            # Convert full metadata to field-scan view with concept names
+            top_results = []
+            for m in top_results_raw:
+                top_results.append({
+                    "title": m["title"],
+                    "citations": m["citationCount"],
+                    "year": m["year"],
+                    "author": m["first_author"],
+                    "authors": m["author_names"],
+                    "concepts": [
+                        c.get("name") for c in m.get("broad_concepts", []) if c.get("name")
+                    ],
+                    "concept_details": m.get("broad_concepts", []),
+                    "openalex_id": m["openalex_id"],
+                    "doi": m["doi"],
+                    "type": m["type"],
+                    "journal": m["journal"],
+                    "publication_date": m["publication_date"],
+                    "is_open_access": m["isOpenAccess"],
+                    "oa_status": m["oa_status"],
+                    "oa_url": m["oa_url"],
+                    "landing_page_url": m["landing_page_url"],
+                    "pdf_url": m["pdf_url"],
+                    "candidate_download_urls": m["candidate_download_urls"],
+                    "referenced_works_count": m["referenced_works_count"],
+                    "is_retracted": m["is_retracted"],
+                })
         except Exception as e:
             logger.warning("Failed to scan OpenAlex (%s).", e)
             top_results = []

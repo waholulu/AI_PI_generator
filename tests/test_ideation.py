@@ -10,11 +10,10 @@ from agents import ideation_agent
 
 class _FakeStructuredLLM:
     """
-    Fake structured LLM that handles every schema used by the new pipeline:
+    Fake structured LLM that handles every schema used by the pipeline:
       - LightCandidateTopicsList   (Step 1 – lightweight generation)
-      - TopicScoresList            (Step 2 – initial screening)
-      - FinalRankScoresList        (Step 3 – final selection)
-      - RawCandidateTopicsList     (Step 4 – enrichment, but offline path bypasses this)
+      - TopicScoresList            (Step 2 – combined screening + ranking)
+      - RawCandidateTopic          (Step 4 – enrichment, but offline path bypasses this)
     """
 
     def __init__(self, schema: Any, *_: Any, **__: Any) -> None:  # pragma: no cover
@@ -33,13 +32,14 @@ class _FakeStructuredLLM:
 
             return _Resp()
 
-        # Step 2: initial screening
+        # Step 2: combined screening + ranking
         if self._schema is getattr(ideation_agent, "TopicScoresList", None):
             score_obj = ideation_agent.TopicScore(
                 title="Test Topic",
                 score=85,
                 passed_gates=True,
                 rejection_reason="",
+                rank=1,
             )
 
             class _Resp:
@@ -47,24 +47,11 @@ class _FakeStructuredLLM:
 
             return _Resp()
 
-        # Step 3: final selection / re-ranking
-        if self._schema is getattr(ideation_agent, "FinalRankScoresList", None):
-            rank_obj = ideation_agent.FinalRankScore(
-                title="Test Topic",
-                rank=1,
-                final_score=90,
-            )
-
-            class _Resp:
-                top_candidates: List[ideation_agent.FinalRankScore] = [rank_obj]
-
-            return _Resp()
-
-        # Step 4: enrichment (RawCandidateTopicsList) — the offline branch in
+        # Step 4: enrichment (RawCandidateTopic) — the offline branch in
         # _enrich_single() returns early via isinstance check so this path is
         # not reached in offline tests, but kept for completeness.
-        if self._schema is getattr(ideation_agent, "RawCandidateTopicsList", None):
-            enriched = ideation_agent.RawCandidateTopic(
+        if self._schema is getattr(ideation_agent, "RawCandidateTopic", None):
+            return ideation_agent.RawCandidateTopic(
                 title="Test Topic",
                 impact_evidence="High impact justification",
                 novelty_gap_type="Problem Gap",
@@ -82,11 +69,6 @@ class _FakeStructuredLLM:
                     ideation_agent.DataSource(name="US Census", accessibility="Public API")
                 ],
             )
-
-            class _Resp:
-                candidates: List[ideation_agent.RawCandidateTopic] = [enriched]
-
-            return _Resp()
 
         raise RuntimeError(f"Unsupported schema passed to _FakeStructuredLLM: {self._schema}")
 
