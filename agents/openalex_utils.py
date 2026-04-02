@@ -163,7 +163,13 @@ def extract_work_metadata(work: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def search_openalex(query: str, limit: int = 20) -> List[Dict[str, Any]]:
+def search_openalex(
+    query: str,
+    limit: int = 20,
+    *,
+    from_publication_date: str | None = None,
+    to_publication_date: str | None = None,
+) -> List[Dict[str, Any]]:
     """
     Search OpenAlex for works matching *query*, sorted by citation count.
 
@@ -181,12 +187,16 @@ def search_openalex(query: str, limit: int = 20) -> List[Dict[str, Any]]:
 
     _logger.info("Querying OpenAlex for: %s", query)
     try:
-        works = (
-            _Works()
-            .search(query)
-            .sort(cited_by_count="desc")
-            .get(per_page=limit)
-        )
+        works_api = _Works().search(query)
+        if from_publication_date or to_publication_date:
+            filters: Dict[str, str] = {}
+            if from_publication_date:
+                filters["from_publication_date"] = from_publication_date
+            if to_publication_date:
+                filters["to_publication_date"] = to_publication_date
+            works_api = works_api.filter(**filters)
+
+        works = works_api.sort(cited_by_count="desc").get(per_page=limit)
         return [extract_work_metadata(w) for w in works[:limit]]
     except Exception as e:
         _logger.error("OpenAlex API Error: %s", e)
@@ -200,6 +210,8 @@ def multi_search_openalex(
     final_limit: int | None = None,
     cache_namespace: str = "openalex",
     cache_prefix: str = "openalex_query",
+    from_publication_date: str | None = None,
+    to_publication_date: str | None = None,
 ) -> tuple[List[Dict[str, Any]], Dict[str, int]]:
     """
     Execute one OpenAlex search per query, deduplicate by openalex_id,
@@ -221,14 +233,24 @@ def multi_search_openalex(
     for query in query_pool:
         cache_key = build_cache_key(
             cache_prefix,
-            {"query": query, "limit": per_query_limit},
+            {
+                "query": query,
+                "limit": per_query_limit,
+                "from_publication_date": from_publication_date,
+                "to_publication_date": to_publication_date,
+            },
         )
         cached = load_json_cache(cache_namespace, cache_key, max_age_hours=cache_hours)
         try:
             if isinstance(cached, list):
                 results = cached
             else:
-                results = search_openalex(query, limit=per_query_limit)
+                results = search_openalex(
+                    query,
+                    limit=per_query_limit,
+                    from_publication_date=from_publication_date,
+                    to_publication_date=to_publication_date,
+                )
                 save_json_cache(cache_namespace, cache_key, results)
         except Exception as exc:
             _logger.warning("Query '%s' failed: %s", query, exc)

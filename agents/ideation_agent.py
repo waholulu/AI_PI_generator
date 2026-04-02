@@ -2,7 +2,7 @@ import json
 import os
 import csv
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any
 from pydantic import BaseModel, Field
 from langchain_core.prompts import ChatPromptTemplate
@@ -15,6 +15,8 @@ from agents.memory_retriever import MemoryRetriever
 from agents.orchestrator import ResearchState
 from agents.field_scanner_agent import summarize_field_scan
 from agents.cache_utils import build_cache_key, load_json_cache, save_json_cache
+from agents.keyword_planner import KeywordPlanner
+from agents.openalex_utils import multi_search_openalex
 
 logger = get_logger(__name__)
 
@@ -103,6 +105,21 @@ class ResearchPlanSchema(BaseModel):
     methodology: dict
 
 
+class NoveltyQueryPlan(BaseModel):
+    queries: List[str] = Field(description="2-3 precise OpenAlex queries for novelty check.")
+
+
+class PaperOverlapAssessment(BaseModel):
+    paper_openalex_id: str = Field(description="OpenAlex ID of the paper being assessed.")
+    overlap_score: int = Field(description="0-100 overlap score. 100 means almost identical research contribution.")
+    rationale: str = Field(description="Short explanation of overlap judgment.")
+
+
+class NoveltyAssessment(BaseModel):
+    novelty_verdict: str = Field(description="One of: novel, partially_overlapping, already_published.")
+    assessments: List[PaperOverlapAssessment] = Field(description="Per-paper overlap assessments.")
+
+
 # ---------------------------------------------------------------------------
 # Long-term archive helper
 # ---------------------------------------------------------------------------
@@ -154,6 +171,131 @@ class IdeationAgent:
         self.fast_llm = ChatGoogleGenerativeAI(model=fast_model, temperature=0.7)
         self.pro_llm = ChatGoogleGenerativeAI(model=pro_model, temperature=0.2)
         self.memory = MemoryRetriever()
+        self.keyword_planner = KeywordPlanner()
+
+    def _generate_novelty_queries(self, candidate: Dict[str, Any], domain: str) -> List[str]:
+        title = str(candidate.get("title", "")).strip()
+        rationale = str(candidate.get("brief_rationale", "")).strip()
+        base = f"{title}. {rationale}".strip()
+
+        try:
+            if self.fast_llm:
+                structured_llm = self.fast_llm.with_structured_output(NoveltyQueryPlan)
+                prompt = (
+                    "Generate exactly 2-3 precise OpenAlex search queries for novelty check.\n"
+                    "Each query should be concise and targeted to detect prior near-identical studies.\n"
+                    "Avoid Boolean operators and quotes.\n\n"
+                    f"Domain: {domain}\n"
+                    f"Idea title: {title}\n"
+                    f"Idea summary: {base}\n"
+                )
+                result = structured_llm.invoke(prompt)
+                queries = [q.strip() for q in result.queries if q.strip()]
+                if queries:
+                    return queries[:3]
+        except Exception as exc:
+            logger.warning("Novelty query generation via schema failed for '%s': %s", title, exc)
+
+        try:
+            planned = self.keyword_planner.plan(base or title or domain, extra_context=domain)
+            query_pool = [q.strip() for q in planned.get("query_pool", []) if q and q.strip()]
+            if query_pool:
+                return query_pool[:3]
+        except Exception as exc:
+            logger.warning("KeywordPlanner fallback failed for '%s': %s", title, exc)
+
+        fallback = [q for q in [title, f"{title} causal inference", domain] if q]
+        return fallback[:3]
+
+    def _run_novelty_check(
+        self,
+        candidate: Dict[str, Any],
+        domain: str,
+        months_back: int = 15,
+    ) -> Dict[str, Any]:
+        title = str(candidate.get("title", "")).strip()
+        queries = self._generate_novelty_queries(candidate, domain)
+
+        end_date = datetime.now(timezone.utc).date()
+        start_date = end_date - timedelta(days=30 * months_back)
+        papers, _ = multi_search_openalex(
+            queries,
+            per_query_limit=int(os.getenv("NOVELTY_PER_QUERY_LIMIT", "8")),
+            final_limit=int(os.getenv("NOVELTY_FINAL_LIMIT", "10")),
+            cache_namespace="openalex_novelty",
+            cache_prefix="openalex_novelty_query",
+            from_publication_date=start_date.isoformat(),
+            to_publication_date=end_date.isoformat(),
+        )
+
+        if not papers:
+            return {
+                "novelty_verdict": "novel",
+                "novelty_queries": queries,
+                "novelty_date_window": {
+                    "from_publication_date": start_date.isoformat(),
+                    "to_publication_date": end_date.isoformat(),
+                },
+                "novelty_top_papers": [],
+                "novelty_assessment_notes": "No recent OpenAlex results; defaulted to novel.",
+            }
+
+        shortlist = papers[: min(len(papers), 6)]
+        paper_payload = [
+            {
+                "paper_openalex_id": p.get("openalex_id", ""),
+                "title": p.get("title", ""),
+                "abstract": p.get("abstract", ""),
+                "year": p.get("year"),
+                "doi": p.get("doi"),
+            }
+            for p in shortlist
+        ]
+
+        assessment: NoveltyAssessment | None = None
+        try:
+            if self.pro_llm:
+                structured_llm = self.pro_llm.with_structured_output(NoveltyAssessment)
+                prompt = (
+                    "You are evaluating novelty risk for a research idea.\n"
+                    "Compare the idea with each candidate paper (title + abstract) and judge substantive overlap.\n"
+                    "Return one verdict in {novel, partially_overlapping, already_published}.\n\n"
+                    f"Idea title: {title}\n"
+                    f"Idea rationale: {candidate.get('brief_rationale', '')}\n"
+                    f"Candidate papers: {json.dumps(paper_payload, ensure_ascii=False)}\n"
+                )
+                assessment = structured_llm.invoke(prompt)
+        except Exception as exc:
+            logger.warning("Novelty assessment LLM failed for '%s': %s", title, exc)
+
+        if assessment is None:
+            return {
+                "novelty_verdict": "partially_overlapping",
+                "novelty_queries": queries,
+                "novelty_date_window": {
+                    "from_publication_date": start_date.isoformat(),
+                    "to_publication_date": end_date.isoformat(),
+                },
+                "novelty_top_papers": paper_payload[:2],
+                "novelty_assessment_notes": "Fallback verdict due to LLM assessment failure.",
+            }
+
+        scored = sorted(assessment.assessments, key=lambda x: x.overlap_score, reverse=True)
+        best_ids = [s.paper_openalex_id for s in scored[:2] if s.paper_openalex_id]
+        top_refs = [p for p in paper_payload if p.get("paper_openalex_id") in best_ids]
+        if not top_refs:
+            top_refs = paper_payload[:2]
+
+        return {
+            "novelty_verdict": assessment.novelty_verdict,
+            "novelty_queries": queries,
+            "novelty_date_window": {
+                "from_publication_date": start_date.isoformat(),
+                "to_publication_date": end_date.isoformat(),
+            },
+            "novelty_top_papers": top_refs,
+            "novelty_assessment_notes": [a.model_dump() for a in scored[:3]],
+        }
 
     def run(self, state: ResearchState) -> ResearchState:
         domain = state.get("domain_input", "Urban Green Space and Inequality")
@@ -272,7 +414,7 @@ class IdeationAgent:
         final_top_n = int(os.getenv("FINAL_TOP_N", "3"))
         logger.info("Scoring, screening, and ranking candidates (Step 2) — selecting top %d...", final_top_n)
 
-        def _screen_and_rank() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        def _screen_and_rank() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
             scoring_model_choice = os.getenv("SCORING_MODEL", "pro").lower()
             scoring_llm = self.fast_llm if scoring_model_choice == "fast" else (self.pro_llm or self.fast_llm)
             if not scoring_llm:
@@ -332,9 +474,11 @@ class IdeationAgent:
             rejected = [c for c in scored_all if not c.get("passed_gates")]
             ranked = [c for c in scored_all if c.get("rank", 0) > 0]
             ranked.sort(key=lambda x: x.get("rank", 999))
-            return ranked[:final_top_n], rejected
+            passed_all = [c for c in scored_all if c.get("passed_gates")]
+            passed_all.sort(key=lambda x: x.get("initial_score", 0), reverse=True)
+            return ranked[:final_top_n], rejected, passed_all
 
-        top3, rejected_candidates = _screen_and_rank()
+        top3, rejected_candidates, passed_candidates_pool = _screen_and_rank()
 
         if not top3:
             logger.warning("No ranked candidates from screening; falling back to top scorers.")
@@ -409,6 +553,57 @@ class IdeationAgent:
                 raise RuntimeError(f"Enrichment failed for candidate {i + 1}: {e}") from e
 
         logger.info("Step 3 complete: %d candidates enriched.", len(enriched_top3))
+
+        # Step 3.5: Novelty check for top ideas with targeted recent OpenAlex search
+        logger.info("Step 3.5: Running targeted novelty checks on selected ideas...")
+        novelty_months_back = int(os.getenv("NOVELTY_MONTHS_BACK", "15"))
+        selected_titles = {str(c.get("title", "")).strip().lower() for c in enriched_top3}
+        novelty_rejected: List[Dict[str, Any]] = []
+
+        for idx, candidate in enumerate(enriched_top3):
+            novelty_info = self._run_novelty_check(candidate, domain=domain, months_back=novelty_months_back)
+            candidate.update(novelty_info)
+            candidate["novelty_checked"] = True
+            candidate["novelty_checked_at"] = datetime.now(timezone.utc).isoformat()
+            if candidate.get("novelty_verdict") == "already_published":
+                novelty_rejected.append(candidate)
+
+        if novelty_rejected:
+            logger.info("Novelty gate removed %d ideas as already_published. Attempting replacements...", len(novelty_rejected))
+            enriched_top3 = [c for c in enriched_top3 if c.get("novelty_verdict") != "already_published"]
+            for removed in novelty_rejected:
+                removed["passed_gates"] = False
+                removed["rejection_reason"] = "Failed novelty gate: already_published."
+                removed["rejected_by_novelty_gate"] = True
+                rejected_candidates.append(removed)
+
+            for backup in passed_candidates_pool:
+                backup_title = str(backup.get("title", "")).strip().lower()
+                if backup_title in selected_titles:
+                    continue
+                try:
+                    enriched_backup = _enrich_single(backup)
+                    novelty_info = self._run_novelty_check(enriched_backup, domain=domain, months_back=novelty_months_back)
+                    enriched_backup.update(novelty_info)
+                    enriched_backup["novelty_checked"] = True
+                    enriched_backup["novelty_checked_at"] = datetime.now(timezone.utc).isoformat()
+                    selected_titles.add(backup_title)
+                    if enriched_backup.get("novelty_verdict") == "already_published":
+                        enriched_backup["passed_gates"] = False
+                        enriched_backup["rejection_reason"] = "Failed novelty gate: already_published."
+                        enriched_backup["rejected_by_novelty_gate"] = True
+                        rejected_candidates.append(enriched_backup)
+                        continue
+                    enriched_top3.append(enriched_backup)
+                    if len(enriched_top3) >= final_top_n:
+                        break
+                except Exception as exc:
+                    logger.warning("Failed to evaluate replacement candidate '%s': %s", backup.get("title", ""), exc)
+
+            enriched_top3 = enriched_top3[:final_top_n]
+
+        for i, c in enumerate(enriched_top3):
+            c["rank"] = i + 1
 
         # Save outputs
         with open(screening_path, "w", encoding="utf-8") as f:
