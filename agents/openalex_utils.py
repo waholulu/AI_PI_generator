@@ -166,12 +166,16 @@ def extract_work_metadata(work: Dict[str, Any]) -> Dict[str, Any]:
 def search_openalex(
     query: str,
     limit: int = 20,
+    from_year: int | None = None,
     *,
     from_publication_date: str | None = None,
     to_publication_date: str | None = None,
 ) -> List[Dict[str, Any]]:
     """
     Search OpenAlex for works matching *query*, sorted by citation count.
+
+    If *from_year* is provided, only works published on or after that year
+    are returned (uses OpenAlex ``from_publication_date`` filter).
 
     Returns a list of metadata dicts (via extract_work_metadata).  If pyalex
     is not installed or the call fails, returns an empty list.
@@ -185,18 +189,19 @@ def search_openalex(
         _logger.warning("OpenAlex search skipped: pyalex is not installed.")
         return []
 
-    _logger.info("Querying OpenAlex for: %s", query)
+    _logger.info("Querying OpenAlex for: %s (from_year=%s)", query, from_year)
     try:
-        works_api = _Works().search(query)
-        if from_publication_date or to_publication_date:
-            filters: Dict[str, str] = {}
-            if from_publication_date:
-                filters["from_publication_date"] = from_publication_date
-            if to_publication_date:
-                filters["to_publication_date"] = to_publication_date
-            works_api = works_api.filter(**filters)
-
-        works = works_api.sort(cited_by_count="desc").get(per_page=limit)
+        chain = _Works().search(query)
+        filters: Dict[str, str] = {}
+        if from_year is not None:
+            filters["from_publication_date"] = f"{from_year}-01-01"
+        if from_publication_date:
+            filters["from_publication_date"] = from_publication_date
+        if to_publication_date:
+            filters["to_publication_date"] = to_publication_date
+        if filters:
+            chain = chain.filter(**filters)
+        works = chain.sort(cited_by_count="desc").get(per_page=limit)
         return [extract_work_metadata(w) for w in works[:limit]]
     except Exception as e:
         _logger.error("OpenAlex API Error: %s", e)
@@ -208,6 +213,7 @@ def multi_search_openalex(
     *,
     per_query_limit: int = 20,
     final_limit: int | None = None,
+    from_year: int | None = None,
     cache_namespace: str = "openalex",
     cache_prefix: str = "openalex_query",
     from_publication_date: str | None = None,
@@ -217,8 +223,9 @@ def multi_search_openalex(
     Execute one OpenAlex search per query, deduplicate by openalex_id,
     and return (merged_results, query_hits).
 
-    If *final_limit* is set, stop collecting once enough unique papers are
-    gathered and truncate the result.
+    If *from_year* is provided, only works published on or after that year
+    are returned.  If *final_limit* is set, stop collecting once enough
+    unique papers are gathered and truncate the result.
     """
     import os as _os
     from agents.cache_utils import build_cache_key, load_json_cache, save_json_cache
@@ -236,6 +243,7 @@ def multi_search_openalex(
             {
                 "query": query,
                 "limit": per_query_limit,
+                "from_year": from_year,
                 "from_publication_date": from_publication_date,
                 "to_publication_date": to_publication_date,
             },
@@ -248,6 +256,7 @@ def multi_search_openalex(
                 results = search_openalex(
                     query,
                     limit=per_query_limit,
+                    from_year=from_year,
                     from_publication_date=from_publication_date,
                     to_publication_date=to_publication_date,
                 )

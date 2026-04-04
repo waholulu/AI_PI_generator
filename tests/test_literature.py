@@ -69,7 +69,7 @@ def test_literature_node_offline(monkeypatch: pytest.MonkeyPatch) -> None:
 
     paper = _fake_paper()
 
-    def _fake_search(query: str, limit: int = 20) -> List[Dict[str, Any]]:
+    def _fake_search(query: str, limit: int = 20, from_year: int | None = None) -> List[Dict[str, Any]]:
         assert query  # ensure query was built
         return [paper]
 
@@ -100,7 +100,7 @@ def test_literature_multi_query_deduplication(monkeypatch: pytest.MonkeyPatch) -
     call_count = {"n": 0}
     shared_paper = _fake_paper(paper_id="W_SHARED", title="Shared Paper")
 
-    def _fake_search(query: str, limit: int = 20) -> List[Dict[str, Any]]:
+    def _fake_search(query: str, limit: int = 20, from_year: int | None = None) -> List[Dict[str, Any]]:
         call_count["n"] += 1
         return [shared_paper]
 
@@ -122,7 +122,7 @@ def test_literature_multi_query_collects_distinct_papers(monkeypatch: pytest.Mon
     """Distinct papers from different queries should all be collected."""
     _setup_dirs_and_plan()
 
-    def _fake_search(query: str, limit: int = 20) -> List[Dict[str, Any]]:
+    def _fake_search(query: str, limit: int = 20, from_year: int | None = None) -> List[Dict[str, Any]]:
         return [_fake_paper(paper_id=f"W_{query.replace(' ', '_')}", title=f"Paper for {query}")]
 
     monkeypatch.setattr(openalex_utils, "search_openalex", _fake_search)
@@ -151,7 +151,7 @@ def test_literature_queries_used_written_to_context(monkeypatch: pytest.MonkeyPa
 
     paper = _fake_paper()
 
-    def _fake_search(query: str, limit: int = 20) -> List[Dict[str, Any]]:
+    def _fake_search(query: str, limit: int = 20, from_year: int | None = None) -> List[Dict[str, Any]]:
         return [paper]
 
     monkeypatch.setattr(openalex_utils, "search_openalex", _fake_search)
@@ -182,7 +182,7 @@ def test_literature_fallback_when_planner_disabled(monkeypatch: pytest.MonkeyPat
 
     paper = _fake_paper()
 
-    def _fake_search(query: str, limit: int = 20) -> List[Dict[str, Any]]:
+    def _fake_search(query: str, limit: int = 20, from_year: int | None = None) -> List[Dict[str, Any]]:
         return [paper]
 
     monkeypatch.setattr(openalex_utils, "search_openalex", _fake_search)

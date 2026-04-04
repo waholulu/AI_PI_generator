@@ -1,14 +1,17 @@
+import json
+import os
 import sys
 from datetime import datetime
 
 from dotenv import load_dotenv
 
-from agents import orchestrator
+from agents import orchestrator, settings
 
 
 NODE_DISPLAY_NAMES = {
     "field_scanner": "领域扫描与版图分析",
     "ideation": "研究方向与选题生成",
+    "idea_validator": "选题验证（原创性 + 数据可用性）",
     "literature": "文献检索与知识盘点",
     "drafter": "研究计划与内容撰写",
     "data_fetcher": "数据资源与材料整理",
@@ -17,6 +20,7 @@ NODE_DISPLAY_NAMES = {
 NODE_ORDER = [
     "field_scanner",
     "ideation",
+    "idea_validator",
     "literature",
     "drafter",
     "data_fetcher",
@@ -79,6 +83,52 @@ def _check_hitl_interrupt(graph, config) -> bool:
     return bool(snapshot.next)
 
 
+def _display_validation_report():
+    """Show a summary of idea validation results at the HITL checkpoint."""
+    validation_path = settings.idea_validation_path()
+    if not os.path.exists(validation_path):
+        return
+    try:
+        with open(validation_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return
+
+    print()
+    _log("--- 选题验证报告 ---", level="HITL")
+    subs = report.get("substitutions_made", 0)
+    if subs > 0:
+        _log(f"共进行 {subs} 次替补", level="HITL")
+
+    for idea in report.get("validated_ideas", []):
+        verdict = idea.get("overall_verdict", "?")
+        novelty = idea.get("novelty", {}).get("verdict", "?")
+        title = idea.get("title", "?")[:60]
+        rank = idea.get("rank", "?")
+        tag = {"passed": "✓", "warning": "⚠", "failed": "✗"}.get(verdict, "?")
+        _log(f"  [{tag}] #{rank} {title}", level="HITL")
+        _log(f"      原创性: {novelty}", level="HITL")
+
+        # Show data source status
+        data_checks = idea.get("data_availability", [])
+        verified = sum(1 for d in data_checks if d.get("status") == "verified")
+        total = len(data_checks)
+        if total > 0:
+            _log(f"      数据源: {verified}/{total} 已验证", level="HITL")
+
+        # Show similar papers if any
+        similar = idea.get("novelty", {}).get("similar_papers", [])
+        for sp in similar[:2]:
+            sp_title = sp.get("title", "?")[:50]
+            sp_verdict = sp.get("similarity_verdict", "?")
+            _log(f"      → [{sp_verdict}] {sp_title}", level="HITL")
+
+        if idea.get("failure_reasons"):
+            for reason in idea["failure_reasons"]:
+                _log(f"      ⚠ {reason}", level="HITL")
+    print()
+
+
 def main():
     _print_banner()
 
@@ -122,6 +172,7 @@ def main():
             print("=" * 60)
             _log(f"工作流在以下节点前暂停（HITL 检查点）：{pending_names}", level="HITL")
             _log("请检查 output/ 目录下的中间产物（选题、研究计划等）。", level="HITL")
+            _display_validation_report()
             print("=" * 60)
 
             choice = input("\n是否继续执行后续节点？(y/n): ").strip().lower()

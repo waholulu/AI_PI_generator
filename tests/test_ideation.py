@@ -115,6 +115,8 @@ def test_ideation_node_offline(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "candidates" in data
     assert data["candidates"], "Expected at least one enriched candidate"
     assert "run_id" in data, "topic_screening.json should carry run_id"
+    assert "backup_candidates" in data, "topic_screening.json should carry backup_candidates"
+    assert isinstance(data["backup_candidates"], list), "backup_candidates must be a list"
 
     top = data["candidates"][0]
     assert top["title"] == "Test Topic"

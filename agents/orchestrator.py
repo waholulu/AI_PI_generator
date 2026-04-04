@@ -17,6 +17,7 @@ class ResearchState(TypedDict):
     field_scan_path: str
     candidate_topics_path: str
     current_plan_path: str
+    validation_report_path: str
     literature_inventory_path: str
     draft_content_path: str
     raw_data_manifest_path: str
@@ -40,6 +41,7 @@ def build_orchestrator():
     """Builds and compiles the LangGraph workflow."""
     from agents.field_scanner_agent import field_scanner_node
     from agents.ideation_agent import ideation_node
+    from agents.idea_validator_agent import idea_validator_node
     from agents.literature_agent import literature_node
     from agents.drafter_agent import drafter_node
     from agents.data_fetcher_agent import data_fetcher_node
@@ -49,6 +51,7 @@ def build_orchestrator():
     # Add actual nodes
     builder.add_node("field_scanner", field_scanner_node)
     builder.add_node("ideation", ideation_node)
+    builder.add_node("idea_validator", idea_validator_node)
     builder.add_node("literature", literature_node)
     builder.add_node("drafter", drafter_node)
     builder.add_node("data_fetcher", data_fetcher_node)
@@ -56,7 +59,8 @@ def build_orchestrator():
     # Define edges (linear default path)
     builder.add_edge(START, "field_scanner")
     builder.add_edge("field_scanner", "ideation")
-    builder.add_edge("ideation", "literature")
+    builder.add_edge("ideation", "idea_validator")
+    builder.add_edge("idea_validator", "literature")
     builder.add_edge("literature", "drafter")
     builder.add_edge("drafter", "data_fetcher")
     builder.add_edge("data_fetcher", END)

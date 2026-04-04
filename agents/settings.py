@@ -194,6 +194,14 @@ def enriched_top_candidates_path() -> str:
     return str(memory_dir() / "enriched_top_candidates.jsonl")
 
 
+def idea_validation_path() -> str:
+    return str(output_dir() / "idea_validation.json")
+
+
+def data_source_registry_path() -> str:
+    return str(prompts_dir() / "data_source_registry.json")
+
+
 # Prompts
 def academic_drafter_prompt_path() -> str:
     return str(prompts_dir() / "academic_drafter.txt")
