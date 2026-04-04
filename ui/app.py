@@ -60,12 +60,43 @@ with col2:
                     with open(plan_path, "r", encoding="utf-8") as f:
                         plan_data = json.load(f)
                     st.json(plan_data)
-                    st.markdown("**Approve to continue harvesting literature and data.**")
-                    if st.button("Approve & Continue"):
-                        st.spinner("Resuming...")
-                        for event in graph.stream(None, config, stream_mode="values"):
-                            pass
-                        st.rerun()
+
+                # Show validation report if available
+                from agents import settings as _settings
+                validation_path = state_values.get(
+                    "validation_report_path", _settings.idea_validation_path()
+                )
+                if os.path.exists(validation_path):
+                    st.subheader("选题验证报告")
+                    with open(validation_path, "r", encoding="utf-8") as f:
+                        val_report = json.load(f)
+                    subs = val_report.get("substitutions_made", 0)
+                    if subs > 0:
+                        st.warning(f"共进行 {subs} 次替补")
+                    for idea in val_report.get("validated_ideas", []):
+                        verdict = idea.get("overall_verdict", "?")
+                        icon = {"passed": "✅", "warning": "⚠️", "failed": "❌"}.get(verdict, "❓")
+                        title = idea.get("title", "?")
+                        novelty = idea.get("novelty", {}).get("verdict", "?")
+                        data_checks = idea.get("data_availability", [])
+                        verified = sum(1 for d in data_checks if d.get("status") == "verified")
+                        total = len(data_checks)
+                        with st.expander(f"{icon} #{idea.get('rank', '?')} {title}"):
+                            st.write(f"**原创性**: {novelty}")
+                            if total > 0:
+                                st.write(f"**数据源**: {verified}/{total} 已验证")
+                            for sp in idea.get("novelty", {}).get("similar_papers", [])[:3]:
+                                st.write(f"- [{sp.get('similarity_verdict', '?')}] {sp.get('title', '?')}")
+                            if idea.get("failure_reasons"):
+                                for reason in idea["failure_reasons"]:
+                                    st.error(reason)
+
+                st.markdown("**Approve to continue harvesting literature and data.**")
+                if st.button("Approve & Continue"):
+                    st.spinner("Resuming...")
+                    for event in graph.stream(None, config, stream_mode="values"):
+                        pass
+                    st.rerun()
 
         st.subheader("Files Generated (Pointers)")
         st.json(state_values)

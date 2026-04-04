@@ -332,15 +332,23 @@ class IdeationAgent:
             rejected = [c for c in scored_all if not c.get("passed_gates")]
             ranked = [c for c in scored_all if c.get("rank", 0) > 0]
             ranked.sort(key=lambda x: x.get("rank", 999))
-            return ranked[:final_top_n], rejected
+            # Passed but not ranked in top N — potential backups
+            passed_but_unranked = [
+                c for c in scored_all
+                if c.get("passed_gates") and c.get("rank", 0) == 0
+            ]
+            passed_but_unranked.sort(key=lambda x: x.get("initial_score", 0), reverse=True)
+            backup = ranked[final_top_n:] + passed_but_unranked
+            return ranked[:final_top_n], rejected, backup
 
-        top3, rejected_candidates = _screen_and_rank()
+        top3, rejected_candidates, backup_candidates = _screen_and_rank()
 
         if not top3:
             logger.warning("No ranked candidates from screening; falling back to top scorers.")
             all_scored = [c for c in light_candidates]
             all_scored.sort(key=lambda x: x.get("initial_score", 0), reverse=True)
             top3 = all_scored[:final_top_n]
+            backup_candidates = all_scored[final_top_n:]
             for i, c in enumerate(top3):
                 c["rank"] = i + 1
                 c["final_score"] = c.get("initial_score", 0)
@@ -413,7 +421,12 @@ class IdeationAgent:
         # Save outputs
         with open(screening_path, "w", encoding="utf-8") as f:
             json.dump(
-                {"run_id": run_id, "candidates": enriched_top3, "gates_passed": len(enriched_top3)},
+                {
+                    "run_id": run_id,
+                    "candidates": enriched_top3,
+                    "gates_passed": len(enriched_top3),
+                    "backup_candidates": backup_candidates,
+                },
                 f, indent=2, ensure_ascii=False,
             )
 

@@ -22,11 +22,12 @@ API server (local): `uvicorn api.server:app --reload`
 ### Pipeline (linear, LangGraph orchestrated)
 
 ```
-START → field_scanner → ideation → [HITL checkpoint] → literature → drafter → data_fetcher → END
+START → field_scanner → ideation → idea_validator → [HITL checkpoint] → literature → drafter → data_fetcher → END
 ```
 
 - **Field Scanner** (`agents/field_scanner_agent.py`) — Scans OpenAlex for landscape analysis, extracts high-traction concepts
 - **Ideation** (`agents/ideation_agent.py`) — Generates 30 candidates → screens to 10 → ranks top 3 → enriches → produces `research_plan.json`
+- **Idea Validator** (`agents/idea_validator_agent.py`) — Validates top candidates for novelty via OpenAlex recent-paper search and data availability via registry matching; auto-substitutes failed ideas from backup pool
 - **Literature** (`agents/literature_agent.py`) — Multi-query OpenAlex search, dedup, evidence cards, BibTeX
 - **Drafter** (`agents/drafter_agent.py`) — Synthesizes academic draft from plan + literature via Gemini Pro
 - **Data Fetcher** (`agents/data_fetcher_agent.py`) — Collects/simulates public datasets (currently mock)
@@ -53,7 +54,7 @@ config/     Research plan template (research_plan.json)
 data/       Generated artifacts: literature cards, raw data
 memory/     Persistent idea memory (CSV + JSONL)
 output/     Final outputs: field scan, drafts, BibTeX, checkpoints
-prompts/    System prompts for LLM calls
+prompts/    System prompts for LLM calls + data source registry
 scripts/    CLI wrappers for cloud operations
 tests/      Pytest test suite
 ui/         Streamlit monitoring interface
@@ -87,6 +88,11 @@ See `.env.example` for the full list. Key variables:
 | `AUTOPI_DATA_ROOT` | Root dir for all outputs (default: `.`; set to `/app/storage` in cloud) |
 | `DATABASE_URL` | PostgreSQL URL for cloud checkpointing; omit for SQLite |
 | `LOG_LEVEL` | Logging level (default: `INFO`) |
+| `NOVELTY_CHECK_YEARS` | Novelty check lookback years (default: `2`) |
+| `NOVELTY_QUERIES_PER_IDEA` | Search queries per idea for novelty check (default: `3`) |
+| `NOVELTY_RESULTS_PER_QUERY` | Papers returned per novelty query (default: `10`) |
+| `DATA_REGISTRY_FUZZY_THRESHOLD` | Fuzzy match cutoff for data source registry (default: `0.6`) |
+| `VALIDATION_MAX_SUBSTITUTIONS` | Max idea substitution rounds (default: `2`) |
 
 ## Testing
 

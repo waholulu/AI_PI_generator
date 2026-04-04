@@ -100,7 +100,7 @@ def test_field_scanner_node_offline(monkeypatch: pytest.MonkeyPatch) -> None:
     """Ensure field scanner node runs offline and produces a valid field_scan.json."""
     paper = _make_fake_metadata("https://openalex.org/W1234", "Test Paper")
 
-    def _fake_search(query: str, limit: int = 20) -> List[Dict[str, Any]]:
+    def _fake_search(query: str, limit: int = 20, from_year: int | None = None) -> List[Dict[str, Any]]:
         return [paper]
 
     monkeypatch.setattr(openalex_utils, "search_openalex", _fake_search)
@@ -129,7 +129,7 @@ def test_field_scanner_node_offline(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_field_scanner_multi_query_expands_results(monkeypatch: pytest.MonkeyPatch) -> None:
     """Multiple queries should yield more (or equal) results than a single query."""
-    def _fake_search(query: str, limit: int = 20) -> List[Dict[str, Any]]:
+    def _fake_search(query: str, limit: int = 20, from_year: int | None = None) -> List[Dict[str, Any]]:
         return [_make_fake_metadata(
             openalex_id=f"https://openalex.org/W{abs(hash(query)) % 1000}",
             title=f"Paper for '{query}'",
@@ -157,7 +157,7 @@ def test_field_scanner_multi_query_expands_results(monkeypatch: pytest.MonkeyPat
 
 def test_field_scanner_deduplicates_results(monkeypatch: pytest.MonkeyPatch) -> None:
     """If multiple queries return the same openalex_id, only one copy should appear."""
-    def _fake_search(query: str, limit: int = 20) -> List[Dict[str, Any]]:
+    def _fake_search(query: str, limit: int = 20, from_year: int | None = None) -> List[Dict[str, Any]]:
         return [_make_fake_metadata(
             openalex_id="https://openalex.org/W_FIXED",
             title="Always the same paper",
@@ -182,7 +182,7 @@ def test_field_scanner_deduplicates_results(monkeypatch: pytest.MonkeyPatch) -> 
 
 def test_field_scan_includes_search_strategy(monkeypatch: pytest.MonkeyPatch) -> None:
     """field_scan.json must contain the search_strategy block with expected keys."""
-    def _fake_search(query: str, limit: int = 20) -> List[Dict[str, Any]]:
+    def _fake_search(query: str, limit: int = 20, from_year: int | None = None) -> List[Dict[str, Any]]:
         return [_make_fake_metadata(
             openalex_id=f"https://openalex.org/W{abs(hash(query)) % 1000}",
             title=f"Paper for '{query}'",
@@ -213,7 +213,7 @@ def test_field_scan_includes_search_strategy(monkeypatch: pytest.MonkeyPatch) ->
 
 def test_field_scanner_fallback_path(monkeypatch: pytest.MonkeyPatch) -> None:
     """When planner returns used_fallback=True the scanner still runs correctly."""
-    def _fake_search(query: str, limit: int = 20) -> List[Dict[str, Any]]:
+    def _fake_search(query: str, limit: int = 20, from_year: int | None = None) -> List[Dict[str, Any]]:
         return [_make_fake_metadata(
             openalex_id="https://openalex.org/W_FB",
             title="Fallback Paper",
