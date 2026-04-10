@@ -10,6 +10,7 @@ from agents.openalex_utils import (
     download_pdf,
     multi_search_openalex,
 )
+from agents.arxiv_utils import multi_search_arxiv
 from agents.keyword_planner import KeywordPlanner
 
 logger = get_logger(__name__)
@@ -154,6 +155,35 @@ class LiteratureHarvester:
             cache_prefix="literature_openalex_query",
         )
         queries_used = [q for q, hits in query_hits.items() if hits > 0]
+
+        # ── arXiv supplement ─────────────────────────────────────────────
+        arxiv_enabled = os.getenv("ARXIV_SEARCH_ENABLED", "true").lower() != "false"
+        arxiv_limit = int(os.getenv("ARXIV_FINAL_LIMIT", str(max(final_limit, 3))))
+        arxiv_papers: List[Dict[str, Any]] = []
+        if arxiv_enabled:
+            try:
+                arxiv_papers = multi_search_arxiv(
+                    query_pool,
+                    per_query_limit=per_query_limit,
+                    final_limit=arxiv_limit,
+                )
+                logger.info("arXiv supplement: %d papers fetched.", len(arxiv_papers))
+            except Exception as exc:
+                logger.warning("arXiv search failed; skipping supplement: %s", exc)
+
+        # Merge OpenAlex + arXiv, dedup by normalised title
+        def _title_key(p: Dict[str, Any]) -> str:
+            return "".join(c for c in (p.get("title") or "").lower() if c.isalnum())
+
+        seen_titles: set[str] = {_title_key(p) for p in papers}
+        for ap in arxiv_papers:
+            key = _title_key(ap)
+            if key and key not in seen_titles:
+                seen_titles.add(key)
+                papers.append(ap)
+
+        # Respect the final_limit across both sources
+        papers = papers[:final_limit + arxiv_limit]
 
         inventory = []
         for paper in papers:

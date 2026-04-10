@@ -117,8 +117,19 @@ def topic_screening_path() -> str:
     return str(output_dir() / "topic_screening.json")
 
 
-def ideas_graveyard_path() -> str:
-    # Keep graveyard global so rejected-history reuse spans runs.
+def ideas_graveyard_path(domain: str | None = None) -> str:
+    """Return the graveyard file path, namespaced by domain to prevent cross-run contamination.
+
+    Each unique domain gets its own graveyard so that rejected ideas from one
+    research area do not pollute ideation for an unrelated area. Concurrent runs
+    on the same domain will still share a single file (by design: they should
+    avoid the same dead ends). Pass domain=None to get the legacy global path.
+    """
+    if domain:
+        import hashlib
+        domain_key = hashlib.md5(domain.lower().strip().encode()).hexdigest()[:8]
+        return str(global_output_dir() / f"ideas_graveyard_{domain_key}.json")
+    # Legacy / fallback: global graveyard used when domain is unknown.
     return str(global_output_dir() / "ideas_graveyard.json")
 
 

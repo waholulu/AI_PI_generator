@@ -172,6 +172,7 @@ class IdeationAgent:
         self.pro_llm = ChatGoogleGenerativeAI(model=pro_model, temperature=0.2)
         self.memory = MemoryRetriever()
         self.keyword_planner = KeywordPlanner()
+        self._degraded_nodes: list[str] = []
 
     def _generate_novelty_queries(self, candidate: Dict[str, Any], domain: str) -> List[str]:
         title = str(candidate.get("title", "")).strip()
@@ -269,6 +270,8 @@ class IdeationAgent:
             logger.warning("Novelty assessment LLM failed for '%s': %s", title, exc)
 
         if assessment is None:
+            self._degraded_nodes.append(f"ideation:novelty_fallback:{title[:40]}")
+            logger.warning("Novelty assessment LLM unavailable for '%s'; using fallback verdict.", title)
             return {
                 "novelty_verdict": "partially_overlapping",
                 "novelty_queries": queries,
@@ -320,7 +323,7 @@ class IdeationAgent:
         memory_context = self.memory.build_prompt_context(
             domain=domain,
             enriched_jsonl_path=settings.enriched_top_candidates_path(),
-            graveyard_path=settings.ideas_graveyard_path(),
+            graveyard_path=settings.ideas_graveyard_path(domain=domain),
         )
         if (
             memory_context.get("summary", {}).get("recent_count", 0) == 0
@@ -621,7 +624,7 @@ class IdeationAgent:
 
         all_rejected = rejected_candidates
 
-        graveyard_path = settings.ideas_graveyard_path()
+        graveyard_path = settings.ideas_graveyard_path(domain=domain)
         existing_graveyard: list = []
         if os.path.exists(graveyard_path):
             try:
@@ -704,6 +707,8 @@ class IdeationAgent:
                 raise ValueError("LLM not initialized")
             if not isinstance(self.pro_llm, ChatGoogleGenerativeAI):
                 title = top1.get("title", "Generated Topic")
+                self._degraded_nodes.append("ideation:plan_placeholder")
+                logger.warning("Pro LLM unavailable; research plan generated from placeholder template.")
                 return {
                     "project_title": title,
                     "study_type": "quantitative",
@@ -782,6 +787,7 @@ class IdeationAgent:
             "current_plan_path": plan_path,
             "field_scan_path": field_scan_path,
             "research_context_path": context_path,
+            "degraded_nodes": self._degraded_nodes,
         }
 
 

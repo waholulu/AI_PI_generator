@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class StartRunRequest(BaseModel):
@@ -21,6 +21,7 @@ class RunStatus(BaseModel):
     started_at: datetime
     completed_at: Optional[datetime] = None
     error: Optional[str] = None
+    degraded_nodes: List[str] = []  # non-empty when any agent fell back due to LLM failure
 
 
 class RunListItem(BaseModel):
@@ -51,10 +52,21 @@ class OutputsResponse(BaseModel):
     files: List[OutputFile]
 
 
+class ApproveRequest(BaseModel):
+    selected_idea_index: Optional[int] = Field(
+        default=None,
+        description=(
+            "0-based index of the candidate idea to promote to rank-1 before resuming. "
+            "If omitted or None the current top-1 is kept unchanged."
+        ),
+    )
+
+
 class ApproveResponse(BaseModel):
     run_id: str
     status: str
     message: str
+    selected_idea: Optional[str] = None  # title of the idea that will be researched
 
 
 class HealthResponse(BaseModel):

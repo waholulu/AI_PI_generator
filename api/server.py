@@ -38,6 +38,7 @@ from agents.logging_config import setup_logging, get_logger
 
 from api import log_store, run_manager
 from api.models import (
+    ApproveRequest,
     ApproveResponse,
     HealthResponse,
     LogEntry,
@@ -97,6 +98,81 @@ async def serve_ui():
 
 
 # ── Background pipeline execution ────────────────────────────────────
+
+def _apply_idea_selection(run_id: str, thread_id: str, idea_index: int) -> Optional[str]:
+    """Promote candidate at *idea_index* to rank-1 and persist the updated files.
+
+    Reads ``topic_screening.json`` from the run's scoped output directory,
+    rotates the selected candidate to position 0, re-assigns ranks, and
+    updates ``research_context.json``'s ``selected_topic`` accordingly.
+
+    Returns the title of the newly selected idea, or None if the index is invalid.
+    """
+    import json as _json
+
+    scope_token = settings.activate_run_scope(run_id)
+    try:
+        screening_path = settings.topic_screening_path()
+        context_path = settings.research_context_path()
+        plan_path = settings.research_plan_path()
+
+        if not Path(screening_path).exists():
+            return None
+
+        with open(screening_path, "r", encoding="utf-8") as f:
+            screening = _json.load(f)
+
+        candidates: list = screening.get("candidates", [])
+        if idea_index < 0 or idea_index >= len(candidates):
+            return None
+
+        # Rotate selected candidate to front
+        selected = candidates.pop(idea_index)
+        candidates.insert(0, selected)
+        for i, c in enumerate(candidates):
+            c["rank"] = i + 1
+        screening["candidates"] = candidates
+
+        with open(screening_path, "w", encoding="utf-8") as f:
+            _json.dump(screening, f, indent=2, ensure_ascii=False)
+
+        selected_title: str = selected.get("title", "")
+
+        # Update research_context.json
+        if Path(context_path).exists():
+            try:
+                with open(context_path, "r", encoding="utf-8") as f:
+                    ctx = _json.load(f)
+                if isinstance(ctx, dict):
+                    ctx["selected_topic"] = {
+                        "title": selected_title,
+                        "score": selected.get("final_score", selected.get("initial_score")),
+                        "quantitative_specs": selected.get("quantitative_specs", {}),
+                        "data_sources": selected.get("data_sources", []),
+                        "publishability": selected.get("publishability", ""),
+                        "selection_overridden": True,
+                    }
+                    with open(context_path, "w", encoding="utf-8") as f:
+                        _json.dump(ctx, f, indent=2, ensure_ascii=False)
+            except Exception as exc:
+                logger.warning("Could not update research_context.json after idea selection: %s", exc)
+
+        # Update research_plan.json title to match the new top-1
+        if Path(plan_path).exists():
+            try:
+                with open(plan_path, "r", encoding="utf-8") as f:
+                    plan = _json.load(f)
+                plan["project_title"] = selected_title
+                plan["topic_screening"] = {"top_candidate_title": selected_title, "manually_selected": True}
+                with open(plan_path, "w", encoding="utf-8") as f:
+                    _json.dump(plan, f, indent=2, ensure_ascii=False)
+            except Exception as exc:
+                logger.warning("Could not update research_plan.json after idea selection: %s", exc)
+
+        return selected_title
+    finally:
+        settings.deactivate_run_scope(scope_token)
+
 
 async def _run_pipeline(run_id: str, thread_id: str, domain_input: str) -> None:
     """Run the pipeline phases in the background, handling HITL interrupt."""
@@ -212,7 +288,16 @@ async def get_status(run_id: str):
     run = run_manager.get_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found.")
-    return run
+    # Augment with degraded_nodes from the LangGraph checkpoint state, if available.
+    try:
+        graph = _get_graph()
+        snapshot = graph.get_state({"configurable": {"thread_id": run.thread_id}})
+        degraded = snapshot.values.get("degraded_nodes") or []
+    except Exception:
+        degraded = []
+    run_dict = run.model_dump()
+    run_dict["degraded_nodes"] = degraded
+    return RunStatus(**run_dict)
 
 
 @app.get("/runs/{run_id}/logs", response_model=List[LogEntry])
@@ -256,8 +341,14 @@ async def get_state(run_id: str):
 
 
 @app.post("/runs/{run_id}/approve", response_model=ApproveResponse)
-async def approve_hitl(run_id: str):
-    """Approve the HITL checkpoint. Resumes the pipeline from literature stage."""
+async def approve_hitl(run_id: str, req: ApproveRequest = ApproveRequest()):
+    """Approve the HITL checkpoint. Resumes the pipeline from literature stage.
+
+    Optionally, pass ``selected_idea_index`` (0-based) in the request body to
+    promote a non-top-1 candidate before resuming.  The candidate list is read
+    from ``topic_screening.json``; the selected idea is swapped to rank-1 and
+    both the screening file and ``research_context.json`` are updated in-place.
+    """
     run = run_manager.get_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found.")
@@ -267,11 +358,29 @@ async def approve_hitl(run_id: str):
             detail=f"Run is in status '{run.status}', not 'awaiting_approval'.",
         )
 
+    selected_title: Optional[str] = None
+
+    if req.selected_idea_index is not None:
+        selected_title = await asyncio.to_thread(
+            _apply_idea_selection, run_id, run.thread_id, req.selected_idea_index
+        )
+        if selected_title is None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"selected_idea_index {req.selected_idea_index} is out of range or screening file missing.",
+            )
+        logger.info(
+            "HITL: idea %d selected for run %s: %s", req.selected_idea_index, run_id, selected_title
+        )
+
     logger.info("HITL approved for run %s. Resuming...", run_id)
     task = asyncio.create_task(_resume_pipeline(run_id, run.thread_id))
     _tasks[run_id] = task
 
-    return ApproveResponse(run_id=run_id, status="running", message="Pipeline resumed.")
+    msg = "Pipeline resumed."
+    if selected_title:
+        msg = f"Pipeline resumed with selected idea: {selected_title!r}"
+    return ApproveResponse(run_id=run_id, status="running", message=msg, selected_idea=selected_title)
 
 
 @app.post("/runs/{run_id}/reject", response_model=ApproveResponse)

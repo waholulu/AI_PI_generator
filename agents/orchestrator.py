@@ -1,4 +1,5 @@
-from typing import TypedDict
+import operator
+from typing import Annotated, TypedDict
 from langgraph.graph import StateGraph, START, END
 import sqlite3
 
@@ -23,6 +24,9 @@ class ResearchState(TypedDict):
     raw_data_manifest_path: str
     research_context_path: str
     execution_status: str
+    # Accumulates across nodes: each entry is "<node>:<reason>" (e.g. "ideation:plan_placeholder").
+    # Uses operator.add so each node's list is appended, not replaced.
+    degraded_nodes: Annotated[list[str], operator.add]
 
 
 def _build_checkpointer():

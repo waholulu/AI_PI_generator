@@ -77,6 +77,7 @@ class NoveltyResult(BaseModel):
     verdict: str
     similar_papers: List[Dict[str, Any]]
     search_queries_used: List[str]
+    was_llm_fallback: bool = False  # True when LLM was unavailable or failed
 
 
 class DataSourceCheck(BaseModel):
@@ -202,13 +203,17 @@ def _assess_novelty(
     idea_title: str,
     idea_rationale: str,
     papers: List[Dict[str, Any]],
-) -> NoveltyAssessment:
-    """Use LLM to assess novelty given a set of retrieved papers."""
+) -> tuple["NoveltyAssessment", bool]:
+    """Use LLM to assess novelty given a set of retrieved papers.
+
+    Returns (assessment, was_fallback) where was_fallback is True when the LLM
+    was unavailable or threw an exception and a safe default was used instead.
+    """
     if llm is None or not isinstance(llm, ChatGoogleGenerativeAI):
-        return NoveltyAssessment(verdict="novel", similar_papers=[])
+        return NoveltyAssessment(verdict="novel", similar_papers=[]), True
 
     if not papers:
-        return NoveltyAssessment(verdict="novel", similar_papers=[])
+        return NoveltyAssessment(verdict="novel", similar_papers=[]), False
 
     papers_text = "\n".join(
         f"- [{p.get('year', '?')}] {p.get('title', 'No title')} "
@@ -238,10 +243,10 @@ def _assess_novelty(
         )
 
     try:
-        return _call()
+        return _call(), False
     except Exception as e:
         logger.warning("Novelty assessment failed: %s; defaulting to novel", e)
-        return NoveltyAssessment(verdict="novel", similar_papers=[])
+        return NoveltyAssessment(verdict="novel", similar_papers=[]), True
 
 
 def check_novelty(
@@ -272,12 +277,13 @@ def check_novelty(
 
     logger.info("Found %d unique recent papers for '%s'", len(all_papers), title[:50])
 
-    assessment = _assess_novelty(llm, title, rationale, all_papers)
+    assessment, was_fallback = _assess_novelty(llm, title, rationale, all_papers)
 
     return NoveltyResult(
         verdict=assessment.verdict,
         similar_papers=[sp.model_dump() for sp in assessment.similar_papers],
         search_queries_used=queries,
+        was_llm_fallback=was_fallback,
     )
 
 
@@ -289,11 +295,13 @@ class IdeaValidatorAgent:
     def __init__(self):
         fast_model = os.getenv("GEMINI_FAST_MODEL", "gemini-2.0-flash-lite")
         self.llm = None
+        self._degraded_nodes: list[str] = []
         if ChatGoogleGenerativeAI is not None:
             try:
                 self.llm = ChatGoogleGenerativeAI(model=fast_model, temperature=0.1)
             except Exception as e:
                 logger.warning("Could not init LLM for validation: %s", e)
+                self._degraded_nodes.append("idea_validator:llm_unavailable")
 
         self.memory = MemoryRetriever()
 
@@ -316,6 +324,11 @@ class IdeaValidatorAgent:
         novelty = check_novelty(
             self.llm, title, rationale, from_year, n_queries, results_per_query
         )
+        if novelty.was_llm_fallback:
+            tag = f"idea_validator:novelty_fallback:{title[:40]}"
+            if tag not in self._degraded_nodes:
+                self._degraded_nodes.append(tag)
+                logger.warning("LLM novelty assessment fell back to default for: %s", title[:70])
 
         # Data availability check
         data_sources = idea.get("data_sources", [])
@@ -455,6 +468,7 @@ class IdeaValidatorAgent:
         return {
             "validation_report_path": validation_path,
             "execution_status": "harvesting",
+            "degraded_nodes": self._degraded_nodes,
         }
 
     def _record_failure(

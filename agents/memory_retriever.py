@@ -154,7 +154,7 @@ class MemoryRetriever:
         )
         rejected_history = self._load_graveyard(
             domain=domain,
-            graveyard_path=graveyard_path or settings.ideas_graveyard_path(),
+            graveyard_path=graveyard_path or settings.ideas_graveyard_path(domain=domain),
             limit=rejected_limit,
         )
 
