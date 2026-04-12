@@ -89,6 +89,7 @@ class DataSourceCheck(BaseModel):
 class IdeaValidation(BaseModel):
     title: str
     rank: int
+    brief_rationale: str = ""
     novelty: NoveltyResult
     data_availability: List[DataSourceCheck]
     overall_verdict: str  # "passed" / "failed" / "warning"
@@ -361,6 +362,7 @@ class IdeaValidatorAgent:
         return IdeaValidation(
             title=title,
             rank=rank,
+            brief_rationale=rationale,
             novelty=novelty,
             data_availability=[dc.model_dump() for dc in data_checks],
             overall_verdict=overall,

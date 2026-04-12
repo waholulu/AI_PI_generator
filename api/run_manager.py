@@ -39,14 +39,15 @@ def _init_db() -> None:
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS runs (
-                run_id       TEXT PRIMARY KEY,
-                thread_id    TEXT NOT NULL,
-                domain_input TEXT NOT NULL,
-                status       TEXT NOT NULL DEFAULT 'starting',
-                current_node TEXT,
-                started_at   TEXT NOT NULL,
-                completed_at TEXT,
-                error        TEXT
+                run_id              TEXT PRIMARY KEY,
+                thread_id           TEXT NOT NULL,
+                domain_input        TEXT NOT NULL,
+                status              TEXT NOT NULL DEFAULT 'starting',
+                current_node        TEXT,
+                started_at          TEXT NOT NULL,
+                completed_at        TEXT,
+                error               TEXT,
+                regeneration_round  INTEGER NOT NULL DEFAULT 0
             )
             """
         )
@@ -61,6 +62,19 @@ def _init_db() -> None:
             )
             """
         )
+        # Migration: add regeneration_round column if the runs table existed
+        # without it (created by an older version of this module).
+        try:
+            cols = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(runs)").fetchall()
+            }
+            if "regeneration_round" not in cols:
+                conn.execute(
+                    "ALTER TABLE runs ADD COLUMN regeneration_round INTEGER NOT NULL DEFAULT 0"
+                )
+        except sqlite3.OperationalError:
+            pass
         conn.commit()
 
 
@@ -132,6 +146,20 @@ def update_status(
         conn.commit()
 
 
+def increment_regeneration_round(run_id: str) -> int:
+    """Increment and return the new regeneration round counter for a run."""
+    with _lock, _get_conn() as conn:
+        conn.execute(
+            "UPDATE runs SET regeneration_round = regeneration_round + 1 WHERE run_id = ?",
+            (run_id,),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT regeneration_round FROM runs WHERE run_id = ?", (run_id,)
+        ).fetchone()
+    return int(row["regeneration_round"]) if row else 0
+
+
 def record_milestone(run_id: str, event: str, detail: str) -> None:
     now = datetime.now(timezone.utc).isoformat()
     with _lock, _get_conn() as conn:
@@ -152,6 +180,8 @@ def get_milestones(run_id: str) -> List[dict]:
 
 
 def _row_to_status(row: sqlite3.Row) -> RunStatus:
+    keys = row.keys() if hasattr(row, "keys") else []
+    regen = int(row["regeneration_round"]) if "regeneration_round" in keys else 0
     return RunStatus(
         run_id=row["run_id"],
         thread_id=row["thread_id"],
@@ -161,4 +191,5 @@ def _row_to_status(row: sqlite3.Row) -> RunStatus:
         started_at=datetime.fromisoformat(row["started_at"]),
         completed_at=datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None,
         error=row["error"],
+        regeneration_round=regen,
     )

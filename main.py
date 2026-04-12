@@ -6,6 +6,12 @@ from datetime import datetime
 from dotenv import load_dotenv
 
 from agents import orchestrator, settings
+from agents.hitl_helpers import (
+    load_validated_topics,
+    record_rejected_topics,
+    regenerate_topics,
+    MAX_REGENERATION_ROUNDS,
+)
 
 
 NODE_DISPLAY_NAMES = {
@@ -88,73 +94,78 @@ def _display_validation_report() -> list:
 
     Returns the list of validated ideas so the caller can prompt for selection.
     """
-    validation_path = settings.idea_validation_path()
-    if not os.path.exists(validation_path):
-        return []
-    try:
-        with open(validation_path, "r", encoding="utf-8") as f:
-            report = json.load(f)
-    except (json.JSONDecodeError, OSError):
+    ideas = load_validated_topics()
+    if not ideas:
         return []
 
     print()
-    _log("--- 选题验证报告 ---", level="HITL")
-    subs = report.get("substitutions_made", 0)
-    if subs > 0:
-        _log(f"共进行 {subs} 次替补", level="HITL")
+    _log("--- 当前候选选题 ---", level="HITL")
 
-    ideas = report.get("validated_ideas", [])
     for idx, idea in enumerate(ideas):
         verdict = idea.get("overall_verdict", "?")
         novelty = idea.get("novelty", {}).get("verdict", "?")
-        title = idea.get("title", "?")[:60]
-        rank = idea.get("rank", "?")
-        tag = {"passed": "✓", "warning": "⚠", "failed": "✗"}.get(verdict, "?")
-        _log(f"  [{idx}] [{tag}] #{rank} {title}", level="HITL")
-        _log(f"      原创性: {novelty}", level="HITL")
+        title = idea.get("title", "?")
+        rationale = idea.get("brief_rationale", "")
+        tag = {"passed": "\u2713", "warning": "\u26a0", "failed": "\u2717"}.get(verdict, "?")
+        print()
+        _log(f"  [{idx + 1}] [{tag}] {title}", level="HITL")
+        if rationale:
+            _log(f"      \u63a8\u8350\u7406\u7531: {rationale}", level="HITL")
+        _log(f"      \u539f\u521b\u6027: {novelty}", level="HITL")
 
         # Show data source status
         data_checks = idea.get("data_availability", [])
         verified = sum(1 for d in data_checks if d.get("status") == "verified")
         total = len(data_checks)
         if total > 0:
-            _log(f"      数据源: {verified}/{total} 已验证", level="HITL")
+            _log(f"      \u6570\u636e\u6e90: {verified}/{total} \u5df2\u9a8c\u8bc1", level="HITL")
 
         # Show similar papers if any
         similar = idea.get("novelty", {}).get("similar_papers", [])
         for sp in similar[:2]:
             sp_title = sp.get("title", "?")[:50]
             sp_verdict = sp.get("similarity_verdict", "?")
-            _log(f"      → [{sp_verdict}] {sp_title}", level="HITL")
+            _log(f"      \u2192 [{sp_verdict}] {sp_title}", level="HITL")
 
         if idea.get("failure_reasons"):
             for reason in idea["failure_reasons"]:
-                _log(f"      ⚠ {reason}", level="HITL")
+                _log(f"      \u26a0 {reason}", level="HITL")
     print()
     return ideas
 
 
-def _prompt_idea_selection(ideas: list) -> int:
-    """Ask the user to pick which idea to proceed with. Returns 0-based index."""
-    if len(ideas) <= 1:
-        return 0
-    valid_indices = list(range(len(ideas)))
+def _prompt_topic_choice(ideas: list, allow_regenerate: bool = True) -> int:
+    """Present numbered topic choices + optional regenerate option.
+
+    Returns:
+        0-based idea index (0, 1, 2) if a topic was selected, or
+        -1 if the user chose to regenerate topics.
+    """
+    n = len(ideas)
+    if n == 0:
+        return -1
+
+    regen_idx = n + 1  # e.g. 4 when there are 3 ideas
+    options = ", ".join(str(i + 1) for i in range(n))
+    if allow_regenerate:
+        _log(f"  [{regen_idx}] 都不满意，重新构思主题筛选", level="HITL")
+        options += f", {regen_idx}"
+
     while True:
-        raw = input(
-            f"\n请选择要深入研究的选题编号（0-{len(ideas)-1}，直接回车默认选 0 号）： "
-        ).strip()
+        raw = input(f"\n请选择（{options}，直接回车默认选 1）： ").strip()
         if raw == "":
-            _log("默认选择编号 0 的选题。", level="HITL")
+            _log("默认选择选题 1。", level="HITL")
             return 0
         try:
-            idx = int(raw)
+            choice = int(raw)
         except ValueError:
-            _log(f"输入无效，请输入 0 到 {len(ideas)-1} 之间的数字。", level="WARN")
+            _log(f"输入无效，请输入 {options} 中的数字。", level="WARN")
             continue
-        if idx not in valid_indices:
-            _log(f"编号超出范围，请输入 0 到 {len(ideas)-1} 之间的数字。", level="WARN")
-            continue
-        return idx
+        if allow_regenerate and choice == regen_idx:
+            return -1
+        if 1 <= choice <= n:
+            return choice - 1  # convert to 0-based
+        _log(f"编号超出范围，请输入 {options} 中的数字。", level="WARN")
 
 
 def _apply_selection_to_files(idea_idx: int, ideas: list) -> None:
@@ -266,9 +277,11 @@ def main():
         # Phase 1: run until HITL interrupt (after ideation, before literature)
         _stream_phase(graph, initial_state, config, seen_nodes, total_nodes)
 
-        # Handle HITL interrupt: prompt user to review ideation output and continue
+        # Handle HITL interrupt: let user choose a topic or regenerate
+        regeneration_round = 0
         while _check_hitl_interrupt(graph, config):
             snapshot = graph.get_state(config)
+            current_state = dict(snapshot.values)
             pending = list(snapshot.next)
             pending_names = ", ".join(
                 NODE_DISPLAY_NAMES.get(n, n) for n in pending
@@ -277,17 +290,50 @@ def main():
             print()
             print("=" * 60)
             _log(f"工作流在以下节点前暂停（HITL 检查点）：{pending_names}", level="HITL")
-            _log("请检查 output/ 目录下的中间产物（选题、研究计划等）。", level="HITL")
+            if regeneration_round > 0:
+                _log(f"（第 {regeneration_round} 次重新构思）", level="HITL")
             ideas = _display_validation_report()
             print("=" * 60)
 
-            choice = input("\n是否继续执行后续节点？(y/n): ").strip().lower()
-            if choice not in ("y", "yes", "是"):
-                _log("用户选择中止，工作流停止。", level="ABORT")
+            if not ideas:
+                _log("未找到候选选题，工作流中止。", level="ERROR")
                 return
 
-            # Let user pick which idea to proceed with
-            selected_idx = _prompt_idea_selection(ideas)
+            allow_regen = regeneration_round < MAX_REGENERATION_ROUNDS
+            if not allow_regen:
+                _log(
+                    f"已达到最大重新构思次数（{MAX_REGENERATION_ROUNDS}），请从当前选题中选择。",
+                    level="WARN",
+                )
+
+            selected_idx = _prompt_topic_choice(ideas, allow_regenerate=allow_regen)
+
+            if selected_idx == -1:
+                # User chose to regenerate
+                regeneration_round += 1
+                domain = current_state.get("domain_input", "")
+                _log("正在记录当前选题并重新构思...", level="HITL")
+
+                # Record current topics as rejected
+                screening_path = settings.topic_screening_path()
+                screening_topics = []
+                if os.path.exists(screening_path):
+                    try:
+                        with open(screening_path, "r", encoding="utf-8") as f:
+                            screening_topics = json.load(f).get("candidates", [])
+                    except (json.JSONDecodeError, OSError):
+                        screening_topics = []
+                record_rejected_topics(
+                    screening_topics or ideas, domain, regeneration_round,
+                )
+
+                # Re-run ideation + validator outside the graph
+                _log("重新生成候选选题中，请稍候...", level="HITL")
+                regenerate_topics(current_state)
+                _log("新一轮选题已生成。", level="HITL")
+                continue  # loop back to display new topics
+
+            # User selected a topic — apply and resume
             _apply_selection_to_files(selected_idx, ideas)
 
             _log("用户确认，恢复工作流...", level="HITL")

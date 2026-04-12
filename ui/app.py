@@ -7,6 +7,12 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from agents.orchestrator import build_orchestrator, ResearchState
+from agents.hitl_helpers import (
+    load_validated_topics,
+    record_rejected_topics,
+    regenerate_topics,
+    MAX_REGENERATION_ROUNDS,
+)
 
 st.set_page_config(page_title="Auto-PI Monitoring UI", layout="wide")
 
@@ -18,6 +24,8 @@ if "thread_id" not in st.session_state:
     st.session_state.thread_id = "demo_thread_1"
 if "app_graph" not in st.session_state:
     st.session_state.app_graph = build_orchestrator()
+if "regeneration_round" not in st.session_state:
+    st.session_state.regeneration_round = 0
 
 graph = st.session_state.app_graph
 config = {"configurable": {"thread_id": st.session_state.thread_id}}
@@ -54,49 +62,130 @@ with col2:
             st.warning(f"Workflow paused. Next executing node: **{next_nodes[0]}**")
             # If paused before literature, show the topic screening results
             if "literature" in next_nodes:
-                plan_path = state_values.get("current_plan_path", "")
-                if os.path.exists(plan_path):
-                    st.subheader("Action Required: Review Research Plan")
-                    with open(plan_path, "r", encoding="utf-8") as f:
-                        plan_data = json.load(f)
-                    st.json(plan_data)
+                ideas = load_validated_topics()
+                regen_round = st.session_state.regeneration_round
 
-                # Show validation report if available
-                from agents import settings as _settings
-                validation_path = state_values.get(
-                    "validation_report_path", _settings.idea_validation_path()
-                )
-                if os.path.exists(validation_path):
-                    st.subheader("选题验证报告")
-                    with open(validation_path, "r", encoding="utf-8") as f:
-                        val_report = json.load(f)
-                    subs = val_report.get("substitutions_made", 0)
-                    if subs > 0:
-                        st.warning(f"共进行 {subs} 次替补")
-                    for idea in val_report.get("validated_ideas", []):
-                        verdict = idea.get("overall_verdict", "?")
-                        icon = {"passed": "✅", "warning": "⚠️", "failed": "❌"}.get(verdict, "❓")
-                        title = idea.get("title", "?")
-                        novelty = idea.get("novelty", {}).get("verdict", "?")
-                        data_checks = idea.get("data_availability", [])
-                        verified = sum(1 for d in data_checks if d.get("status") == "verified")
-                        total = len(data_checks)
-                        with st.expander(f"{icon} #{idea.get('rank', '?')} {title}"):
-                            st.write(f"**原创性**: {novelty}")
-                            if total > 0:
-                                st.write(f"**数据源**: {verified}/{total} 已验证")
-                            for sp in idea.get("novelty", {}).get("similar_papers", [])[:3]:
-                                st.write(f"- [{sp.get('similarity_verdict', '?')}] {sp.get('title', '?')}")
-                            if idea.get("failure_reasons"):
-                                for reason in idea["failure_reasons"]:
-                                    st.error(reason)
+                if regen_round > 0:
+                    st.info(f"已重新构思 {regen_round} 次")
 
-                st.markdown("**Approve to continue harvesting literature and data.**")
-                if st.button("Approve & Continue"):
-                    st.spinner("Resuming...")
-                    for event in graph.stream(None, config, stream_mode="values"):
-                        pass
-                    st.rerun()
+                st.subheader("候选选题（请选择一个推进）")
+                for i, idea in enumerate(ideas):
+                    verdict = idea.get("overall_verdict", "?")
+                    icon = {"passed": "✅", "warning": "⚠️", "failed": "❌"}.get(verdict, "❓")
+                    title = idea.get("title", "?")
+                    rationale = idea.get("brief_rationale", "")
+                    novelty = idea.get("novelty", {}).get("verdict", "?")
+                    data_checks = idea.get("data_availability", [])
+                    verified = sum(1 for d in data_checks if d.get("status") == "verified")
+                    total = len(data_checks)
+                    with st.expander(f"{icon} 选题 {i + 1}: {title}", expanded=True):
+                        if rationale:
+                            st.markdown(f"**推荐理由**: {rationale}")
+                        st.write(f"**原创性**: {novelty}")
+                        if total > 0:
+                            st.write(f"**数据源**: {verified}/{total} 已验证")
+                        for sp in idea.get("novelty", {}).get("similar_papers", [])[:3]:
+                            st.write(f"- [{sp.get('similarity_verdict', '?')}] {sp.get('title', '?')}")
+                        if idea.get("failure_reasons"):
+                            for reason in idea["failure_reasons"]:
+                                st.error(reason)
+
+                if ideas:
+                    allow_regen = regen_round < MAX_REGENERATION_ROUNDS
+                    option_labels = [
+                        f"选题 {i + 1}: {idea.get('title', '?')[:60]}"
+                        for i, idea in enumerate(ideas)
+                    ]
+                    if allow_regen:
+                        option_labels.append("都不满意，重新构思主题筛选")
+                    else:
+                        st.warning(
+                            f"已达到最大重新构思次数（{MAX_REGENERATION_ROUNDS}），请从当前选题中选择。"
+                        )
+
+                    choice = st.radio(
+                        "请选择：", option_labels, key=f"hitl_choice_{regen_round}",
+                    )
+
+                    if st.button("确认 / Confirm"):
+                        selected_index = option_labels.index(choice)
+                        is_regenerate = allow_regen and selected_index == len(ideas)
+
+                        if is_regenerate:
+                            with st.spinner("正在记录并重新构思选题..."):
+                                from agents import settings as _settings
+                                screening_path = _settings.topic_screening_path()
+                                screening_topics = []
+                                if os.path.exists(screening_path):
+                                    try:
+                                        with open(screening_path, "r", encoding="utf-8") as f:
+                                            screening_topics = json.load(f).get("candidates", [])
+                                    except (OSError, json.JSONDecodeError):
+                                        screening_topics = []
+
+                                domain = state_values.get("domain_input", "")
+                                new_round = regen_round + 1
+                                record_rejected_topics(
+                                    screening_topics or ideas, domain, new_round,
+                                )
+                                regenerate_topics(dict(state_values))
+                                st.session_state.regeneration_round = new_round
+                            st.success("选题已重新生成，请再次审阅。")
+                            st.rerun()
+                        else:
+                            # User picked a topic — apply selection + resume
+                            with st.spinner("应用选题并恢复工作流..."):
+                                if selected_index != 0:
+                                    # Rotate selected idea to rank-1 in topic_screening.json
+                                    from agents import settings as _settings
+                                    screening_path = _settings.topic_screening_path()
+                                    context_path = _settings.research_context_path()
+                                    plan_path = _settings.research_plan_path()
+                                    try:
+                                        with open(screening_path, "r", encoding="utf-8") as f:
+                                            screening = json.load(f)
+                                        cands = screening.get("candidates", [])
+                                        if selected_index < len(cands):
+                                            picked = cands.pop(selected_index)
+                                            cands.insert(0, picked)
+                                            for j, c in enumerate(cands):
+                                                c["rank"] = j + 1
+                                            screening["candidates"] = cands
+                                            with open(screening_path, "w", encoding="utf-8") as f:
+                                                json.dump(screening, f, indent=2, ensure_ascii=False)
+                                            selected_title = picked.get("title", "")
+                                            if os.path.exists(context_path):
+                                                with open(context_path, "r", encoding="utf-8") as f:
+                                                    ctx = json.load(f)
+                                                if isinstance(ctx, dict):
+                                                    ctx["selected_topic"] = {
+                                                        "title": selected_title,
+                                                        "score": picked.get("final_score", picked.get("initial_score")),
+                                                        "quantitative_specs": picked.get("quantitative_specs", {}),
+                                                        "data_sources": picked.get("data_sources", []),
+                                                        "publishability": picked.get("publishability", ""),
+                                                        "selection_overridden": True,
+                                                    }
+                                                    with open(context_path, "w", encoding="utf-8") as f:
+                                                        json.dump(ctx, f, indent=2, ensure_ascii=False)
+                                            if os.path.exists(plan_path):
+                                                with open(plan_path, "r", encoding="utf-8") as f:
+                                                    plan = json.load(f)
+                                                plan["project_title"] = selected_title
+                                                plan["topic_screening"] = {
+                                                    "top_candidate_title": selected_title,
+                                                    "manually_selected": True,
+                                                }
+                                                with open(plan_path, "w", encoding="utf-8") as f:
+                                                    json.dump(plan, f, indent=2, ensure_ascii=False)
+                                    except Exception as exc:
+                                        st.error(f"应用选题失败: {exc}")
+
+                                for event in graph.stream(None, config, stream_mode="values"):
+                                    pass
+                                st.session_state.regeneration_round = 0
+                            st.success("工作流已恢复，后续节点执行完毕。")
+                            st.rerun()
 
         st.subheader("Files Generated (Pointers)")
         st.json(state_values)

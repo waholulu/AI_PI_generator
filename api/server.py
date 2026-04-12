@@ -223,6 +223,47 @@ async def _run_pipeline(run_id: str, thread_id: str, domain_input: str) -> None:
         log_store.set_current_run(None)
 
 
+async def _regenerate_and_pause(run_id: str, thread_id: str) -> None:
+    """Re-run ideation + idea_validator outside the graph, then pause again.
+
+    The graph state at this point still has ``literature`` as the next node
+    (the LangGraph checkpoint is untouched).  The ideation + validator agents
+    overwrite the files on disk (topic_screening.json, idea_validation.json,
+    research_plan.json, research_context.json), so when the client finally
+    calls /approve with action='select' the resumed literature node picks up
+    the new content via the existing file paths in ResearchState.
+    """
+    from agents.hitl_helpers import regenerate_topics
+
+    log_store.set_current_run(run_id)
+    scope_token = settings.activate_run_scope(run_id)
+    graph = _get_graph()
+    config = {"configurable": {"thread_id": thread_id}}
+
+    def _do_regenerate() -> None:
+        snapshot = graph.get_state(config)
+        state = dict(snapshot.values) if snapshot and snapshot.values else {}
+        regenerate_topics(state)
+
+    try:
+        await asyncio.to_thread(_do_regenerate)
+        run_manager.update_status(run_id, "awaiting_approval", current_node="literature")
+        run_manager.record_milestone(
+            run_id, "topics_regenerated", "已根据用户反馈重新生成候选选题"
+        )
+        logger.info("Run %s: topic regeneration complete.", run_id)
+    except asyncio.CancelledError:
+        run_manager.update_status(run_id, "aborted")
+        logger.info("Run %s: regeneration was cancelled.", run_id)
+    except Exception as exc:
+        run_manager.update_status(run_id, "failed", error=str(exc))
+        run_manager.record_milestone(run_id, "failed", f"重新生成选题失败: {str(exc)[:300]}")
+        logger.exception("Run %s: regeneration failed: %s", run_id, exc)
+    finally:
+        settings.deactivate_run_scope(scope_token)
+        log_store.set_current_run(None)
+
+
 async def _resume_pipeline(run_id: str, thread_id: str) -> None:
     """Resume a HITL-paused pipeline."""
     log_store.set_current_run(run_id)
@@ -340,15 +381,37 @@ async def get_state(run_id: str):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+def _load_current_topics(run_id: str) -> list:
+    """Load the current candidate list from this run's topic_screening.json."""
+    import json as _json
+
+    scope_token = settings.activate_run_scope(run_id)
+    try:
+        screening_path = settings.topic_screening_path()
+        if not Path(screening_path).exists():
+            return []
+        try:
+            with open(screening_path, "r", encoding="utf-8") as f:
+                return _json.load(f).get("candidates", [])
+        except (OSError, _json.JSONDecodeError):
+            return []
+    finally:
+        settings.deactivate_run_scope(scope_token)
+
+
 @app.post("/runs/{run_id}/approve", response_model=ApproveResponse)
 async def approve_hitl(run_id: str, req: ApproveRequest = ApproveRequest()):
-    """Approve the HITL checkpoint. Resumes the pipeline from literature stage.
+    """Handle the HITL checkpoint.
 
-    Optionally, pass ``selected_idea_index`` (0-based) in the request body to
-    promote a non-top-1 candidate before resuming.  The candidate list is read
-    from ``topic_screening.json``; the selected idea is swapped to rank-1 and
-    both the screening file and ``research_context.json`` are updated in-place.
+    Two actions are supported (via ``req.action``):
+      * ``select`` (default) — promote ``selected_idea_index`` to rank-1 and
+        resume the pipeline from the literature stage.
+      * ``regenerate`` — record the current topics as rejected_by_user in
+        memory/graveyard and re-run ideation + idea_validator outside the
+        graph, then pause at the HITL checkpoint again with fresh topics.
     """
+    from agents.hitl_helpers import record_rejected_topics, MAX_REGENERATION_ROUNDS
+
     run = run_manager.get_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found.")
@@ -358,29 +421,78 @@ async def approve_hitl(run_id: str, req: ApproveRequest = ApproveRequest()):
             detail=f"Run is in status '{run.status}', not 'awaiting_approval'.",
         )
 
-    selected_title: Optional[str] = None
-
-    if req.selected_idea_index is not None:
-        selected_title = await asyncio.to_thread(
-            _apply_idea_selection, run_id, run.thread_id, req.selected_idea_index
-        )
-        if selected_title is None:
+    # ── Branch: regenerate ───────────────────────────────────────────
+    if req.action == "regenerate":
+        if run.regeneration_round >= MAX_REGENERATION_ROUNDS:
             raise HTTPException(
                 status_code=422,
-                detail=f"selected_idea_index {req.selected_idea_index} is out of range or screening file missing.",
+                detail=(
+                    f"Maximum regeneration rounds ({MAX_REGENERATION_ROUNDS}) reached. "
+                    f"Please select one of the current topics with action='select'."
+                ),
             )
-        logger.info(
-            "HITL: idea %d selected for run %s: %s", req.selected_idea_index, run_id, selected_title
+
+        # Record current topics as rejected in memory + graveyard
+        current_topics = await asyncio.to_thread(_load_current_topics, run_id)
+        new_round = run_manager.increment_regeneration_round(run_id)
+
+        def _record() -> None:
+            scope_token = settings.activate_run_scope(run_id)
+            try:
+                record_rejected_topics(current_topics, run.domain_input, new_round)
+            finally:
+                settings.deactivate_run_scope(scope_token)
+
+        await asyncio.to_thread(_record)
+
+        run_manager.update_status(run_id, "regenerating", current_node="ideation")
+        run_manager.record_milestone(
+            run_id, "topics_rejected",
+            f"用户拒绝所有候选，重新构思（round {new_round}）",
         )
+        logger.info("HITL regenerate for run %s (round %d)", run_id, new_round)
+
+        task = asyncio.create_task(_regenerate_and_pause(run_id, run.thread_id))
+        _tasks[run_id] = task
+
+        return ApproveResponse(
+            run_id=run_id,
+            status="regenerating",
+            message=f"Regenerating topics (round {new_round})...",
+            regeneration_round=new_round,
+        )
+
+    # ── Branch: select ───────────────────────────────────────────────
+    if req.selected_idea_index is None:
+        raise HTTPException(
+            status_code=422,
+            detail="selected_idea_index is required when action='select'.",
+        )
+
+    selected_title = await asyncio.to_thread(
+        _apply_idea_selection, run_id, run.thread_id, req.selected_idea_index
+    )
+    if selected_title is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"selected_idea_index {req.selected_idea_index} is out of range or screening file missing.",
+        )
+    logger.info(
+        "HITL: idea %d selected for run %s: %s",
+        req.selected_idea_index, run_id, selected_title,
+    )
 
     logger.info("HITL approved for run %s. Resuming...", run_id)
     task = asyncio.create_task(_resume_pipeline(run_id, run.thread_id))
     _tasks[run_id] = task
 
-    msg = "Pipeline resumed."
-    if selected_title:
-        msg = f"Pipeline resumed with selected idea: {selected_title!r}"
-    return ApproveResponse(run_id=run_id, status="running", message=msg, selected_idea=selected_title)
+    msg = f"Pipeline resumed with selected idea: {selected_title!r}"
+    return ApproveResponse(
+        run_id=run_id,
+        status="running",
+        message=msg,
+        selected_idea=selected_title,
+    )
 
 
 @app.post("/runs/{run_id}/reject", response_model=ApproveResponse)

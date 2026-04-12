@@ -16,12 +16,13 @@ class RunStatus(BaseModel):
     run_id: str
     thread_id: str
     domain_input: str
-    status: str  # starting | running | awaiting_approval | completed | failed | aborted
+    status: str  # starting | running | awaiting_approval | regenerating | completed | failed | aborted
     current_node: Optional[str] = None
     started_at: datetime
     completed_at: Optional[datetime] = None
     error: Optional[str] = None
     degraded_nodes: List[str] = []  # non-empty when any agent fell back due to LLM failure
+    regeneration_round: int = 0  # how many times topics have been regenerated at HITL
 
 
 class RunListItem(BaseModel):
@@ -53,13 +54,28 @@ class OutputsResponse(BaseModel):
 
 
 class ApproveRequest(BaseModel):
+    action: str = Field(
+        default="select",
+        description=(
+            "HITL action to take. One of: 'select' (pick a topic and continue) "
+            "or 'regenerate' (reject all current topics and re-run ideation + validation)."
+        ),
+    )
     selected_idea_index: Optional[int] = Field(
         default=None,
         description=(
             "0-based index of the candidate idea to promote to rank-1 before resuming. "
-            "If omitted or None the current top-1 is kept unchanged."
+            "Required when action='select'. Ignored when action='regenerate'."
         ),
     )
+
+    @model_validator(mode="after")
+    def _validate_action(self):
+        if self.action not in ("select", "regenerate"):
+            raise ValueError(
+                f"action must be 'select' or 'regenerate', got {self.action!r}"
+            )
+        return self
 
 
 class ApproveResponse(BaseModel):
@@ -67,6 +83,7 @@ class ApproveResponse(BaseModel):
     status: str
     message: str
     selected_idea: Optional[str] = None  # title of the idea that will be researched
+    regeneration_round: Optional[int] = None  # present when action was 'regenerate'
 
 
 class HealthResponse(BaseModel):
