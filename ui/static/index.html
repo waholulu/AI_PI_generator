@@ -645,6 +645,16 @@ function renderDetail(run) {
   const isDone = ['completed','failed','aborted'].includes(run.status);
   const isRunning = run.status === 'running' || run.status === 'starting';
 
+  // Skip full re-render if nothing material changed — preserves in-flight UI
+  // state (e.g. the user's HITL radio selection) across polls.
+  const sig = `${run.run_id}|${run.status}|${run.current_node || ''}|${run.regeneration_round || 0}|${run.error || ''}|${state.activeTab}`;
+  if (panel.dataset.renderSig === sig) {
+    // Lightweight refresh of the active tab's live pieces only.
+    if (state.activeTab === 'status') fetchMilestones();
+    return;
+  }
+  panel.dataset.renderSig = sig;
+
   panel.innerHTML = `
     <div class="detail-header">
       <div class="detail-header-left">
@@ -696,6 +706,15 @@ function renderStatusTab(el, run) {
   const isHITL = run.status === 'awaiting_approval';
   const nodeIndex = PIPELINE_NODES.indexOf(run.current_node);
 
+  // Preserve in-flight HITL picker across polls: if already rendered for this
+  // run+status+round, only refresh the lightweight pieces (milestones).
+  const sig = `${run.run_id}|${run.status}|${run.current_node || ''}|${run.regeneration_round || 0}`;
+  if (isHITL && el.dataset.hitlSig === sig) {
+    fetchMilestones();
+    return;
+  }
+  el.dataset.hitlSig = isHITL ? sig : '';
+
   const stepsHtml = PIPELINE_NODES.map((n, i) => {
     let cls = '';
     if (run.status === 'completed') cls = 'done';
@@ -709,11 +728,8 @@ function renderStatusTab(el, run) {
     ${isHITL ? `
       <div class="hitl-banner">
         <h3>⏸ 需要人工审批</h3>
-        <p>构思阶段已完成，请确认研究方向后继续执行文献收集。</p>
-        <div class="hitl-actions">
-          <button class="btn btn-success" onclick="approveRun('${run.run_id}')">批准并继续</button>
-          <button class="btn btn-danger"  onclick="rejectRun('${run.run_id}')">终止任务</button>
-        </div>
+        <p>构思阶段已完成，请选择一个候选选题继续，或让系统重新构思。</p>
+        <div id="hitlPicker" data-round="-1" style="margin-top:12px">加载候选选题…</div>
       </div>
     ` : ''}
 
@@ -751,17 +767,120 @@ function renderStatusTab(el, run) {
 
   // Populate milestone list immediately after rendering
   fetchMilestones();
+  if (isHITL) renderHitlPicker(run);
 }
 
 // ── HITL actions ─────────────────────────────────────────────────────────────
-async function approveRun(runId) {
+const MAX_REGEN_ROUNDS = 3;
+
+async function renderHitlPicker(run) {
+  const container = document.getElementById('hitlPicker');
+  if (!container) return;
+  const round = Number(run.regeneration_round || 0);
+  if (container.dataset.round === String(round) && container.dataset.ready === '1') return;
+  container.dataset.round = String(round);
+  container.dataset.ready = '0';
+  container.innerHTML = '<div style="color:#94a3b8">加载候选选题…</div>';
+
+  let ideas = [];
   try {
-    await api('POST', `/runs/${runId}/approve`);
-    toast('已批准，继续执行', 'success');
+    const url = `/runs/${run.run_id}/outputs/${encodePath('output/idea_validation.json')}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(res.statusText);
+    const data = await res.json();
+    ideas = Array.isArray(data.ideas) ? data.ideas : [];
+  } catch (e) {
+    container.innerHTML = `
+      <div style="color:#f87171">加载候选选题失败：${escHtml(e.message)}</div>
+      <button class="btn btn-ghost" style="margin-top:8px" onclick="retryHitlPicker('${run.run_id}')">重试</button>
+    `;
+    return;
+  }
+
+  if (!ideas.length) {
+    container.innerHTML = '<div style="color:#f87171">未找到候选选题，请检查 output/idea_validation.json。</div>';
+    return;
+  }
+
+  const verdictIcon = v => ({passed:'✅', warning:'⚠️', failed:'❌'}[v] || '❓');
+  const cardsHtml = ideas.map((idea, i) => {
+    const title = escHtml(idea.title || '?');
+    const rationale = escHtml(idea.brief_rationale || '');
+    const novelty = escHtml((idea.novelty && idea.novelty.verdict) || '?');
+    const checks = Array.isArray(idea.data_availability) ? idea.data_availability : [];
+    const verified = checks.filter(d => d.status === 'verified').length;
+    const total = checks.length;
+    const failures = Array.isArray(idea.failure_reasons) ? idea.failure_reasons : [];
+    return `
+      <label class="hitl-card" style="display:block;padding:12px;margin-bottom:10px;border:1px solid #334155;border-radius:8px;cursor:pointer">
+        <div style="display:flex;align-items:flex-start;gap:10px">
+          <input type="radio" name="hitlChoice" value="${i}" ${i === 0 ? 'checked' : ''} style="margin-top:4px">
+          <div style="flex:1">
+            <div style="font-weight:600;color:#e2e8f0">${verdictIcon(idea.overall_verdict)} 选题 ${i + 1}: ${title}</div>
+            ${rationale ? `<div style="margin-top:6px;font-size:.85rem;color:#cbd5e1"><strong>推荐理由：</strong>${rationale}</div>` : ''}
+            <div style="margin-top:6px;font-size:.8rem;color:#94a3b8">
+              原创性：${novelty}${total > 0 ? ` · 数据源：${verified}/${total} 已验证` : ''}
+            </div>
+            ${failures.map(r => `<div style="margin-top:4px;font-size:.78rem;color:#f87171">⚠ ${escHtml(r)}</div>`).join('')}
+          </div>
+        </div>
+      </label>
+    `;
+  }).join('');
+
+  const canRegen = round < MAX_REGEN_ROUNDS;
+  const regenHtml = `
+    <label class="hitl-card" style="display:block;padding:12px;margin-bottom:10px;border:1px dashed #334155;border-radius:8px;cursor:${canRegen ? 'pointer' : 'not-allowed'};opacity:${canRegen ? '1' : '.55'}">
+      <div style="display:flex;align-items:center;gap:10px">
+        <input type="radio" name="hitlChoice" value="regenerate" ${canRegen ? '' : 'disabled'}>
+        <div style="flex:1">
+          <div style="font-weight:600;color:#e2e8f0">🔄 都不满意，重新构思主题筛选</div>
+          <div style="margin-top:4px;font-size:.78rem;color:#94a3b8">
+            ${canRegen ? `已重新构思 ${round}/${MAX_REGEN_ROUNDS} 次` : `已达到最大重新构思次数（${MAX_REGEN_ROUNDS}），请从当前选题中选择。`}
+          </div>
+        </div>
+      </div>
+    </label>
+  `;
+
+  container.innerHTML = `
+    ${cardsHtml}
+    ${regenHtml}
+    <div class="hitl-actions" style="display:flex;gap:10px;margin-top:10px">
+      <button class="btn btn-success" onclick="confirmHitl('${run.run_id}')">确认</button>
+      <button class="btn btn-danger"  onclick="rejectRun('${run.run_id}')">终止任务</button>
+    </div>
+  `;
+  container.dataset.ready = '1';
+}
+
+async function retryHitlPicker(runId) {
+  try {
+    const run = await api('GET', `/runs/${runId}/status`);
+    const container = document.getElementById('hitlPicker');
+    if (container) { container.dataset.ready = '0'; container.dataset.round = '-1'; }
+    renderHitlPicker(run);
+  } catch(e) { toast('重试失败：' + e.message, 'error'); }
+}
+
+async function confirmHitl(runId) {
+  const picked = document.querySelector('input[name="hitlChoice"]:checked');
+  if (!picked) { toast('请先选择一项', 'error'); return; }
+  const val = picked.value;
+  const body = val === 'regenerate'
+    ? { action: 'regenerate' }
+    : { action: 'select', selected_idea_index: Number(val) };
+  try {
+    await api('POST', `/runs/${runId}/approve`, body);
+    toast(val === 'regenerate' ? '正在重新构思选题…' : '已批准，继续执行', 'success');
+    // Force picker to refetch after next poll (round will advance on regenerate).
+    const container = document.getElementById('hitlPicker');
+    if (container) container.dataset.ready = '0';
     await refreshDetail();
     schedulePoll();
   } catch(e) { toast('操作失败：' + e.message, 'error'); }
 }
+
 async function rejectRun(runId) {
   if (!confirm('确认终止此任务？')) return;
   try {
@@ -901,10 +1020,12 @@ function clearPoll() {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function badgeClass(s) {
   return {starting:'badge-starting', running:'badge-running', awaiting_approval:'badge-awaiting',
+          regenerating:'badge-running',
           completed:'badge-completed', failed:'badge-failed', aborted:'badge-aborted'}[s] || 'badge-starting';
 }
 function statusLabel(s) {
   return {starting:'启动中', running:'运行中', awaiting_approval:'待审批',
+          regenerating:'重新构思中',
           completed:'已完成', failed:'失败', aborted:'已终止'}[s] || s;
 }
 function fmtTime(iso) {
