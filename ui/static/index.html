@@ -788,7 +788,8 @@ async function renderHitlPicker(run) {
     const res = await fetch(url);
     if (!res.ok) throw new Error(res.statusText);
     const data = await res.json();
-    ideas = Array.isArray(data.validated_ideas) ? data.validated_ideas : [];
+    ideas = (Array.isArray(data.validated_ideas) ? data.validated_ideas : [])
+      .filter(idea => idea.overall_verdict !== 'failed');
   } catch (e) {
     container.innerHTML = `
       <div style="color:#f87171">加载候选选题失败：${escHtml(e.message)}</div>

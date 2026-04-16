@@ -33,7 +33,12 @@ def load_validated_topics(validation_path: Optional[str] = None) -> List[Dict[st
     try:
         with open(path, "r", encoding="utf-8") as f:
             report = json.load(f)
-        return report.get("validated_ideas", [])
+        ideas = report.get("validated_ideas", [])
+        # Exclude entries that failed validation (pre-substitution originals).
+        # The validator appends both the failed idea and its substitute, so
+        # keeping only non-failed entries aligns indices with the updated
+        # topic_screening.json candidates list.
+        return [i for i in ideas if i.get("overall_verdict") != "failed"]
     except (json.JSONDecodeError, OSError) as exc:
         logger.warning("Failed to load validation report from %s: %s", path, exc)
         return []
