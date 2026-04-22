@@ -246,27 +246,103 @@ def _display_degraded_warnings(graph, config) -> None:
     print("=" * 60)
 
 
+def _parse_args():
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Auto-PI Research Automation Pipeline",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["level_1", "level_2"],
+        default="level_2",
+        help="Ideation mode: level_1 (user-provided topic YAML) or level_2 (auto-generate from domain)",
+    )
+    parser.add_argument(
+        "--domain",
+        default=None,
+        help="Research domain description for Level 2 (e.g. 'GeoAI and Urban Planning')",
+    )
+    parser.add_argument(
+        "--user-topic",
+        dest="user_topic",
+        default=None,
+        metavar="PATH",
+        help="Path to user-supplied structured topic YAML file (Level 1 mode)",
+    )
+    parser.add_argument(
+        "--legacy-ideation",
+        dest="legacy_ideation",
+        action="store_true",
+        default=False,
+        help="Use legacy IdeationAgentV0 instead of V2 (backward compatibility)",
+    )
+    parser.add_argument(
+        "--budget-override-usd",
+        dest="budget_override_usd",
+        type=float,
+        default=None,
+        metavar="USD",
+        help="Override per-run LLM budget in USD (default: from reflection_config.yaml)",
+    )
+    parser.add_argument(
+        "--skip-reflection",
+        dest="skip_reflection",
+        action="store_true",
+        default=False,
+        help="Skip reflection loop in Level 2 (one-shot topic generation, no iterative refinement)",
+    )
+    return parser.parse_args()
+
+
 def main():
     _print_banner()
 
     load_dotenv()
 
-    domain_input = input(
-        "\n请输入您的宏观研究领域描述（例如：'GeoAI and Urban Planning'）： "
-    ).strip()
+    args = _parse_args()
 
-    if not domain_input:
+    # Determine domain input
+    if args.mode == "level_1" and args.user_topic:
+        # Level 1: domain derived from topic YAML or defaults
+        domain_input = args.domain or ""
+        if not domain_input:
+            _log("Level 1 模式：从用户提供的 topic YAML 推导领域。")
+    elif args.domain:
+        domain_input = args.domain.strip()
+    else:
+        domain_input = input(
+            "\n请输入您的宏观研究领域描述（例如：'GeoAI and Urban Planning'）： "
+        ).strip()
+
+    if not domain_input and args.mode == "level_2":
         _log("未输入有效领域，程序退出。", level="ERROR")
         sys.exit(1)
 
-    _log(f"初始化工作流，目标领域：{domain_input!r}")
+    # Apply --legacy-ideation as env var so IdeationAgent router picks it up
+    if args.legacy_ideation:
+        import os as _os
+        _os.environ["LEGACY_IDEATION"] = "1"
+
+    _log(f"初始化工作流，目标领域：{domain_input!r}" if domain_input else "初始化工作流（Level 1 模式）")
 
     graph = orchestrator.build_orchestrator()
 
     initial_state = {
         "domain_input": domain_input,
         "execution_status": "starting",
+        "legacy_ideation": args.legacy_ideation,
+        "ideation_mode": args.mode,
     }
+    if args.user_topic:
+        import os as _os
+        user_topic_path = _os.path.abspath(args.user_topic)
+        if not _os.path.exists(user_topic_path):
+            _log(f"--user-topic 文件不存在：{user_topic_path}", level="ERROR")
+            sys.exit(1)
+        initial_state["user_topic_path"] = user_topic_path
+        _log(f"Level 1 模式：从 {user_topic_path} 加载用户主题。")
 
     config = {"configurable": {"thread_id": "1"}}
 
