@@ -28,10 +28,29 @@ from agents.budget_tracker import BudgetExceededError, BudgetTracker
 from agents.logging_config import get_logger
 from agents.openalex_verifier import NoveltyEvidence, OpenAlexVerifier
 from agents.rule_engine import GateResult, RuleEngine
-from agents.settings import ideation_traces_dir, reflection_config_path
+from agents.settings import ideation_traces_dir, prompts_dir, reflection_config_path
 from models.topic_schema import FinalStatus, SeedCandidate, Topic
 
 logger = get_logger(__name__)
+
+# Module-level cache so the YAML file is parsed at most once per process.
+_CRITIQUE_TEMPLATES_CACHE: Optional[dict] = None
+
+
+def _load_critique_templates() -> dict:
+    global _CRITIQUE_TEMPLATES_CACHE
+    if _CRITIQUE_TEMPLATES_CACHE is not None:
+        return _CRITIQUE_TEMPLATES_CACHE
+    try:
+        path = prompts_dir() / "reflection_critique.txt"
+        with open(path) as f:
+            data = yaml.safe_load(f) or {}
+        _CRITIQUE_TEMPLATES_CACHE = data
+        return data
+    except Exception as e:
+        logger.warning("reflection_critique.txt unavailable: %s — using built-in prompts", e)
+        _CRITIQUE_TEMPLATES_CACHE = {}
+        return {}
 
 
 # ── Trace data structures ─────────────────────────────────────────────────────
@@ -175,37 +194,65 @@ def _llm_score_gate(
     llm,
 ) -> LLMCallRecord:
     """Call LLM to score a single refinable gate; return LLMCallRecord."""
-    prompts = {
-        "G1": (
-            f"Score 1-5 the mechanistic plausibility of:\n"
-            f"Exposure: {topic.exposure_X.specific_variable} ({topic.exposure_X.family.value})\n"
-            f"Outcome: {topic.outcome_Y.specific_variable} ({topic.outcome_Y.family.value})\n"
-            f"Geography: {topic.spatial_scope.geography}\n"
-            "Reply: {\"score\": <1-5>, \"reasoning\": \"...\"}  (JSON only)"
-        ),
-        "G4": (
-            f"Score 1-5 the validity of this identification strategy:\n"
-            f"Method: {topic.identification.primary.value}\n"
-            f"Key threats: {topic.identification.key_threats}\n"
-            f"Mitigations: {topic.identification.mitigations}\n"
-            "Reply: {\"score\": <1-5>, \"reasoning\": \"...\"}  (JSON only)"
-        ),
-        "G5": (
-            f"Score 1-5 the novelty of this research topic given "
-            f"{getattr(novelty_evidence, 'four_tuple_match_count', 0)} exact four-tuple matches "
-            f"out of {getattr(novelty_evidence, 'total_hits', 0)} papers found:\n"
-            f"Topic: {topic.free_form_title or topic.exposure_X.specific_variable} → "
-            f"{topic.outcome_Y.specific_variable}\n"
-            "Reply: {\"score\": <1-5>, \"reasoning\": \"...\"}  (JSON only)"
-        ),
-        "G7": (
-            f"Score 1-5 the clarity of this contribution statement:\n"
-            f"\"{topic.contribution.statement}\"\n"
-            f"Gap addressed: \"{topic.contribution.gap_addressed}\"\n"
-            "Reply: {\"score\": <1-5>, \"reasoning\": \"...\"}  (JSON only)"
-        ),
-    }
-    prompt = prompts.get(gate_id, f"Score 1-5: {gate_name}. Reply JSON only.")
+    # Try loading template from reflection_critique.txt first.
+    templates = _load_critique_templates()
+    gate_cfg = templates.get(gate_id, {})
+    template_str = gate_cfg.get("template", "")
+    prompt = ""
+    if template_str:
+        try:
+            prompt = template_str.format(
+                exposure_variable=topic.exposure_X.specific_variable,
+                exposure_family=topic.exposure_X.family.value,
+                outcome_variable=topic.outcome_Y.specific_variable,
+                outcome_family=topic.outcome_Y.family.value,
+                geography=topic.spatial_scope.geography,
+                spatial_unit=topic.spatial_scope.spatial_unit,
+                method=topic.identification.primary.value,
+                key_threats=topic.identification.key_threats,
+                mitigations=topic.identification.mitigations,
+                contribution_statement=topic.contribution.statement,
+                gap_addressed=topic.contribution.gap_addressed or "",
+                total_hits=getattr(novelty_evidence, "total_hits", 0),
+                four_tuple_match_count=getattr(novelty_evidence, "four_tuple_match_count", 0),
+            )
+        except (KeyError, ValueError) as e:
+            logger.warning("Template formatting failed for %s: %s — using built-in prompt", gate_id, e)
+            prompt = ""
+
+    # Fall back to built-in prompts when template unavailable or failed.
+    if not prompt:
+        _builtins = {
+            "G1": (
+                f"Score 1-5 the mechanistic plausibility of:\n"
+                f"Exposure: {topic.exposure_X.specific_variable} ({topic.exposure_X.family.value})\n"
+                f"Outcome: {topic.outcome_Y.specific_variable} ({topic.outcome_Y.family.value})\n"
+                f"Geography: {topic.spatial_scope.geography}\n"
+                'Reply JSON only: {"score": <1-5>, "reasoning": "..."}'
+            ),
+            "G4": (
+                f"Score 1-5 the validity of this identification strategy:\n"
+                f"Method: {topic.identification.primary.value}\n"
+                f"Key threats: {topic.identification.key_threats}\n"
+                f"Mitigations: {topic.identification.mitigations}\n"
+                'Reply JSON only: {"score": <1-5>, "reasoning": "..."}'
+            ),
+            "G5": (
+                f"Score 1-5 the novelty of this research topic given "
+                f"{getattr(novelty_evidence, 'four_tuple_match_count', 0)} exact four-tuple matches "
+                f"out of {getattr(novelty_evidence, 'total_hits', 0)} papers found:\n"
+                f"Topic: {topic.free_form_title or topic.exposure_X.specific_variable} → "
+                f"{topic.outcome_Y.specific_variable}\n"
+                'Reply JSON only: {"score": <1-5>, "reasoning": "..."}'
+            ),
+            "G7": (
+                f"Score 1-5 the clarity of this contribution statement:\n"
+                f'"{topic.contribution.statement}"\n'
+                f'Gap addressed: "{topic.contribution.gap_addressed}"\n'
+                'Reply JSON only: {"score": <1-5>, "reasoning": "..."}'
+            ),
+        }
+        prompt = _builtins.get(gate_id, f'Score 1-5: {gate_name}. Reply JSON only: {{"score": <1-5>, "reasoning": ""}}')
 
     try:
         from langchain_core.messages import HumanMessage
@@ -433,11 +480,17 @@ def run_reflection_loop(
             final_status = FinalStatus.TENTATIVE
             break
 
-        # ── Refine: build operations and apply ────────────────────────────
+        # ── Refine: build operations, propose values, apply ───────────────
         operations = _select_refine_operations(
             refinable_failed,
             refine_operations_override=refine_operations_override,
         )
+        # Enrich each selected operation with a concrete value from the LLM
+        # so that _apply_operations can actually modify the Topic fields.
+        if refine_operations_override is None:
+            operations = _llm_propose_operation_values(
+                current_topic, current_candidate, operations, llm
+            )
         new_topic, new_candidate = _apply_operations(
             current_topic, operations, current_candidate
         )
@@ -485,6 +538,75 @@ def _append_round(
         four_tuple_sig=sig,
         round_score=score,
     ))
+
+
+def _llm_propose_operation_values(
+    topic: Topic,
+    seed_candidate: SeedCandidate,
+    operations: list[dict],
+    llm,
+) -> list[dict]:
+    """Ask LLM to fill in concrete 'value' keys for each selected refine operation.
+
+    Without values, _apply_operations silently skips every op (value is None guard).
+    This function merges LLM-proposed values back into the operations list.
+    Falls back to the original (valueless) list on any error.
+    """
+    if not llm or not operations:
+        return operations
+
+    try:
+        prompt_path = prompts_dir() / "reflection_refine.txt"
+        if prompt_path.exists():
+            template = prompt_path.read_text()
+        else:
+            template = (
+                "Propose concrete values for each refine operation to fix the failing gates.\n"
+                "Topic ID: {topic_id}\nExposure: {exposure}\nOutcome: {outcome}\n"
+                "Geography: {geography}\nMethod: {method}\nSpatial unit: {spatial_unit}\n"
+                "Sources: {declared_sources}\nOperations:\n{operations_list}\n"
+                'Return JSON array: [{{"op":"<name>","value":<value>,"rationale":"..."}}]'
+            )
+
+        ops_list = "\n".join(
+            f"  - {op['op']}: {op.get('description', '')}"
+            for op in operations
+        )
+        prompt = template.format(
+            topic_id=topic.meta.topic_id,
+            exposure=f"{topic.exposure_X.specific_variable} ({topic.exposure_X.family.value})",
+            outcome=f"{topic.outcome_Y.specific_variable} ({topic.outcome_Y.family.value})",
+            geography=topic.spatial_scope.geography,
+            method=topic.identification.primary.value,
+            spatial_unit=topic.spatial_scope.spatial_unit,
+            declared_sources=", ".join(seed_candidate.declared_sources),
+            operations_list=ops_list,
+        )
+
+        from langchain_core.messages import HumanMessage
+        response = llm.invoke([HumanMessage(content=prompt)])
+        raw = response.content.strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+
+        proposed = json.loads(raw)
+        proposed_map = {
+            p["op"]: p.get("value")
+            for p in proposed
+            if isinstance(p, dict) and "op" in p
+        }
+
+        enriched = []
+        for op in operations:
+            v = proposed_map.get(op["op"])
+            enriched.append({**op, "value": v} if v is not None else op)
+        return enriched
+
+    except Exception as e:
+        logger.warning("LLM refine value proposal failed: %s — ops kept without values", e)
+        return operations
 
 
 def _select_refine_operations(
