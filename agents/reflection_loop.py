@@ -53,6 +53,15 @@ def _load_critique_templates() -> dict:
         return {}
 
 
+def clear_critique_templates_cache() -> None:
+    """Reset the module-level critique-template cache.
+
+    Call this in test teardown when swapping reflection_critique.txt between runs.
+    """
+    global _CRITIQUE_TEMPLATES_CACHE
+    _CRITIQUE_TEMPLATES_CACHE = None
+
+
 # ── Trace data structures ─────────────────────────────────────────────────────
 
 @dataclass
@@ -172,6 +181,9 @@ def _apply_operations(
                 topic_dict["contribution"]["gap_addressed"] = value
             elif op_name == "add_measurement_proxy":
                 topic_dict["exposure_X"]["measurement_proxy"] = value
+            elif op_name == "free_form":
+                # TODO: structured handler for free_form pending data-driven op expansion
+                logger.info("free_form op (value=%r) — no field applied until handler added", value)
             else:
                 logger.warning("Unknown refine operation: %s — skipped", op_name)
         except Exception as e:
@@ -635,6 +647,8 @@ def _select_refine_operations(
             if len(selected) >= max_ops:
                 break
 
+    if not selected:
+        selected.append({"op": "free_form", "description": "Catch-all: no specific op matched the failed gates"})
     return selected
 
 

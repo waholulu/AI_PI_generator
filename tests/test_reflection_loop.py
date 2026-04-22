@@ -12,6 +12,7 @@ from agents.reflection_loop import (
     ReflectionTrace,
     RoundRecord,
     _apply_operations,
+    _llm_propose_operation_values,
     _select_refine_operations,
     run_reflection_loop,
 )
@@ -274,3 +275,40 @@ def test_apply_operations_unknown_op_skipped():
     # Should not raise
     new_topic, _ = _apply_operations(seed.topic, ops, seed)
     assert new_topic is not None
+
+
+# ── Test 9: _llm_propose_operation_values ─────────────────────────────────────
+
+def test_llm_propose_invalid_json_returns_original_ops():
+    seed = make_seed()
+    ops = [{"op": "change_geography", "description": "shift geography"}]
+    mock_llm = MagicMock()
+    mock_llm.invoke.return_value.content = "this is not json {"
+    result = _llm_propose_operation_values(seed.topic, seed, ops, mock_llm)
+    assert result == ops
+    assert "value" not in result[0]
+
+
+def test_llm_propose_wrong_type_skips_enrichment():
+    seed = make_seed()
+    ops = [{"op": "change_geography", "description": "shift geography"}]
+    mock_llm = MagicMock()
+    # Returns a JSON object, not an array — proposed_map ends up empty
+    mock_llm.invoke.return_value.content = '{"op": "change_geography", "value": "Tokyo"}'
+    result = _llm_propose_operation_values(seed.topic, seed, ops, mock_llm)
+    assert "value" not in result[0]
+
+
+def test_llm_propose_partial_ops_enriches_only_matched():
+    seed = make_seed()
+    ops = [
+        {"op": "change_geography", "description": "shift geography"},
+        {"op": "change_outcome_family", "description": "change outcome"},
+    ]
+    mock_llm = MagicMock()
+    mock_llm.invoke.return_value.content = (
+        '[{"op": "change_geography", "value": "Tokyo", "rationale": "better data"}]'
+    )
+    result = _llm_propose_operation_values(seed.topic, seed, ops, mock_llm)
+    assert result[0]["value"] == "Tokyo"
+    assert "value" not in result[1]

@@ -91,3 +91,12 @@ operations:
     target_field: exposure_X.measurement_proxy
     applicable_when: [G3_fail, G6_fail]
     description: Specify a concrete observable proxy for the latent exposure variable
+
+  # TODO: implement structured handler for free_form in _apply_operations
+  # (data-driven op expansion phase). Until then this op is a logged no-op.
+  - op: free_form
+    target_field: null
+    applicable_when: [G1_fail, G4_fail, G5_fail, G7_fail]
+    description: >
+      Catch-all escape hatch when no specific field-path op addresses the failure.
+      LLM proposes arbitrary edits. Not yet applied — logged and skipped.
