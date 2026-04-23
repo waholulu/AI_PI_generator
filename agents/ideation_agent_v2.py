@@ -79,6 +79,24 @@ class _UserInputError(Exception):
     pass
 
 
+class IdeationSeedGenerationError(RuntimeError):
+    """Raised when Level 2 cannot produce any seed candidates from the LLM.
+
+    Surfaces a clear cause (missing API key, unparseable model output, etc.)
+    instead of silently emitting placeholder "Fallback topic" stubs that would
+    then pass the reflection loop and leak into the HITL picker.
+    """
+
+
+_PLACEHOLDER_TITLE_MARKERS = ("fallback topic", "fallback_")
+
+
+def _is_placeholder_candidate(candidate: dict) -> bool:
+    title = str(candidate.get("title", "")).lower()
+    topic_id = str(candidate.get("topic_id") or candidate.get("reflection_trace_id") or "").lower()
+    return any(m in title for m in _PLACEHOLDER_TITLE_MARKERS) or topic_id.startswith("fallback_")
+
+
 class IdeationAgentV2:
     """Dual-mode ideation agent using structured Topic slot schema + reflection loop."""
 
@@ -330,20 +348,36 @@ class IdeationAgentV2:
     def _generate_seeds(
         self, domain: str, field_scan_context: str, memory_context: str
     ) -> list[SeedCandidate]:
-        """Generate 30 SeedCandidates from LLM or fallback stubs."""
+        """Generate SeedCandidates from the LLM.
+
+        Raises IdeationSeedGenerationError when no valid seeds can be produced,
+        so the pipeline surfaces a clear failure instead of silently emitting
+        placeholder stubs.
+        """
+        if self._llm is None:
+            raise IdeationSeedGenerationError(
+                "Ideation LLM is not configured — cannot generate seed topics. "
+                "Verify GEMINI_API_KEY is set in the runtime environment."
+            )
         try:
             seeds = self._llm_generate_seeds(domain, field_scan_context, memory_context)
-            if seeds:
-                return seeds
+        except IdeationSeedGenerationError:
+            raise
         except Exception as e:
-            logger.warning("LLM seed generation failed: %s — using fallback", e)
-        return self._fallback_seeds(domain)
+            raise IdeationSeedGenerationError(
+                f"LLM seed generation failed: {e}"
+            ) from e
+        if not seeds:
+            raise IdeationSeedGenerationError(
+                "LLM returned no parseable seed candidates for the given domain."
+            )
+        return seeds
 
     def _llm_generate_seeds(
         self, domain: str, field_scan_context: str, memory_context: str
     ) -> list[SeedCandidate]:
         if self._llm is None:
-            return []
+            raise IdeationSeedGenerationError("LLM unavailable for seed generation.")
 
         prompt_path = settings.prompts_dir() / "ideation_seed.txt"
         if prompt_path.exists():
@@ -383,50 +417,6 @@ class IdeationAgentV2:
                 logger.warning("Seed %d parse failed: %s", i, e)
         return seeds
 
-    def _fallback_seeds(self, domain: str) -> list[SeedCandidate]:
-        """Minimal stub seeds used when LLM is unavailable."""
-        from models.topic_schema import (
-            Contribution, ContributionPrimary, ExposureFamily, ExposureX,
-            Frequency, IdentificationPrimary, IdentificationStrategy, OutcomeFamily,
-            OutcomeY, SamplingMode, SpatialScope, TemporalScope, TopicMeta,
-        )
-        seeds = []
-        for i in range(3):
-            tid = f"fallback_{i:03d}"
-            topic = Topic(
-                meta=TopicMeta(topic_id=tid),
-                exposure_X=ExposureX(
-                    family=ExposureFamily.BUILT_ENVIRONMENT,
-                    specific_variable=f"built_env_var_{i}",
-                    spatial_unit="tract",
-                ),
-                outcome_Y=OutcomeY(
-                    family=OutcomeFamily.HEALTH,
-                    specific_variable=f"health_outcome_{i}",
-                    spatial_unit="tract",
-                ),
-                spatial_scope=SpatialScope(
-                    geography=domain[:50],
-                    spatial_unit="tract",
-                    sampling_mode=SamplingMode.PANEL,
-                ),
-                temporal_scope=TemporalScope(
-                    start_year=2010, end_year=2020, frequency=Frequency.ANNUAL
-                ),
-                identification=IdentificationStrategy(
-                    primary=IdentificationPrimary.FE,
-                    key_threats=["confounding"],
-                    mitigations=["fixed_effects"],
-                ),
-                contribution=Contribution(
-                    primary=ContributionPrimary.NOVEL_CONTEXT,
-                    statement=f"Fallback topic {i} for {domain}.",
-                ),
-                free_form_title=f"Fallback topic {i}",
-            )
-            seeds.append(SeedCandidate(topic=topic, declared_sources=["NHGIS"]))
-        return seeds
-
     def _rank_and_select(
         self, accepted: list[tuple[SeedCandidate, ReflectionTrace]], domain: str
     ) -> list[dict]:
@@ -444,6 +434,12 @@ class IdeationAgentV2:
                 "reflection_trace_id": seed.topic.meta.topic_id,
                 "_sort_score": score,
             }
+            if _is_placeholder_candidate(entry):
+                logger.warning(
+                    "Dropping placeholder candidate from ranking: %s",
+                    entry.get("title") or entry.get("topic_id"),
+                )
+                continue
             candidates.append(entry)
 
         candidates.sort(key=lambda x: x.get("_sort_score", 0), reverse=True)
@@ -495,16 +491,13 @@ class IdeationAgentV2:
                 logger.warning(
                     "No ACCEPTED candidates after rerun — listing best near-pass candidates"
                 )
-                promoted = self._rank_near_pass_fallbacks(tentative, rejected)[:3]
-                top_candidates = promoted
-            else:
-                logger.warning("No ACCEPTED or TENTATIVE candidates — falling back to degraded plan")
-                top_candidates = [{
-                    "title": f"No accepted topics for: {domain}",
-                    "rank": 1,
-                    "final_status": "DEGRADED",
-                    "legacy_six_gates": {},
-                }]
+                top_candidates = self._rank_near_pass_fallbacks(tentative, rejected)[:3]
+
+        if not top_candidates:
+            raise IdeationSeedGenerationError(
+                f"No usable topics generated for domain '{domain}' after all retries — "
+                "aborting rather than emitting a placeholder."
+            )
 
         screening = {
             "run_id": run_id,
@@ -579,11 +572,12 @@ class IdeationAgentV2:
             gate_results = last_round.gate_results if last_round else []
             passed_count = sum(1 for r in gate_results if r.passed)
             is_us = self._is_us_topic(seed.topic.spatial_scope.geography)
-            display_title = seed.topic.to_legacy_dict().get("title", "")
+            base_dict = seed.topic.to_legacy_dict()
+            display_title = base_dict.get("title", "")
             if is_us:
                 display_title = f"[US] {display_title}"
-            ranked.append({
-                **seed.topic.to_legacy_dict(),
+            entry = {
+                **base_dict,
                 "title": display_title,
                 "rank": 0,
                 "final_status": trace.final_status.value,
@@ -593,7 +587,14 @@ class IdeationAgentV2:
                 "passed_gates_count": passed_count,
                 "is_us_topic": is_us,
                 "_sort_score": score,
-            })
+            }
+            if _is_placeholder_candidate(entry):
+                logger.warning(
+                    "Dropping placeholder near-pass candidate: %s",
+                    entry.get("title") or entry.get("topic_id"),
+                )
+                continue
+            ranked.append(entry)
 
         ranked.sort(
             key=lambda x: (

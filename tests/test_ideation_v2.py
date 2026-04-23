@@ -13,7 +13,12 @@ import pytest
 import yaml
 
 from agents.budget_tracker import BudgetTracker
-from agents.ideation_agent_v2 import IdeationAgentV2, _build_legacy_gates_map
+from agents.ideation_agent_v2 import (
+    IdeationAgentV2,
+    IdeationSeedGenerationError,
+    _build_legacy_gates_map,
+    _is_placeholder_candidate,
+)
 from agents.reflection_loop import ReflectionTrace, RoundRecord
 from agents.rule_engine import GateResult
 from models.topic_schema import (
@@ -212,17 +217,31 @@ def test_level1_tentative_raises_hitl(tmp_path, monkeypatch):
     assert exc_info.value.kind == "refinable_still_failing_after_one_round"
 
 
-# ── Test 4: Level 2 — fallback seeds when LLM is None ────────────────────────
+# ── Test 4: Level 2 — LLM unavailable raises a clear error ──────────────────
 
-def test_level2_fallback_seeds_generated(tmp_path, monkeypatch):
+def test_level2_raises_when_llm_unavailable(tmp_path, monkeypatch):
     monkeypatch.setenv("AUTOPI_DATA_ROOT", str(tmp_path))
     agent = IdeationAgentV2(budget=BudgetTracker(per_run_budget_usd=10.0))
-    agent._llm = None  # force fallback
+    agent._llm = None  # simulate missing/misconfigured API key
 
-    seeds = agent._fallback_seeds("Urban Planning")
-    assert len(seeds) == 3
-    for s in seeds:
-        assert isinstance(s, SeedCandidate)
+    with pytest.raises(IdeationSeedGenerationError, match="LLM"):
+        agent._generate_seeds("Urban Planning", "", "")
+
+
+def test_level2_raises_when_llm_returns_no_parseable_seeds(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTOPI_DATA_ROOT", str(tmp_path))
+    agent = IdeationAgentV2(budget=BudgetTracker(per_run_budget_usd=10.0))
+    agent._llm = MagicMock()  # will be stubbed via method patch below
+
+    with patch.object(agent, "_llm_generate_seeds", return_value=[]):
+        with pytest.raises(IdeationSeedGenerationError, match="no parseable"):
+            agent._generate_seeds("Urban Planning", "", "")
+
+
+def test_placeholder_candidate_detected():
+    assert _is_placeholder_candidate({"title": "Fallback topic 1"})
+    assert _is_placeholder_candidate({"topic_id": "fallback_001"})
+    assert not _is_placeholder_candidate({"title": "PM2.5 and mortality"})
 
 
 # ── Test 5: Level 2 — accepted path writes all outputs ───────────────────────
