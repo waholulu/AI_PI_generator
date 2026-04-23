@@ -141,7 +141,7 @@ class TestG3DataAvailability:
         t = make_topic()
         r = engine.check_G3_data_availability(t, ["TOTALLY_UNKNOWN_DB_XYZ"])
         assert r.passed is False
-        assert "source_not_in_catalog" in r.reason
+        assert "no_sources_in_catalog" in r.reason
 
     def test_year_before_coverage_fails(self, engine):
         # NHGIS starts 1790; request 1700-1800 should fail on end > y_max only if year_max < 1800
@@ -150,14 +150,14 @@ class TestG3DataAvailability:
         t = make_topic(start=1700, end=1800)
         r = engine.check_G3_data_availability(t, ["NHGIS"])
         assert r.passed is False
-        assert any("year_gap" in issue for issue in r.details["issues"])
+        assert any("year_gap" in issue for issue in r.details["coverage_issues"])
 
     def test_year_after_coverage_fails(self, engine):
         # NHGIS ends 2023; request 2025 → year_gap
         t = make_topic(start=2020, end=2025)
         r = engine.check_G3_data_availability(t, ["NHGIS"])
         assert r.passed is False
-        assert any("year_gap" in issue for issue in r.details["issues"])
+        assert any("year_gap" in issue for issue in r.details["coverage_issues"])
 
     def test_multiple_valid_sources_pass(self, engine):
         t = make_topic(start=2016, end=2020, x_spatial="tract", y_spatial="tract")

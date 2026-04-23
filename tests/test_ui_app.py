@@ -29,23 +29,36 @@ def _build_streamlit_stub() -> types.ModuleType:
         "header",
         "subheader",
         "text_input",
-        "button",
         "columns",
         "info",
         "warning",
         "success",
-        "spinner",
+        "error",
+        "radio",
         "json",
         "write",
         "rerun",
     ):
         setattr(st, attr, MagicMock(return_value=MagicMock()))
 
-    # columns() must return a context-manager-compatible pair
-    col = MagicMock()
-    col.__enter__ = MagicMock(return_value=col)
-    col.__exit__ = MagicMock(return_value=False)
+    # button must return False to prevent pipeline execution at import time
+    st.button = MagicMock(return_value=False)
+
+    # context-manager-compatible mock for widgets used in `with` blocks
+    def _ctx_mock():
+        m = MagicMock()
+        m.__enter__ = MagicMock(return_value=m)
+        m.__exit__ = MagicMock(return_value=False)
+        return m
+
+    col = _ctx_mock()
     st.columns = MagicMock(return_value=(col, col))
+
+    tab = _ctx_mock()
+    st.tabs = MagicMock(return_value=(tab, tab, tab))
+
+    st.spinner = MagicMock(return_value=_ctx_mock())
+    st.expander = MagicMock(return_value=_ctx_mock())
 
     return st
 
