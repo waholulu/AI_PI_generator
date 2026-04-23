@@ -22,6 +22,8 @@ RUN pip install --no-cache-dir \
 # Copy application source
 COPY agents/ agents/
 COPY api/ api/
+COPY config/ config/
+COPY models/ models/
 COPY prompts/ prompts/
 COPY ui/ ui/
 COPY main.py ./

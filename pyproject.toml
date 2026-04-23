@@ -14,6 +14,7 @@ dependencies = [
     "langgraph-checkpoint-sqlite>=3.0.3",
     "pandas>=2.3.3",
     "pyalex>=0.21",
+    "pyyaml>=6.0",
     "pyarrow>=23.0.1",
     "pymupdf>=1.27.1",
     "python-dotenv>=1.2.2",
@@ -35,4 +36,9 @@ postgres = [
 markers = [
     "live_openalex: marks tests that call the real OpenAlex API (require OPENALEX_API_KEY, OPENALEX_EMAIL, pyalex)",
     "live_llm: marks tests that call real LLM APIs (require GEMINI_API_KEY / GOOGLE_API_KEY)",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
 ]

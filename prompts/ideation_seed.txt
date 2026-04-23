@@ -1,0 +1,47 @@
+You are a domain expert in GeoAI, urban planning, applied economics, and environmental health. Generate exactly 30 research topic seeds for the following domain: {domain}
+
+Field context (avoid already-saturated niches described here):
+{field_scan_context}
+
+Previously rejected or explored topics (do NOT regenerate these):
+{memory_context}
+
+Each seed must be a novel, tractable research topic suited for a peer-reviewed publication. Design each seed as a causal or quasi-experimental study using publicly available administrative, geospatial, or survey data.
+
+Return a JSON array of exactly 30 objects. Each object must have these keys:
+  "topic_id"         — string, format "seed_{i:03d}" (e.g., "seed_001")
+  "title"            — short descriptive title, max 12 words
+  "exposure"         — the independent variable: specific, measurable, not vague
+  "outcome"          — the dependent variable: specific, measurable, not vague
+  "geography"        — study area (e.g., "US cities", "EU metropolitan areas", "Chinese prefectures")
+  "method"           — identification strategy, one of:
+                         diff_in_diff | regression_discontinuity | fixed_effects |
+                         iv_instrumental_variables | synthetic_control |
+                         spatial_discontinuity | matching
+  "spatial_unit"     — unit of observation, one of:
+                         building | parcel | block | block_group | tract | zip_code |
+                         county | city | metro | state | region | grid_cell | country
+  "declared_sources" — JSON list of 1–3 data source names chosen ONLY from this approved catalog:
+                       NHGIS, ACS, TIGER_Lines, OpenStreetMap, GTFS_Feeds, EPA_AQS, CDC_PLACES,
+                       LEHD_LODES, Zillow_ZTRAX, BRFSS, NLCD, GHSL, Google_Earth_Engine,
+                       Sentinel2, Landsat, SafeGraph, Microsoft_Building_Footprints,
+                       VIIRS_Nighttime_Lights, WorldPop, OpenAlex, Twitter_API,
+                       OpenDataSoft_Urban
+                       Use exact names as listed. Do NOT invent new source names.
+  "notes"            — one sentence: the causal mechanism and what makes this novel
+
+Diversity requirements (must be satisfied across the 30 seeds):
+  - At least 6 seeds: urban form / built environment exposure (e.g., transit access, green space, street design)
+  - At least 5 seeds: environmental health (air/noise/heat exposure → health outcomes)
+  - At least 4 seeds: housing / real-estate economics
+  - At least 3 seeds: labor market / commuting outcomes
+  - At least 3 seeds: education / social equity outcomes
+  - Remaining: other plausible combinations (mobility, crime, energy, climate adaptation, etc.)
+
+Quality constraints:
+  - Every topic must have a plausible causal identification strategy (not just OLS regression)
+  - Exposure and outcome must be operationalizable with public data
+  - Geography and spatial_unit must match (e.g., tract-level outcome requires tract-level exposure)
+  - Do not propose topics that merely replicate a well-known flagship paper; add geographic, temporal, or methodological novelty
+
+Return JSON array only — no markdown fences, no prose before or after the array.

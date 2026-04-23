@@ -146,14 +146,17 @@ def _match_data_source(
 
 
 def check_data_availability(
-    data_sources: List[Dict[str, Any]],
+    data_sources: List[Any],
     registry: List[Dict[str, Any]],
     threshold: float = 0.6,
 ) -> List[DataSourceCheck]:
     """Check each claimed data source against the registry."""
     results = []
     for source in data_sources:
-        name = source.get("name", source.get("source", "Unknown"))
+        if isinstance(source, str):
+            name = source
+        else:
+            name = source.get("name", source.get("source", "Unknown"))
         match = _match_data_source(name, registry, threshold)
         results.append(DataSourceCheck(
             name=name,
@@ -331,16 +334,15 @@ class IdeaValidatorAgent:
                 self._degraded_nodes.append(tag)
                 logger.warning("LLM novelty assessment fell back to default for: %s", title[:70])
 
-        # Data availability check
-        data_sources = idea.get("data_sources", [])
+        # Data availability check — accept both key names written by different ideation paths
+        data_sources = idea.get("data_sources") or idea.get("declared_sources") or []
         data_checks = check_data_availability(data_sources, registry, fuzzy_threshold)
 
-        # Determine verdict
+        # Determine verdict.
+        # "already_published" → warning (not hard failure): novelty is subjective and
+        # the human at the HITL checkpoint makes the final call. Hard failure is reserved
+        # for cases where ALL data sources are unverified (no data to run the study).
         failure_reasons: List[str] = []
-        if novelty.verdict == "already_published":
-            failure_reasons.append(
-                "Idea appears already published — similar paper(s) found in recent literature"
-            )
         all_unverified = (
             len(data_checks) > 0
             and all(dc.status == "unverified" for dc in data_checks)
@@ -352,8 +354,9 @@ class IdeaValidatorAgent:
 
         if failure_reasons:
             overall = "failed"
-        elif novelty.verdict == "partially_overlapping" or any(
-            dc.status == "unverified" for dc in data_checks
+        elif (
+            novelty.verdict in ("already_published", "partially_overlapping")
+            or any(dc.status == "unverified" for dc in data_checks)
         ):
             overall = "warning"
         else:

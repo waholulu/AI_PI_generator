@@ -1,0 +1,96 @@
+# Spatial units registry — used by G2 (scale_alignment)
+# granularity_rank: lower = finer grain; higher = coarser grain
+# G2 rule: |X.rank - Y.rank| <= 4
+
+spatial_units:
+  - name: parcel
+    granularity_rank: 1
+    aliases: [lot, property, cadastral]
+
+  - name: block
+    granularity_rank: 2
+    aliases: [census_block, city_block]
+
+  - name: block_group
+    granularity_rank: 3
+    aliases: [bg, census_block_group]
+
+  - name: tract
+    granularity_rank: 4
+    aliases: [census_tract, zcta_tract]
+
+  - name: zip_code
+    granularity_rank: 5
+    aliases: [zip, zcta, postal_code]
+
+  - name: neighborhood
+    granularity_rank: 5
+    aliases: [nta, neighbourhood, nhood]
+
+  - name: street_segment
+    granularity_rank: 3
+    aliases: [road_segment, edge, link]
+
+  - name: point
+    granularity_rank: 1
+    aliases: [location, coordinate, monitor_point]
+
+  - name: stop
+    granularity_rank: 2
+    aliases: [transit_stop, bus_stop, station]
+
+  - name: route
+    granularity_rank: 5
+    aliases: [transit_route, bus_route, subway_line]
+
+  - name: place
+    granularity_rank: 6
+    aliases: [municipality, city, town, village]
+
+  - name: city
+    granularity_rank: 6
+    aliases: [municipality, place, urban_area]
+
+  - name: county
+    granularity_rank: 7
+    aliases: [district, borough, parish]
+
+  - name: cbsa
+    granularity_rank: 7
+    aliases: [metro_area, metropolitan_statistical_area, msa]
+
+  - name: metro_area
+    granularity_rank: 7
+    aliases: [cbsa, msa, metropolitan_area]
+
+  - name: state
+    granularity_rank: 8
+    aliases: [province, region_admin1]
+
+  - name: watershed
+    granularity_rank: 7
+    aliases: [catchment, basin, huc]
+
+  - name: region
+    granularity_rank: 9
+    aliases: [macro_region, census_division, region_admin2]
+
+  - name: country
+    granularity_rank: 10
+    aliases: [nation, national]
+
+  - name: global
+    granularity_rank: 11
+    aliases: [worldwide, world]
+
+  - name: raster_30m
+    granularity_rank: 1
+    aliases: [30m_grid, landsat_pixel]
+
+  - name: raster_100m
+    granularity_rank: 2
+    aliases: [100m_grid, ghsl_pixel]
+
+  - name: raster_1km
+    granularity_rank: 4
+    aliases: [1km_grid, 1000m_grid]

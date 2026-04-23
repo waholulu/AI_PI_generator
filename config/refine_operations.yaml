@@ -1,0 +1,102 @@
+# Refine operations — used by reflection_loop to suggest and apply topic modifications
+# Each operation maps to a field path on the Topic model and carries a rationale template.
+# reflection_loop picks <= 2 operations per refine round based on which gates failed.
+
+operations:
+  - op: change_exposure_family
+    target_field: exposure_X.family
+    applicable_when: [G1_fail, G7_fail]
+    description: Switch to a more measurable or theory-grounded exposure family
+    params:
+      - suggested_families: [built_environment, transport_infra, green_blue_space, air_quality]
+
+  - op: narrow_exposure_variable
+    target_field: exposure_X.specific_variable
+    applicable_when: [G1_fail, G3_fail]
+    description: Replace broad exposure concept with a precisely operationalizable variable
+
+  - op: change_outcome_family
+    target_field: outcome_Y.family
+    applicable_when: [G1_fail, G7_fail]
+    description: Switch to an outcome family with stronger theoretical linkage
+
+  - op: narrow_outcome_variable
+    target_field: outcome_Y.specific_variable
+    applicable_when: [G1_fail, G3_fail]
+    description: Replace broad outcome concept with a measurable administrative indicator
+
+  - op: change_identification_strategy
+    target_field: identification.primary
+    applicable_when: [G4_fail]
+    description: Switch to a more defensible identification strategy given available data
+    params:
+      - preferred_strategies: [diff_in_diff, regression_discontinuity, fixed_effects]
+
+  - op: add_key_threats
+    target_field: identification.key_threats
+    applicable_when: [G4_fail]
+    description: Enumerate confounders and selection threats that reviewers will raise
+
+  - op: add_mitigations
+    target_field: identification.mitigations
+    applicable_when: [G4_fail]
+    description: Add corresponding mitigation strategies to raise threat coverage above 80%
+
+  - op: change_geography
+    target_field: spatial_scope.geography
+    applicable_when: [G3_fail, G5_fail]
+    description: Shift to a geography with better data coverage or less studied context
+
+  - op: change_spatial_unit
+    target_field: spatial_scope.spatial_unit
+    applicable_when: [G2_fail, G3_fail]
+    description: Adopt spatial unit that better matches available data granularity
+
+  - op: change_sampling_mode
+    target_field: spatial_scope.sampling_mode
+    applicable_when: [G4_fail]
+    description: Align sampling design with the identification strategy requirements
+
+  - op: adjust_temporal_scope
+    target_field: temporal_scope
+    applicable_when: [G3_fail]
+    description: Shrink or shift time window to match data source coverage years
+
+  - op: change_frequency
+    target_field: temporal_scope.frequency
+    applicable_when: [G3_fail, G4_fail]
+    description: Adjust observation frequency to match available data release cadence
+
+  - op: declare_additional_sources
+    target_field: declared_sources
+    applicable_when: [G3_fail, G6_fail]
+    description: Add supplementary data sources to satisfy coverage or skill requirements
+
+  - op: change_contribution_type
+    target_field: contribution.primary
+    applicable_when: [G7_fail]
+    description: Reframe contribution (e.g., from novel_context to causal_refinement)
+
+  - op: strengthen_contribution_statement
+    target_field: contribution.statement
+    applicable_when: [G7_fail]
+    description: Rewrite contribution statement to clearly name the knowledge gap
+
+  - op: add_gap_addressed
+    target_field: contribution.gap_addressed
+    applicable_when: [G7_fail]
+    description: Explicitly state what prior literature failed to establish
+
+  - op: add_measurement_proxy
+    target_field: exposure_X.measurement_proxy
+    applicable_when: [G3_fail, G6_fail]
+    description: Specify a concrete observable proxy for the latent exposure variable
+
+  # TODO: implement structured handler for free_form in _apply_operations
+  # (data-driven op expansion phase). Until then this op is a logged no-op.
+  - op: free_form
+    target_field: null
+    applicable_when: [G1_fail, G4_fail, G5_fail, G7_fail]
+    description: >
+      Catch-all escape hatch when no specific field-path op addresses the failure.
+      LLM proposes arbitrary edits. Not yet applied — logged and skipped.

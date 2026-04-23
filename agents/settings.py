@@ -106,6 +106,55 @@ def prompts_dir() -> Path:
     return Path("prompts")
 
 
+def repo_config_dir() -> Path:
+    """Repo-baked config directory (not scoped to AUTOPI_DATA_ROOT).
+
+    Config YAML files added during the Module 1 upgrade (gate_config.yaml,
+    reflection_config.yaml, etc.) live here alongside research_plan.json.
+    Unlike output_dir() / config_dir(), this path is stable across all runs
+    and deployment environments.
+    """
+    return Path(__file__).parent.parent / "config"
+
+
+def reflection_config_path() -> str:
+    return str(repo_config_dir() / "reflection_config.yaml")
+
+
+def gate_config_path() -> str:
+    return str(repo_config_dir() / "gate_config.yaml")
+
+
+def data_sources_yaml_path() -> str:
+    return str(repo_config_dir() / "data_sources.yaml")
+
+
+def skill_registry_path() -> str:
+    return str(repo_config_dir() / "skill_registry.yaml")
+
+
+def spatial_units_path() -> str:
+    return str(repo_config_dir() / "spatial_units.yaml")
+
+
+def refine_operations_path() -> str:
+    return str(repo_config_dir() / "refine_operations.yaml")
+
+
+def tentative_pool_path() -> str:
+    return str(output_dir() / "tentative_pool.json")
+
+
+def ideation_traces_dir() -> Path:
+    d = output_dir() / "ideation_traces"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def ideation_run_summary_path() -> str:
+    return str(output_dir() / "ideation_run_summary.json")
+
+
 # ── Specific file paths ──────────────────────────────────────────────
 
 # Output files

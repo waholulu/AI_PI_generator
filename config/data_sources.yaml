@@ -1,0 +1,246 @@
+# Local data source catalog — used by G3 (data_availability) and G6 (automation_feasibility)
+# Each entry must have: name, spatial_units, coverage_year_min, coverage_year_max
+# skills_required: skills from skill_registry.yaml needed to process this source
+
+data_sources:
+
+  - name: NHGIS
+    alias: [nhgis, national historical gis, ipums nhgis]
+    description: US census geographic data with long time series
+    spatial_units: [tract, county, state, block_group, place]
+    coverage_year_min: 1790
+    coverage_year_max: 2023
+    skills_required: [census_extract, spatial_join]
+    auth_required: false
+    format: csv+shapefile
+    url: https://www.nhgis.org
+
+  - name: OpenStreetMap
+    alias: [osm, openstreetmap]
+    description: Global crowd-sourced street network and POI data
+    spatial_units: [point, polygon, street_segment, city, region]
+    coverage_year_min: 2005
+    coverage_year_max: 2024
+    skills_required: [osm_extract, spatial_analysis]
+    auth_required: false
+    format: pbf/geojson
+    url: https://www.openstreetmap.org
+
+  - name: GTFS_Feeds
+    alias: [gtfs, general transit feed specification, transit feeds]
+    description: Public transit schedule and route data
+    spatial_units: [stop, route, city, metro_area]
+    coverage_year_min: 2007
+    coverage_year_max: 2024
+    skills_required: [gtfs_parse, spatial_join]
+    auth_required: false
+    format: zip/csv
+    url: https://gtfs.org
+
+  - name: EPA_AQS
+    alias: [aqs, epa air quality, air quality system]
+    description: US EPA air quality monitoring station data
+    spatial_units: [monitor_point, county, state, cbsa]
+    coverage_year_min: 1980
+    coverage_year_max: 2023
+    skills_required: [api_fetch, spatial_interpolation]
+    auth_required: false
+    format: csv
+    url: https://aqs.epa.gov
+
+  - name: CDC_PLACES
+    alias: [places, cdc places, 500 cities]
+    description: CDC local-area health estimates at census tract/county level
+    spatial_units: [tract, county, city, zip_code]
+    coverage_year_min: 2016
+    coverage_year_max: 2023
+    skills_required: [csv_load, spatial_join]
+    auth_required: false
+    format: csv+geojson
+    url: https://www.cdc.gov/places
+
+  - name: LEHD_LODES
+    alias: [lodes, lehd, origin destination employment statistics]
+    description: US longitudinal employer-household dynamics origin-destination data
+    spatial_units: [block, tract, county, state]
+    coverage_year_min: 2002
+    coverage_year_max: 2021
+    skills_required: [csv_load, spatial_join]
+    auth_required: false
+    format: csv
+    url: https://lehd.ces.census.gov
+
+  - name: Zillow_ZTRAX
+    alias: [ztrax, zillow transaction, property records]
+    description: Zillow property transaction and assessment records
+    spatial_units: [parcel, zip_code, county, metro_area]
+    coverage_year_min: 1997
+    coverage_year_max: 2023
+    skills_required: [db_query, spatial_join]
+    auth_required: true
+    notes: Requires institutional data use agreement
+    format: sql/csv
+
+  - name: BRFSS
+    alias: [brfss, behavioral risk factor surveillance]
+    description: CDC state-level health survey data
+    spatial_units: [state, metro_area]
+    coverage_year_min: 1984
+    coverage_year_max: 2023
+    skills_required: [survey_weight, csv_load]
+    auth_required: false
+    format: xpt/csv
+    url: https://www.cdc.gov/brfss
+
+  - name: OpenAlex
+    alias: [openalex, open alex]
+    description: Open scholarly knowledge graph for literature review
+    spatial_units: [global]
+    coverage_year_min: 1850
+    coverage_year_max: 2024
+    skills_required: [api_fetch, text_analysis]
+    auth_required: false
+    format: json
+    url: https://openalex.org
+
+  - name: NLCD
+    alias: [nlcd, national land cover database]
+    description: US national land cover classification raster data
+    spatial_units: [raster_30m, county, state, watershed]
+    coverage_year_min: 2001
+    coverage_year_max: 2021
+    skills_required: [raster_analysis, spatial_join]
+    auth_required: false
+    format: geotiff
+    url: https://www.mrlc.gov
+
+  - name: GHSL
+    alias: [ghsl, global human settlement layer]
+    description: Global human settlement layers at multiple resolutions
+    spatial_units: [raster_100m, raster_1km, city, country]
+    coverage_year_min: 1975
+    coverage_year_max: 2030
+    skills_required: [raster_analysis, spatial_join]
+    auth_required: false
+    format: geotiff
+    url: https://ghsl.jrc.ec.europa.eu
+
+  - name: Twitter_API
+    alias: [twitter, x api, tweet data]
+    description: Social media activity data (mobility proxies, sentiment)
+    spatial_units: [point, city, country]
+    coverage_year_min: 2010
+    coverage_year_max: 2023
+    skills_required: [api_fetch, nlp]
+    auth_required: true
+    notes: Academic Research API access required
+    format: json
+
+  - name: Google_Earth_Engine
+    alias: [gee, google earth engine, earth engine]
+    description: Cloud-based planetary-scale geospatial analysis platform with satellite imagery archive
+    spatial_units: [raster_10m, raster_30m, raster_250m, global, country, city]
+    coverage_year_min: 1972
+    coverage_year_max: 2024
+    skills_required: [gee_api, raster_analysis]
+    auth_required: false
+    format: raster/json
+    url: https://earthengine.google.com
+
+  - name: Sentinel2
+    alias: [sentinel-2, sentinel 2, s2, esa sentinel]
+    description: ESA Copernicus 10m multispectral satellite imagery (13 bands)
+    spatial_units: [raster_10m, raster_20m, raster_60m, global]
+    coverage_year_min: 2015
+    coverage_year_max: 2024
+    skills_required: [raster_analysis, satellite_download]
+    auth_required: false
+    format: geotiff
+    url: https://scihub.copernicus.eu
+
+  - name: Landsat
+    alias: [landsat 8, landsat 9, landsat-8, landsat-9, usgs landsat]
+    description: USGS/NASA 30m multispectral satellite imagery (since 1972)
+    spatial_units: [raster_30m, global]
+    coverage_year_min: 1972
+    coverage_year_max: 2024
+    skills_required: [raster_analysis, satellite_download]
+    auth_required: false
+    format: geotiff
+    url: https://earthexplorer.usgs.gov
+
+  - name: SafeGraph
+    alias: [safegraph, dewey data, safegraph mobility]
+    description: US POI visits and mobility patterns derived from anonymized smartphone GPS
+    spatial_units: [point, block_group, tract, zip_code, county, city]
+    coverage_year_min: 2018
+    coverage_year_max: 2023
+    skills_required: [csv_load, spatial_join]
+    auth_required: true
+    notes: Academic access available via Dewey
+    format: csv/parquet
+
+  - name: Microsoft_Building_Footprints
+    alias: [microsoft buildings, building footprints, msft footprints]
+    description: Global ML-derived building footprints from satellite imagery
+    spatial_units: [building, block, city, country, global]
+    coverage_year_min: 2018
+    coverage_year_max: 2024
+    skills_required: [geojson_load, spatial_analysis]
+    auth_required: false
+    format: geojson/parquet
+    url: https://github.com/microsoft/GlobalMLBuildingFootprints
+
+  - name: VIIRS_Nighttime_Lights
+    alias: [viirs, ntl, nighttime lights, night lights, dmsp-ols]
+    description: NASA/NOAA VIIRS nighttime radiance raster — proxy for economic activity
+    spatial_units: [raster_500m, global]
+    coverage_year_min: 2012
+    coverage_year_max: 2024
+    skills_required: [raster_analysis, spatial_join]
+    auth_required: false
+    format: geotiff
+    url: https://eogdata.mines.edu/products/vnl
+
+  - name: WorldPop
+    alias: [worldpop, world pop, global population grid]
+    description: High-resolution population estimates at 100m grid globally
+    spatial_units: [raster_100m, raster_1km, country, global]
+    coverage_year_min: 2000
+    coverage_year_max: 2020
+    skills_required: [raster_analysis, spatial_join]
+    auth_required: false
+    format: geotiff
+    url: https://www.worldpop.org
+
+  - name: ACS
+    alias: [acs, american community survey, us census acs, census bureau acs]
+    description: US Census Bureau 5-year American Community Survey estimates (demographics, income, housing)
+    spatial_units: [block_group, tract, county, state, place, zip_code]
+    coverage_year_min: 2009
+    coverage_year_max: 2022
+    skills_required: [census_extract, csv_load]
+    auth_required: false
+    format: csv
+    url: https://www.census.gov/programs-surveys/acs
+
+  - name: TIGER_Lines
+    alias: [tiger, tiger/line, tigris, us census boundaries]
+    description: US Census Bureau TIGER/Line boundary and road shapefiles
+    spatial_units: [block, block_group, tract, county, state, place, metro]
+    coverage_year_min: 1990
+    coverage_year_max: 2023
+    skills_required: [shapefile_load, spatial_join]
+    auth_required: false
+    format: shapefile
+    url: https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.html
+
+  - name: OpenDataSoft_Urban
+    alias: [open data portals, city open data, municipal open data]
+    description: Municipal/city open data portals (permits, 311 calls, zoning, transport)
+    spatial_units: [point, polygon, street_segment, city]
+    coverage_year_min: 2010
+    coverage_year_max: 2024
+    skills_required: [api_fetch, csv_load, spatial_join]
+    auth_required: false
+    format: csv/geojson
