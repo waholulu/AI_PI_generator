@@ -275,6 +275,38 @@ def test_level2_writes_tentative_pool(tmp_path, monkeypatch):
     assert len(pool_data["tentative"]) == 1
 
 
+# ── Test 7: Level 2 — no ACCEPTED reruns once then lists near-pass topics ──
+
+def test_level2_rerun_then_lists_near_pass_topics(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTOPI_DATA_ROOT", str(tmp_path))
+    topic = make_topic("seed_002")
+    topic.spatial_scope.geography = "United States"
+    seed = SeedCandidate(topic=topic, declared_sources=["NHGIS"])
+    tentative_trace = make_minimal_trace("seed_002", FinalStatus.TENTATIVE)
+
+    agent = IdeationAgentV2(budget=BudgetTracker(per_run_budget_usd=10.0))
+    agent._llm = None
+    agent._generate_seeds = lambda *a, **kw: [seed]
+
+    # First attempt has no ACCEPTED -> triggers auto-rerun.
+    with patch.object(
+        agent,
+        "_run_reflection_batch",
+        side_effect=[
+            ([], [(seed, tentative_trace)], []),
+            ([], [(seed, tentative_trace)], []),
+        ],
+    ) as mocked_batch:
+        result = agent.run_level2({"domain_input": "Urban Planning"})
+
+    screening = json.loads(Path(result["candidate_topics_path"]).read_text())
+    assert len(screening["candidates"]) == 1
+    assert mocked_batch.call_count == 2
+    assert screening["candidates"][0]["final_status"] == "TENTATIVE"
+    assert screening["candidates"][0]["title"].startswith("[US] ")
+    assert screening["candidates"][0]["passed_gates_count"] >= 1
+
+
 # ── Test 7: ideation_node router ─────────────────────────────────────────────
 
 def test_ideation_node_routes_to_legacy(monkeypatch, tmp_path):

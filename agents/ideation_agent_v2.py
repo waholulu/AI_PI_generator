@@ -245,11 +245,47 @@ class IdeationAgentV2:
         field_scan_context = _load_field_scan_context(field_scan_path)
         memory_context = _load_memory_context(self.memory, domain)
 
-        # Generate 30 seed candidates
-        seeds = self._generate_seeds(domain, field_scan_context, memory_context)
-        logger.info("Generated %d seed candidates", len(seeds))
+        accepted: list[tuple[SeedCandidate, ReflectionTrace]] = []
+        tentative: list[tuple[SeedCandidate, ReflectionTrace]] = []
+        rejected: list[tuple[SeedCandidate, ReflectionTrace]] = []
 
-        # Parallel reflection loop
+        max_attempts = 2  # default: first pass + one automatic rerun
+        for attempt in range(1, max_attempts + 1):
+            seeds = self._generate_seeds(domain, field_scan_context, memory_context)
+            logger.info("Generated %d seed candidates (attempt %d/%d)", len(seeds), attempt, max_attempts)
+            accepted, tentative, rejected = self._run_reflection_batch(seeds)
+            if accepted:
+                break
+            if attempt < max_attempts:
+                logger.warning("No ACCEPTED candidates in attempt %d — auto rerunning once", attempt)
+
+        logger.info(
+            "Reflection done — ACCEPTED: %d, TENTATIVE: %d, REJECTED: %d",
+            len(accepted), len(tentative), len(rejected),
+        )
+
+        # Rank accepted → top-3
+        top_candidates = self._rank_and_select(accepted, domain)[:3]
+
+        # Write tentative pool
+        self._write_tentative_pool(tentative, run_id)
+
+        # Build outputs
+        t_end = datetime.now(timezone.utc).timestamp()
+        return self._emit_level2_outputs(
+            top_candidates, tentative, rejected, len(accepted), domain, run_id, t_start_dt,
+            wallclock=t_end - t_start,
+            total_attempted=len(seeds),
+        )
+
+    def _run_reflection_batch(
+        self, seeds: list[SeedCandidate]
+    ) -> tuple[
+        list[tuple[SeedCandidate, ReflectionTrace]],
+        list[tuple[SeedCandidate, ReflectionTrace]],
+        list[tuple[SeedCandidate, ReflectionTrace]],
+    ]:
+        """Run one reflection pass over all seeds."""
         accepted: list[tuple[SeedCandidate, ReflectionTrace]] = []
         tentative: list[tuple[SeedCandidate, ReflectionTrace]] = []
         rejected: list[tuple[SeedCandidate, ReflectionTrace]] = []
@@ -278,27 +314,8 @@ class IdeationAgentV2:
                     logger.warning("Budget exceeded for %s: %s", seed.topic.meta.topic_id, e)
                     tentative.append((seed, _make_budget_exceeded_trace(seed, str(e))))
                 except Exception as e:
-                    logger.warning("Reflection loop error for %s: %s",
-                                   seed.topic.meta.topic_id, e)
-
-        logger.info(
-            "Reflection done — ACCEPTED: %d, TENTATIVE: %d, REJECTED: %d",
-            len(accepted), len(tentative), len(rejected),
-        )
-
-        # Rank accepted → top-3
-        top_candidates = self._rank_and_select(accepted, domain)[:3]
-
-        # Write tentative pool
-        self._write_tentative_pool(tentative, run_id)
-
-        # Build outputs
-        t_end = datetime.now(timezone.utc).timestamp()
-        return self._emit_level2_outputs(
-            top_candidates, tentative, rejected, domain, run_id, t_start_dt,
-            wallclock=t_end - t_start,
-            total_attempted=len(seeds),
-        )
+                    logger.warning("Reflection loop error for %s: %s", seed.topic.meta.topic_id, e)
+        return accepted, tentative, rejected
 
     def _run_one_seed(self, seed: SeedCandidate) -> ReflectionTrace:
         return run_reflection_loop(
@@ -466,6 +483,7 @@ class IdeationAgentV2:
         top_candidates: list[dict],
         tentative: list,
         rejected: list,
+        accepted_count: int,
         domain: str,
         run_id: str,
         started_at: datetime,
@@ -473,13 +491,20 @@ class IdeationAgentV2:
         total_attempted: int,
     ) -> dict:
         if not top_candidates:
-            logger.warning("No ACCEPTED candidates — falling back to degraded plan")
-            top_candidates = [{
-                "title": f"No accepted topics for: {domain}",
-                "rank": 1,
-                "final_status": "DEGRADED",
-                "legacy_six_gates": {},
-            }]
+            if tentative or rejected:
+                logger.warning(
+                    "No ACCEPTED candidates after rerun — listing best near-pass candidates"
+                )
+                promoted = self._rank_near_pass_fallbacks(tentative, rejected)[:3]
+                top_candidates = promoted
+            else:
+                logger.warning("No ACCEPTED or TENTATIVE candidates — falling back to degraded plan")
+                top_candidates = [{
+                    "title": f"No accepted topics for: {domain}",
+                    "rank": 1,
+                    "final_status": "DEGRADED",
+                    "legacy_six_gates": {},
+                }]
 
         screening = {
             "run_id": run_id,
@@ -505,7 +530,7 @@ class IdeationAgentV2:
             "input_mode": "level_2",
             "total_topics_attempted": total_attempted,
             "status_breakdown": {
-                "ACCEPTED": len(top_candidates),
+                "ACCEPTED": accepted_count,
                 "TENTATIVE": len(tentative),
                 "REJECTED": len(rejected),
             },
@@ -536,6 +561,58 @@ class IdeationAgentV2:
             "research_context_path": context_path,
             "degraded_nodes": [],
         }
+
+    def _rank_near_pass_fallbacks(
+        self,
+        tentative: list[tuple[SeedCandidate, ReflectionTrace]],
+        rejected: list[tuple[SeedCandidate, ReflectionTrace]],
+    ) -> list[dict]:
+        """Build fallback candidates ranked by gate pass count, then round score.
+
+        Also marks US-focused topics in the displayed title.
+        """
+        ranked: list[dict] = []
+        for seed, trace in (tentative + rejected):
+            legacy_gates = _build_legacy_gates_map(trace)
+            last_round = trace.rounds[-1] if trace.rounds else None
+            score = last_round.round_score if last_round else 0.0
+            gate_results = last_round.gate_results if last_round else []
+            passed_count = sum(1 for r in gate_results if r.passed)
+            is_us = self._is_us_topic(seed.topic.spatial_scope.geography)
+            display_title = seed.topic.to_legacy_dict().get("title", "")
+            if is_us:
+                display_title = f"[US] {display_title}"
+            ranked.append({
+                **seed.topic.to_legacy_dict(),
+                "title": display_title,
+                "rank": 0,
+                "final_status": trace.final_status.value,
+                "declared_sources": seed.declared_sources,
+                "legacy_six_gates": legacy_gates,
+                "reflection_trace_id": seed.topic.meta.topic_id,
+                "passed_gates_count": passed_count,
+                "is_us_topic": is_us,
+                "_sort_score": score,
+            })
+
+        ranked.sort(
+            key=lambda x: (
+                x.get("passed_gates_count", 0),
+                x.get("_sort_score", 0),
+            ),
+            reverse=True,
+        )
+        for i, c in enumerate(ranked):
+            c["rank"] = i + 1
+            c.pop("_sort_score", None)
+        return ranked
+
+    @staticmethod
+    def _is_us_topic(geography: str | None) -> bool:
+        geo = (geography or "").lower()
+        return geo == "us" or any(
+            token in geo for token in ["united states", "u.s.", "u.s", "usa", "us "]
+        )
 
     def run(self, state: dict) -> dict:
         mode = state.get("ideation_mode", "level_2")
