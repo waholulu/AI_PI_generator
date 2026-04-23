@@ -473,13 +473,20 @@ class IdeationAgentV2:
         total_attempted: int,
     ) -> dict:
         if not top_candidates:
-            logger.warning("No ACCEPTED candidates — falling back to degraded plan")
-            top_candidates = [{
-                "title": f"No accepted topics for: {domain}",
-                "rank": 1,
-                "final_status": "DEGRADED",
-                "legacy_six_gates": {},
-            }]
+            if tentative:
+                logger.warning(
+                    "No ACCEPTED candidates — promoting best TENTATIVE candidate as warning fallback"
+                )
+                promoted = self._rank_tentative_fallbacks(tentative)[:1]
+                top_candidates = promoted
+            else:
+                logger.warning("No ACCEPTED or TENTATIVE candidates — falling back to degraded plan")
+                top_candidates = [{
+                    "title": f"No accepted topics for: {domain}",
+                    "rank": 1,
+                    "final_status": "DEGRADED",
+                    "legacy_six_gates": {},
+                }]
 
         screening = {
             "run_id": run_id,
@@ -536,6 +543,35 @@ class IdeationAgentV2:
             "research_context_path": context_path,
             "degraded_nodes": [],
         }
+
+    def _rank_tentative_fallbacks(
+        self, tentative: list[tuple[SeedCandidate, ReflectionTrace]]
+    ) -> list[dict]:
+        """Turn TENTATIVE traces into ranked fallback candidates.
+
+        This keeps the HITL stage actionable even when no candidate reaches
+        ACCEPTED in the reflection loop.
+        """
+        ranked: list[dict] = []
+        for seed, trace in tentative:
+            legacy_gates = _build_legacy_gates_map(trace)
+            last_round = trace.rounds[-1] if trace.rounds else None
+            score = last_round.round_score if last_round else 0.0
+            ranked.append({
+                **seed.topic.to_legacy_dict(),
+                "rank": 0,
+                "final_status": FinalStatus.TENTATIVE.value,
+                "declared_sources": seed.declared_sources,
+                "legacy_six_gates": legacy_gates,
+                "reflection_trace_id": seed.topic.meta.topic_id,
+                "_sort_score": score,
+            })
+
+        ranked.sort(key=lambda x: x.get("_sort_score", 0), reverse=True)
+        for i, c in enumerate(ranked):
+            c["rank"] = i + 1
+            c.pop("_sort_score", None)
+        return ranked
 
     def run(self, state: dict) -> dict:
         mode = state.get("ideation_mode", "level_2")

@@ -275,6 +275,27 @@ def test_level2_writes_tentative_pool(tmp_path, monkeypatch):
     assert len(pool_data["tentative"]) == 1
 
 
+# ── Test 7: Level 2 — no ACCEPTED still returns actionable tentative topic ──
+
+def test_level2_promotes_tentative_when_no_accepted(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTOPI_DATA_ROOT", str(tmp_path))
+    topic = make_topic("seed_002")
+    seed = SeedCandidate(topic=topic, declared_sources=["NHGIS"])
+    tentative_trace = make_minimal_trace("seed_002", FinalStatus.TENTATIVE)
+
+    agent = IdeationAgentV2(budget=BudgetTracker(per_run_budget_usd=10.0))
+    agent._llm = None
+    agent._generate_seeds = lambda *a, **kw: [seed]
+
+    with patch("agents.ideation_agent_v2.run_reflection_loop", return_value=tentative_trace):
+        result = agent.run_level2({"domain_input": "Urban Planning"})
+
+    screening = json.loads(Path(result["candidate_topics_path"]).read_text())
+    assert len(screening["candidates"]) == 1
+    assert screening["candidates"][0]["title"] != "No accepted topics for: Urban Planning"
+    assert screening["candidates"][0]["final_status"] == "TENTATIVE"
+
+
 # ── Test 7: ideation_node router ─────────────────────────────────────────────
 
 def test_ideation_node_routes_to_legacy(monkeypatch, tmp_path):
