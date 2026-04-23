@@ -135,3 +135,112 @@ data_sources:
     auth_required: true
     notes: Academic Research API access required
     format: json
+
+  - name: Google_Earth_Engine
+    alias: [gee, google earth engine, earth engine]
+    description: Cloud-based planetary-scale geospatial analysis platform with satellite imagery archive
+    spatial_units: [raster_10m, raster_30m, raster_250m, global, country, city]
+    coverage_year_min: 1972
+    coverage_year_max: 2024
+    skills_required: [gee_api, raster_analysis]
+    auth_required: false
+    format: raster/json
+    url: https://earthengine.google.com
+
+  - name: Sentinel2
+    alias: [sentinel-2, sentinel 2, s2, esa sentinel]
+    description: ESA Copernicus 10m multispectral satellite imagery (13 bands)
+    spatial_units: [raster_10m, raster_20m, raster_60m, global]
+    coverage_year_min: 2015
+    coverage_year_max: 2024
+    skills_required: [raster_analysis, satellite_download]
+    auth_required: false
+    format: geotiff
+    url: https://scihub.copernicus.eu
+
+  - name: Landsat
+    alias: [landsat 8, landsat 9, landsat-8, landsat-9, usgs landsat]
+    description: USGS/NASA 30m multispectral satellite imagery (since 1972)
+    spatial_units: [raster_30m, global]
+    coverage_year_min: 1972
+    coverage_year_max: 2024
+    skills_required: [raster_analysis, satellite_download]
+    auth_required: false
+    format: geotiff
+    url: https://earthexplorer.usgs.gov
+
+  - name: SafeGraph
+    alias: [safegraph, dewey data, safegraph mobility]
+    description: US POI visits and mobility patterns derived from anonymized smartphone GPS
+    spatial_units: [point, block_group, tract, zip_code, county, city]
+    coverage_year_min: 2018
+    coverage_year_max: 2023
+    skills_required: [csv_load, spatial_join]
+    auth_required: true
+    notes: Academic access available via Dewey
+    format: csv/parquet
+
+  - name: Microsoft_Building_Footprints
+    alias: [microsoft buildings, building footprints, msft footprints]
+    description: Global ML-derived building footprints from satellite imagery
+    spatial_units: [building, block, city, country, global]
+    coverage_year_min: 2018
+    coverage_year_max: 2024
+    skills_required: [geojson_load, spatial_analysis]
+    auth_required: false
+    format: geojson/parquet
+    url: https://github.com/microsoft/GlobalMLBuildingFootprints
+
+  - name: VIIRS_Nighttime_Lights
+    alias: [viirs, ntl, nighttime lights, night lights, dmsp-ols]
+    description: NASA/NOAA VIIRS nighttime radiance raster — proxy for economic activity
+    spatial_units: [raster_500m, global]
+    coverage_year_min: 2012
+    coverage_year_max: 2024
+    skills_required: [raster_analysis, spatial_join]
+    auth_required: false
+    format: geotiff
+    url: https://eogdata.mines.edu/products/vnl
+
+  - name: WorldPop
+    alias: [worldpop, world pop, global population grid]
+    description: High-resolution population estimates at 100m grid globally
+    spatial_units: [raster_100m, raster_1km, country, global]
+    coverage_year_min: 2000
+    coverage_year_max: 2020
+    skills_required: [raster_analysis, spatial_join]
+    auth_required: false
+    format: geotiff
+    url: https://www.worldpop.org
+
+  - name: ACS
+    alias: [acs, american community survey, us census acs, census bureau acs]
+    description: US Census Bureau 5-year American Community Survey estimates (demographics, income, housing)
+    spatial_units: [block_group, tract, county, state, place, zip_code]
+    coverage_year_min: 2009
+    coverage_year_max: 2022
+    skills_required: [census_extract, csv_load]
+    auth_required: false
+    format: csv
+    url: https://www.census.gov/programs-surveys/acs
+
+  - name: TIGER_Lines
+    alias: [tiger, tiger/line, tigris, us census boundaries]
+    description: US Census Bureau TIGER/Line boundary and road shapefiles
+    spatial_units: [block, block_group, tract, county, state, place, metro]
+    coverage_year_min: 1990
+    coverage_year_max: 2023
+    skills_required: [shapefile_load, spatial_join]
+    auth_required: false
+    format: shapefile
+    url: https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.html
+
+  - name: OpenDataSoft_Urban
+    alias: [open data portals, city open data, municipal open data]
+    description: Municipal/city open data portals (permits, 311 calls, zoning, transport)
+    spatial_units: [point, polygon, street_segment, city]
+    coverage_year_min: 2010
+    coverage_year_max: 2024
+    skills_required: [api_fetch, csv_load, spatial_join]
+    auth_required: false
+    format: csv/geojson

@@ -162,7 +162,12 @@ class RuleEngine:
     def check_G3_data_availability(
         self, topic: Topic, declared_sources: list[str]
     ) -> GateResult:
-        """Hard-blocker: each declared source must be in catalog and cover the topic."""
+        """Hard-blocker: at least one declared source must be in catalog and cover the topic.
+
+        Only sources that ARE in the catalog are checked for year/spatial coverage.
+        Sources not found in the catalog are noted but do not cause a hard block as
+        long as at least one declared source is recognized.
+        """
         sources = self._load_data_sources()
         if not sources:
             return GateResult(
@@ -189,8 +194,10 @@ class RuleEngine:
         t_end = topic.temporal_scope.end_year
         t_spatial = topic.spatial_scope.spatial_unit.lower().strip()
 
-        issues: list[str] = []
+        coverage_issues: list[str] = []   # year/spatial mismatches on recognized sources
+        not_in_catalog: list[str] = []    # unknown source names (soft warning only)
         auth_warnings: list[str] = []
+        recognized_count = 0
 
         for src in declared_sources:
             # Fuzzy catalog lookup
@@ -204,8 +211,10 @@ class RuleEngine:
                                 None, src.lower(), n).ratio())
                     ]
                 else:
-                    issues.append(f"source_not_in_catalog:{src}")
+                    not_in_catalog.append(src)
                     continue
+
+            recognized_count += 1
 
             if entry.get("auth_required", False):
                 auth_warnings.append(src)
@@ -214,26 +223,37 @@ class RuleEngine:
             y_min = entry.get("coverage_year_min")
             y_max = entry.get("coverage_year_max")
             if y_min is not None and t_start < y_min:
-                issues.append(f"year_gap:{src} starts {y_min} > requested {t_start}")
+                coverage_issues.append(f"year_gap:{src} starts {y_min} > requested {t_start}")
             if y_max is not None and t_end > y_max:
-                issues.append(f"year_gap:{src} ends {y_max} < requested {t_end}")
+                coverage_issues.append(f"year_gap:{src} ends {y_max} < requested {t_end}")
 
             # Spatial unit coverage (warn only if list is non-empty)
             entry_units = [u.lower() for u in entry.get("spatial_units", [])]
             if entry_units and not self._fuzzy_match(t_spatial, entry_units, threshold=0.7):
-                issues.append(f"unit_gap:{src} covers {entry_units} not {t_spatial}")
+                coverage_issues.append(f"unit_gap:{src} covers {entry_units} not {t_spatial}")
 
         if auth_warnings:
             logger.warning("G3: auth_required sources (warn only): %s", auth_warnings)
+        if not_in_catalog:
+            logger.warning("G3: sources not in catalog (soft warning): %s", not_in_catalog)
 
-        passed = len(issues) == 0
-        reason = "ok" if passed else "; ".join(issues)
+        # Hard-block only if: no recognized source at all, or a recognized source has coverage issues
+        if recognized_count == 0:
+            reason = "no_sources_in_catalog: " + "; ".join(not_in_catalog)
+            passed = False
+        elif coverage_issues:
+            reason = "; ".join(coverage_issues)
+            passed = False
+        else:
+            reason = "ok" if not not_in_catalog else f"ok (unknown_sources_ignored: {not_in_catalog})"
+            passed = True
+
         return GateResult(
             gate_id="G3", name="data_availability",
             passed=passed, refinable=False,
             reason=reason,
-            details={"issues": issues, "auth_warnings": auth_warnings,
-                     "declared_sources": declared_sources},
+            details={"coverage_issues": coverage_issues, "not_in_catalog": not_in_catalog,
+                     "auth_warnings": auth_warnings, "declared_sources": declared_sources},
         )
 
     # ── G6: automation_feasibility ────────────────────────────────────────────

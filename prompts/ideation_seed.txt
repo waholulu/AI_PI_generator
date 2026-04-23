@@ -21,7 +21,13 @@ Return a JSON array of exactly 30 objects. Each object must have these keys:
   "spatial_unit"     — unit of observation, one of:
                          building | parcel | block | block_group | tract | zip_code |
                          county | city | metro | state | region | grid_cell | country
-  "declared_sources" — JSON list of 1–3 data source names, e.g. ["NHGIS", "EPA_AQS"]
+  "declared_sources" — JSON list of 1–3 data source names chosen ONLY from this approved catalog:
+                       NHGIS, ACS, TIGER_Lines, OpenStreetMap, GTFS_Feeds, EPA_AQS, CDC_PLACES,
+                       LEHD_LODES, Zillow_ZTRAX, BRFSS, NLCD, GHSL, Google_Earth_Engine,
+                       Sentinel2, Landsat, SafeGraph, Microsoft_Building_Footprints,
+                       VIIRS_Nighttime_Lights, WorldPop, OpenAlex, Twitter_API,
+                       OpenDataSoft_Urban
+                       Use exact names as listed. Do NOT invent new source names.
   "notes"            — one sentence: the causal mechanism and what makes this novel
 
 Diversity requirements (must be satisfied across the 30 seeds):
