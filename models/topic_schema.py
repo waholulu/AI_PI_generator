@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 # ── Enums ────────────────────────────────────────────────────────────────────
@@ -150,15 +150,35 @@ class TemporalScope(BaseModel):
 class IdentificationStrategy(BaseModel):
     primary: IdentificationPrimary
     key_threats: list[str] = Field(default_factory=list)
-    mitigations: list[str] = Field(default_factory=list)
+    mitigations: dict[str, str] = Field(default_factory=dict)
     requires_exogenous_shock: bool = False
 
-    @field_validator("mitigations")
+    @field_validator("mitigations", mode="before")
     @classmethod
-    def check_threat_coverage(cls, v: list[str], info) -> list[str]:
-        # Soft validator: logs a warning rather than raising, actual G4 coverage
-        # check is done by rule_engine.check_G4_threat_coverage.
-        return v
+    def _coerce_mitigations(cls, value, info):
+        if isinstance(value, dict):
+            return {str(k): str(v) for k, v in value.items()}
+        threats = info.data.get("key_threats", []) if info and info.data else []
+        if isinstance(value, list):
+            return {
+                str(threat): str(value[idx])
+                for idx, threat in enumerate(threats)
+                if idx < len(value)
+            }
+        if isinstance(value, str) and threats:
+            return {str(threats[0]): value}
+        if value is None:
+            return {}
+        return value
+
+    @model_validator(mode="after")
+    def _validate_mitigations(self):
+        for key in self.mitigations:
+            if key not in self.key_threats:
+                raise ValueError(
+                    f"mitigation key '{key}' not in key_threats {self.key_threats}"
+                )
+        return self
 
 
 class Contribution(BaseModel):
@@ -177,6 +197,7 @@ class Topic(BaseModel):
     temporal_scope: TemporalScope
     identification: IdentificationStrategy
     contribution: Contribution
+    target_venues: list[str] = Field(default_factory=list, max_length=5)
     free_form_title: str = ""
     free_form_abstract: str = ""
 

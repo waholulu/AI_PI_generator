@@ -28,6 +28,7 @@ from agents.ideation_agent_schemas import (  # noqa: F401  (re-exports for compa
 )
 from agents.logging_config import get_logger
 from agents.orchestrator import ResearchState
+from models.topic_schema import HITLInterruption
 
 logger = get_logger(__name__)
 
@@ -47,9 +48,26 @@ def ideation_node(state: ResearchState) -> dict:
 
     logger.info("Routing to IdeationAgentV2")
     from agents.ideation_agent_v2 import IdeationAgentV2
-    agent = IdeationAgentV2()
+    budget_override_usd = state.get("budget_override_usd")
+    skip_reflection = state.get("skip_reflection", False)
+    agent = IdeationAgentV2(
+        budget_override_usd=budget_override_usd,
+        skip_reflection=skip_reflection,
+    )
     try:
         return agent.run(state)
+    except HITLInterruption as e:
+        return {
+            "execution_status": "hitl_required",
+            "hitl_interruption": {
+                "kind": e.kind,
+                "message": e.message,
+                "failed_gates": e.failed_gates,
+                "suggested_operations": e.suggested_operations,
+                "diff_from_original": e.diff_from_original,
+                "suggested_next_operations": e.suggested_next_operations,
+            },
+        }
     except Exception as e:
         from agents import settings as _settings
         cfg_path = _settings.reflection_config_path()

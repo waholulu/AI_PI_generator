@@ -45,6 +45,46 @@ from models.topic_schema import (
 logger = get_logger(__name__)
 
 
+def _load_reflection_models_config() -> dict:
+    try:
+        with open(settings.reflection_config_path(), "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+        return cfg.get("models", {})
+    except Exception as exc:
+        logger.warning("Failed to load reflection model config: %s", exc)
+        return {}
+
+
+def _load_prompt_enums_block() -> str:
+    enums_path = settings.prompts_dir() / "_enums.txt"
+    if enums_path.exists():
+        return enums_path.read_text(encoding="utf-8")
+
+    try:
+        from models.topic_schema import (
+            ContributionPrimary,
+            ExposureFamily,
+            Frequency,
+            IdentificationPrimary,
+            OutcomeFamily,
+            SamplingMode,
+        )
+        blocks = []
+        for enum_cls in (
+            ExposureFamily,
+            OutcomeFamily,
+            SamplingMode,
+            Frequency,
+            IdentificationPrimary,
+            ContributionPrimary,
+        ):
+            values = ", ".join(member.value for member in enum_cls)
+            blocks.append(f"{enum_cls.__name__}: {values}")
+        return "\n".join(blocks)
+    except Exception:
+        return ""
+
+
 def _build_legacy_gates_map(trace: ReflectionTrace) -> dict:
     """Map seven-gate results to the legacy six-gate format expected by downstream agents."""
     gate_map = {
@@ -63,14 +103,14 @@ def _build_legacy_gates_map(trace: ReflectionTrace) -> dict:
                 if gr.score is not None:
                     gate_map[gr.gate_id]["score"] = gr.score
 
-    # Collapse to legacy six-gate format (impact, data, novelty, feasibility, gap, contribution)
+    # Collapse to legacy six-gate format required by the upgrade plan.
     return {
         "impact": gate_map["G1"]["passed"],
-        "data": gate_map["G3"]["passed"],
+        "quantitative": True,
         "novelty": gate_map["G5"]["passed"],
-        "feasibility": gate_map["G6"]["passed"],
-        "gap": gate_map["G7"]["passed"],
-        "contribution": gate_map["G7"]["passed"],
+        "publishability": gate_map["G7"]["passed"],
+        "automation": gate_map["G6"]["passed"],
+        "data_availability": gate_map["G3"]["passed"],
         "full_seven_gates": {k: v for k, v in gate_map.items()},
     }
 
@@ -118,8 +158,11 @@ class IdeationAgentV2:
     def _init_llm(self):
         try:
             from langchain_google_genai import ChatGoogleGenerativeAI
-            fast_model = os.getenv("GEMINI_FAST_MODEL", "gemini-2.0-flash-lite")
-            return ChatGoogleGenerativeAI(model=fast_model, temperature=0.7)
+            models_cfg = _load_reflection_models_config()
+            seed_model = models_cfg.get(
+                "seed_generation", os.getenv("GEMINI_FAST_MODEL", "gemini-2.0-flash-lite")
+            )
+            return ChatGoogleGenerativeAI(model=seed_model, temperature=0.7)
         except Exception as e:
             logger.warning("LLM init failed: %s — running without LLM", e)
             return None
@@ -395,6 +438,7 @@ class IdeationAgentV2:
             domain=domain,
             field_scan_context=field_scan_context[:2000],
             memory_context=memory_context[:1000],
+            enum_block=_load_prompt_enums_block(),
         )
         from langchain_core.messages import HumanMessage
 
@@ -521,6 +565,7 @@ class IdeationAgentV2:
             "started_at": started_at.isoformat(),
             "ended_at": datetime.now(timezone.utc).isoformat(),
             "input_mode": "level_2",
+            "input_summary": domain,
             "total_topics_attempted": total_attempted,
             "status_breakdown": {
                 "ACCEPTED": accepted_count,
@@ -679,44 +724,107 @@ def _build_research_plan(candidate: dict, run_id: str) -> dict:
 
 
 def _dict_to_seed_candidate(item: dict, domain: str, idx: int) -> SeedCandidate:
+    from agents.seed_normalizer import (
+        SeedNormalizationError,
+        normalize_family,
+        normalize_method,
+        normalize_mitigations,
+    )
     from models.topic_schema import (
         Contribution, ContributionPrimary, ExposureFamily, ExposureX,
         Frequency, IdentificationPrimary, IdentificationStrategy, OutcomeFamily,
         OutcomeY, SamplingMode, SpatialScope, TemporalScope, TopicMeta,
     )
 
+    def _normalize_enum(enum_cls, value: str):
+        normalized = str(value or "").strip().lower().replace("-", "_")
+        return enum_cls(normalized)
+
+    def _as_list(value) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return [str(v) for v in value]
+        return [str(value)]
+
+    try:
+        x_family = normalize_family(
+            item.get("exposure_family") or item.get("exposure", ""),
+            ExposureFamily,
+        )
+        y_family = normalize_family(
+            item.get("outcome_family") or item.get("outcome", ""),
+            OutcomeFamily,
+        )
+        method = normalize_method(item.get("method", ""))
+        contribution_primary = normalize_family(
+            item.get("contribution_type", "novel_context"),
+            ContributionPrimary,
+        )
+        sampling = _normalize_enum(
+            SamplingMode,
+            item.get("sampling_mode", "panel"),
+        )
+        frequency = _normalize_enum(
+            Frequency,
+            item.get("frequency", "annual"),
+        )
+    except (SeedNormalizationError, ValueError) as e:
+        raise SeedNormalizationError(f"seed[{idx}] normalization failed: {e}") from e
+
+    x_spatial_unit = (
+        item.get("exposure_spatial_unit")
+        or item.get("spatial_unit")
+        or "tract"
+    )
+    y_spatial_unit = (
+        item.get("outcome_spatial_unit")
+        or item.get("spatial_unit")
+        or "tract"
+    )
+    key_threats = _as_list(
+        item.get("key_threats") or item.get("threats") or ["confounding"]
+    )
+    mitigations = normalize_mitigations(item.get("mitigations"), key_threats)
+    target_venues = _as_list(item.get("target_venues"))[:5]
+
     tid = item.get("topic_id") or f"seed_{idx:03d}"
     topic = Topic(
         meta=TopicMeta(topic_id=tid),
         exposure_X=ExposureX(
-            family=ExposureFamily.OTHER,
-            specific_variable=item.get("exposure", f"exposure_{idx}"),
-            spatial_unit=item.get("spatial_unit", "tract"),
+            family=x_family,
+            specific_variable=item.get("exposure_specific", item.get("exposure", f"exposure_{idx}")),
+            spatial_unit=x_spatial_unit,
+            measurement_proxy=item.get("exposure_proxy", ""),
         ),
         outcome_Y=OutcomeY(
-            family=OutcomeFamily.OTHER,
-            specific_variable=item.get("outcome", f"outcome_{idx}"),
-            spatial_unit=item.get("spatial_unit", "tract"),
+            family=y_family,
+            specific_variable=item.get("outcome_specific", item.get("outcome", f"outcome_{idx}")),
+            spatial_unit=y_spatial_unit,
+            measurement_proxy=item.get("outcome_proxy", ""),
         ),
         spatial_scope=SpatialScope(
             geography=item.get("geography", domain[:50]),
             spatial_unit=item.get("spatial_unit", "tract"),
-            sampling_mode=SamplingMode.PANEL,
+            sampling_mode=sampling,
         ),
         temporal_scope=TemporalScope(
             start_year=item.get("start_year", 2010),
             end_year=item.get("end_year", 2020),
-            frequency=Frequency.ANNUAL,
+            frequency=frequency,
         ),
         identification=IdentificationStrategy(
-            primary=IdentificationPrimary(item.get("method", "fixed_effects")),
-            key_threats=item.get("threats", ["confounding"]),
-            mitigations=item.get("mitigations", ["fixed_effects"]),
+            primary=method,
+            key_threats=key_threats,
+            mitigations=mitigations,
+            requires_exogenous_shock=bool(item.get("requires_exogenous_shock", False)),
         ),
         contribution=Contribution(
-            primary=ContributionPrimary.NOVEL_CONTEXT,
-            statement=item.get("notes", f"Topic {idx} for {domain}"),
+            primary=contribution_primary,
+            statement=item.get("contribution_statement", item.get("notes", f"Topic {idx} for {domain}")),
+            gap_addressed=item.get("gap_addressed", ""),
         ),
+        target_venues=target_venues,
         free_form_title=item.get("title", f"Topic {idx}"),
     )
     return SeedCandidate(
@@ -727,12 +835,19 @@ def _dict_to_seed_candidate(item: dict, domain: str, idx: int) -> SeedCandidate:
 
 
 def _make_budget_exceeded_trace(seed: SeedCandidate, reason: str) -> ReflectionTrace:
+    from agents.reflection_loop import ReflectionTrace
+
     return ReflectionTrace(
         topic_id=seed.topic.meta.topic_id,
+        seed_version=seed.topic.model_dump(),
         final_status=FinalStatus.TENTATIVE,
         rounds=[],
+        reject_reasons=[reason],
+        convergence={"score_trajectory": [], "signature_history": [], "early_stop_reason": reason},
+        design_alternatives_considered=[],
         total_cost_usd=0.0,
         total_wallclock_seconds=0.0,
+        final_topic=seed.topic.model_dump(),
     )
 
 

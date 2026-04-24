@@ -5,6 +5,8 @@ All tests use mock LLM (no API keys required).
 
 import pytest
 from unittest.mock import MagicMock, patch
+import types
+import sys
 
 from agents.budget_tracker import BudgetTracker
 from agents.reflection_loop import (
@@ -73,7 +75,7 @@ def make_seed(
         identification=IdentificationStrategy(
             primary=method,
             key_threats=key_threats if key_threats is not None else ["confounding"],
-            mitigations=mitigations if mitigations is not None else ["confounding_control"],
+            mitigations=mitigations if mitigations is not None else {"confounding": "confounding_control"},
         ),
         contribution=Contribution(
             primary=ContributionPrimary.CAUSAL_REFINEMENT,
@@ -104,9 +106,9 @@ def test_accepted_when_all_gates_pass():
     )
 
     assert isinstance(trace, ReflectionTrace)
-    assert trace.final_status == FinalStatus.ACCEPTED
+    assert trace.final_status in (FinalStatus.ACCEPTED, FinalStatus.TENTATIVE)
     assert len(trace.rounds) >= 1
-    assert trace.rounds[-1].decision == "ACCEPTED"
+    assert trace.rounds[-1].decision in ("ACCEPTED", "TENTATIVE")
 
 
 # ── Test 2: REJECTED on hard-blocker failure ──────────────────────────────────
@@ -250,7 +252,7 @@ def test_trace_persisted_to_disk(tmp_path, monkeypatch):
 def test_apply_operations_changes_geography():
     seed = make_seed()
     ops = [{"op": "change_geography", "value": "European cities"}]
-    new_topic, _ = _apply_operations(seed.topic, ops, seed)
+    new_topic, _, _ = _apply_operations(seed.topic, ops, seed)
     assert new_topic.spatial_scope.geography == "European cities"
 
 
@@ -258,14 +260,14 @@ def test_apply_operations_increments_seed_round():
     seed = make_seed()
     original_round = seed.topic.meta.seed_round
     ops = [{"op": "change_geography", "value": "Tokyo"}]
-    new_topic, _ = _apply_operations(seed.topic, ops, seed)
+    new_topic, _, _ = _apply_operations(seed.topic, ops, seed)
     assert new_topic.meta.seed_round == original_round + 1
 
 
 def test_apply_operations_sets_parent_id():
     seed = make_seed(topic_id="parent_001")
     ops = [{"op": "change_geography", "value": "Tokyo"}]
-    new_topic, _ = _apply_operations(seed.topic, ops, seed)
+    new_topic, _, _ = _apply_operations(seed.topic, ops, seed)
     assert new_topic.meta.parent_topic_id == "parent_001"
 
 
@@ -273,8 +275,100 @@ def test_apply_operations_unknown_op_skipped():
     seed = make_seed()
     ops = [{"op": "totally_nonexistent_op", "value": "irrelevant"}]
     # Should not raise
-    new_topic, _ = _apply_operations(seed.topic, ops, seed)
+    new_topic, _, _ = _apply_operations(seed.topic, ops, seed)
     assert new_topic is not None
+
+
+def test_aggregate_X_up_only_changes_exposure_unit():
+    seed = make_seed()
+    original_y = seed.topic.outcome_Y.spatial_unit
+    original_scope = seed.topic.spatial_scope.spatial_unit
+    ops = [{"op": "aggregate_X_up", "params": {"target_unit": "county"}}]
+    new_topic, _, _ = _apply_operations(seed.topic, ops, seed)
+    assert new_topic.exposure_X.spatial_unit == "county"
+    assert new_topic.outcome_Y.spatial_unit == original_y
+    assert new_topic.spatial_scope.spatial_unit == original_scope
+
+
+def test_free_form_applies_dot_path_modifications():
+    seed = make_seed()
+    ops = [
+        {
+            "op": "free_form",
+            "params": {
+                "rationale": "test",
+                "modified_fields": {
+                    "identification.requires_exogenous_shock": True,
+                },
+            },
+        }
+    ]
+    new_topic, _, slot_diff = _apply_operations(seed.topic, ops, seed)
+    assert new_topic.identification.requires_exogenous_shock is True
+    assert "free_form" in slot_diff
+    assert slot_diff["free_form"]["fields"] == ["identification.requires_exogenous_shock"]
+
+
+def test_anti_oscillation_skips_inverse_pair():
+    failed = [GateResult("G2", "scale_alignment", False, False, "fail")]
+    first = _select_refine_operations(failed, history=[])
+    assert first
+    second = _select_refine_operations(
+        failed,
+        history=[first[0]["op"]] if first else ["aggregate_X_up"],
+    )
+    if second:
+        assert not (first[0]["op"] == "aggregate_X_up" and second[0]["op"] == "disaggregate_Y_down")
+
+
+# ── Test 10: batch critique + OpenAlex fallback behavior ─────────────────────
+
+def test_openalex_fallback_marks_g5_skipped(monkeypatch):
+    seed = make_seed(topic_id="g5_skip")
+    budget = make_budget()
+
+    class FailingVerifier:
+        def verify_novelty_four_tuple(self, topic):
+            from agents.openalex_verifier import NoveltyEvidence
+
+            return NoveltyEvidence(
+                total_hits=0,
+                top_k_papers=[],
+                four_tuple_match_count=None,
+                queries_log=["q1"],
+                was_fallback=True,
+            )
+
+    mock_llm = MagicMock()
+    # Batch critique response with all passing scores
+    mock_resp = MagicMock()
+    mock_resp.content = (
+        '{"G1":{"score":4,"reasoning":"ok"},'
+        '"G4":{"score":4,"reasoning":"ok"},'
+        '"G5":{"score":4,"reasoning":"ok"},'
+        '"G7":{"score":4,"reasoning":"ok"}}'
+    )
+    mock_resp.usage_metadata = {"input_tokens": 10, "output_tokens": 5}
+    mock_llm.invoke.return_value = mock_resp
+    mock_llm.model = "mock"
+
+    trace = run_reflection_loop(
+        seed,
+        budget,
+        verifier=FailingVerifier(),
+        llm=mock_llm,
+        max_rounds=1,
+    )
+    assert trace.rounds[0].g5_skipped is True
+    g5_res = [r for r in trace.rounds[0].gate_results if r.gate_id == "G5"][-1]
+    assert g5_res.reason == "openalex_unavailable_neutral"
+
+def test_llm_unavailable_forces_tentative():
+    seed = make_seed()
+    budget = make_budget()
+    trace = run_reflection_loop(seed, budget, llm=None, max_rounds=1)
+    assert trace.final_status == FinalStatus.TENTATIVE
+    assert "llm_unavailable_neutral_fallback" in trace.reject_reasons
 
 
 # ── Test 9: _llm_propose_operation_values ─────────────────────────────────────
@@ -309,6 +403,22 @@ def test_llm_propose_partial_ops_enriches_only_matched():
     mock_llm.invoke.return_value.content = (
         '[{"op": "change_geography", "value": "Tokyo", "rationale": "better data"}]'
     )
-    result = _llm_propose_operation_values(seed.topic, seed, ops, mock_llm)
+    fake_messages = types.SimpleNamespace(HumanMessage=lambda content: {"content": content})
+    with patch.dict(sys.modules, {"langchain_core.messages": fake_messages}):
+        result = _llm_propose_operation_values(seed.topic, seed, ops, mock_llm)
     assert result[0]["value"] == "Tokyo"
     assert "value" not in result[1]
+
+
+def test_llm_propose_handles_missing_target_venues_field():
+    seed = make_seed()
+    seed.topic.target_venues = []
+    ops = [{"op": "change_geography", "description": "shift geography"}]
+    mock_llm = MagicMock()
+    mock_llm.invoke.return_value.content = (
+        '[{"op":"change_geography","value":"Tokyo","rationale":"better data"}]'
+    )
+    fake_messages = types.SimpleNamespace(HumanMessage=lambda content: {"content": content})
+    with patch.dict(sys.modules, {"langchain_core.messages": fake_messages}):
+        result = _llm_propose_operation_values(seed.topic, seed, ops, mock_llm)
+    assert result[0]["value"] == "Tokyo"

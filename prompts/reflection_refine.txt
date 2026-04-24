@@ -1,5 +1,5 @@
 You are helping to refine a research topic that failed one or more quality gates.
-Propose a concrete, specific value for each suggested operation so the topic can pass those gates.
+Propose concrete values for each suggested operation so the topic can pass those gates.
 
 Current topic:
   ID            : {topic_id}
@@ -9,44 +9,34 @@ Current topic:
   Method        : {method}
   Spatial unit  : {spatial_unit}
   Data sources  : {declared_sources}
+  Target venues : {target_venues}
+
+Allowed enum values (STRICT):
+{enum_block}
 
 Failed gates and suggested operations:
 {operations_list}
-
-For each operation listed, propose a concrete value that would plausibly fix the identified failure.
-Values must be:
-  - Realistic and operationalizable with publicly available data
-  - Internally consistent (exposure/outcome/geography/method must still cohere after all changes)
-  - Specific enough that a researcher could act on them immediately
 
 Return a JSON array where each element is:
   {{"op": "<operation_name>", "value": <concrete_value>, "rationale": "<one sentence>"}}
 
 Type rules for value:
-  change_exposure_family          → string, one of: air_quality | built_environment | transport_infra |
-                                     green_blue_space | socioeconomic | land_use | noise | heat_uhi |
-                                     food_environment | digital_infra | climate_hazard | other
-  change_outcome_family           → string, one of: health | cognitive | economic | housing |
-                                     mobility | education | social | environmental | safety | other
-  change_identification_strategy  → string, one of: diff_in_diff | regression_discontinuity |
-                                     fixed_effects | iv_instrumental_variables | synthetic_control |
-                                     spatial_discontinuity | matching
-  narrow_exposure_variable        → string, concise specific variable name (max 8 words)
-  narrow_outcome_variable         → string, concise specific variable name (max 8 words)
-  add_key_threats                 → JSON array of threat strings, e.g. ["reverse_causality", "omitted_variable"]
-  add_mitigations                 → JSON array of mitigation strings, e.g. ["lagged_exposure", "placebo_test"]
-  change_geography                → string, e.g. "US Sun Belt cities" or "French urban communes"
-  change_spatial_unit             → string, one of: building | parcel | block | block_group | tract |
-                                     zip_code | county | city | metro | state | region | grid_cell | country
-  change_sampling_mode            → string, one of: panel | cross_section | repeated_cross_section |
-                                     event_study | staggered_adoption
-  adjust_temporal_scope           → JSON object with keys start_year (int) and end_year (int)
-  change_frequency                → string, one of: annual | quarterly | monthly | weekly | daily
-  declare_additional_sources      → JSON array of source name strings, e.g. ["CDC_PLACES", "LEHD_LODES"]
-  change_contribution_type        → string, one of: novel_context | causal_refinement | mechanism_test |
-                                     policy_evaluation | measurement | replication
-  strengthen_contribution_statement → string, max 30 words, states what prior work failed to establish
-  add_gap_addressed               → string, max 30 words, names the specific gap in the literature
-  add_measurement_proxy           → string, concise observable proxy variable name (max 8 words)
+  - change_exposure_family / change_outcome_family / change_contribution_type:
+      value MUST be one of the enum values above.
+  - change_identification_strategy:
+      value MUST be one of IdentificationPrimary.
+  - change_sampling_mode:
+      value MUST be one of SamplingMode.
+  - change_frequency:
+      value MUST be one of Frequency.
+  - add_mitigations:
+      value MUST be a JSON object mapping threat -> mitigation text.
+  - adjust_temporal_scope:
+      value MUST be a JSON object with start_year (int), end_year (int).
+  - declare_additional_sources:
+      value MUST be a JSON array of source names.
 
-Return JSON array only — no markdown fences, no prose before or after the array.
+If no operation can be safely satisfied, emit a "free_form" op with:
+  value = {{"modified_fields": {{"dot.path": "new_value"}}, "rationale": "..."}}
+
+Return JSON array only — no markdown fences, no prose before or after.

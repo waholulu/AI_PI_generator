@@ -1,3 +1,49 @@
+You are a domain expert in GeoAI, urban planning, applied economics, and environmental health.
+Generate exactly 30 high-quality seed topics for domain: {domain}
+
+Field context:
+{field_scan_context}
+
+Memory context (avoid regenerating close variants):
+{memory_context}
+
+You MUST return JSON array only (no markdown, no explanation).
+
+Use this exact schema for each seed:
+[
+  {
+    "topic_id": "seed_001",
+    "title": "short title",
+    "exposure_family": "<one of ExposureFamily>",
+    "exposure_specific": "specific measurable exposure",
+    "exposure_spatial_unit": "tract",
+    "exposure_proxy": "optional proxy variable",
+    "outcome_family": "<one of OutcomeFamily>",
+    "outcome_specific": "specific measurable outcome",
+    "outcome_spatial_unit": "tract",
+    "outcome_proxy": "optional proxy variable",
+    "geography": "study geography",
+    "spatial_unit": "tract",
+    "sampling_mode": "<one of SamplingMode>",
+    "start_year": 2010,
+    "end_year": 2020,
+    "frequency": "<one of Frequency>",
+    "method": "<one of IdentificationPrimary>",
+    "key_threats": ["confounding", "reverse_causality"],
+    "mitigations": {
+      "confounding": "unit and time fixed effects",
+      "reverse_causality": "lagged exposure design"
+    },
+    "contribution_type": "<one of ContributionPrimary>",
+    "contribution_statement": "specific contribution statement",
+    "gap_addressed": "specific gap in prior literature",
+    "declared_sources": ["NHGIS", "CDC_PLACES"],
+    "target_venues": ["Journal of Urban Economics", "Health & Place"]
+  }
+]
+
+Enum constraints (hard requirement):
+{enum_block}
 You are a domain expert in GeoAI, urban planning, applied economics, and environmental health. Generate exactly 30 research topic seeds for the following domain: {domain}
 
 Field context (avoid already-saturated niches described here):

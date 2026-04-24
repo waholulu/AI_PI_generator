@@ -56,7 +56,7 @@ def make_topic(
             start_year=2010, end_year=2020, frequency=Frequency.ANNUAL
         ),
         identification=IdentificationStrategy(
-            primary=method, key_threats=["confounding"], mitigations=["FE"]
+            primary=method, key_threats=["confounding"], mitigations={"confounding": "FE"}
         ),
         contribution=Contribution(
             primary=ContributionPrimary.CAUSAL_REFINEMENT,
@@ -172,7 +172,16 @@ def test_verify_returns_fallback_on_api_error(mock_save, mock_load):
 
     assert evidence.was_fallback is True
     assert evidence.total_hits == 0
-    assert evidence.four_tuple_match_count == 0
+    assert evidence.four_tuple_match_count is None
+
+
+def test_compose_query_includes_method_and_geo_keywords():
+    verifier = OpenAlexVerifier()
+    t = make_topic(geography="metro:31080", method=IdentificationPrimary.IV)
+    q = verifier._compose_query(t).lower()
+    assert "metropolitan area" in q
+    assert "metro:31080" not in q
+    assert any(term in q for term in ["instrumental variable", "iv estimation", "2sls"])
 
 
 @patch("agents.openalex_verifier.load_json_cache")

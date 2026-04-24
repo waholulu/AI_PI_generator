@@ -1,25 +1,10 @@
-"""
-Per-topic reflection loop for Module 1 — iterative topic refinement.
-
-Implements the full decision table from the spec:
-  - Hard-blocker fail (G2/G3/G6) → REJECTED immediately (no LLM cost)
-  - All refinable pass → ACCEPTED
-  - 1-2 refinable fail → REFINE (next round)
-  - ≥3 refinable fail → TENTATIVE
-  - max_rounds reached without ACCEPTED → TENTATIVE
-  - Early-stop: rounds ≥ min_rounds and score delta < 0.5 → TENTATIVE
-  - Oscillation: same 4-tuple signature for 3 consecutive rounds → TENTATIVE
-
-LLM calls (G1/G4_llm/G5_llm/G7) use the fast Gemini model from env vars.
-All LLM costs are recorded via BudgetTracker.
-Traces are persisted to output/ideation_traces/{topic_id}_trace.json.
-"""
+"""Per-topic reflection loop for Module 1."""
 
 from __future__ import annotations
 
 import json
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from typing import Optional
 
 import yaml
@@ -32,8 +17,6 @@ from agents.settings import ideation_traces_dir, prompts_dir, reflection_config_
 from models.topic_schema import FinalStatus, SeedCandidate, Topic
 
 logger = get_logger(__name__)
-
-# Module-level cache so the YAML file is parsed at most once per process.
 _CRITIQUE_TEMPLATES_CACHE: Optional[dict] = None
 
 
@@ -42,27 +25,18 @@ def _load_critique_templates() -> dict:
     if _CRITIQUE_TEMPLATES_CACHE is not None:
         return _CRITIQUE_TEMPLATES_CACHE
     try:
-        path = prompts_dir() / "reflection_critique.txt"
-        with open(path) as f:
-            data = yaml.safe_load(f) or {}
-        _CRITIQUE_TEMPLATES_CACHE = data
-        return data
-    except Exception as e:
-        logger.warning("reflection_critique.txt unavailable: %s — using built-in prompts", e)
+        with open(prompts_dir() / "reflection_critique.txt") as f:
+            _CRITIQUE_TEMPLATES_CACHE = yaml.safe_load(f) or {}
+    except Exception as exc:
+        logger.warning("reflection_critique.txt unavailable: %s", exc)
         _CRITIQUE_TEMPLATES_CACHE = {}
-        return {}
+    return _CRITIQUE_TEMPLATES_CACHE
 
 
 def clear_critique_templates_cache() -> None:
-    """Reset the module-level critique-template cache.
-
-    Call this in test teardown when swapping reflection_critique.txt between runs.
-    """
     global _CRITIQUE_TEMPLATES_CACHE
     _CRITIQUE_TEMPLATES_CACHE = None
 
-
-# ── Trace data structures ─────────────────────────────────────────────────────
 
 @dataclass
 class LLMCallRecord:
@@ -78,125 +52,220 @@ class LLMCallRecord:
 @dataclass
 class RoundRecord:
     round_num: int
+    pre_refine_topic_snapshot: dict
     gate_results: list[GateResult]
+    openalex_queries_log: list[str]
+    llm_critique_raw: dict
     llm_calls: list[LLMCallRecord]
-    decision: str          # ACCEPTED / REFINE / TENTATIVE / REJECTED
+    decision: str
     applied_operations: list[dict]
+    slot_diff: dict
     four_tuple_sig: str
-    round_score: float     # mean refinable score for this round
+    round_score: float
+    budget_snapshot: dict
+    wallclock_seconds: float
+    g5_skipped: bool = False
 
 
 @dataclass
 class ReflectionTrace:
     topic_id: str
+    seed_version: dict
     final_status: FinalStatus
     rounds: list[RoundRecord]
+    reject_reasons: list[str]
+    convergence: dict
+    design_alternatives_considered: list[str]
     total_cost_usd: float
     total_wallclock_seconds: float
-    final_topic: Optional[dict] = None  # serialized Topic dict
+    final_topic: Optional[dict] = None
 
-
-# ── Config loader ─────────────────────────────────────────────────────────────
 
 def _load_reflection_config() -> dict:
     try:
         with open(reflection_config_path()) as f:
             return yaml.safe_load(f) or {}
-    except Exception as e:
-        logger.warning("reflection_config.yaml unavailable: %s", e)
+    except Exception as exc:
+        logger.warning("reflection_config.yaml unavailable: %s", exc)
         return {}
 
 
-# ── Refine operation applicator ───────────────────────────────────────────────
+def _format_openalex_top_papers(novelty_evidence: Optional[NoveltyEvidence]) -> str:
+    if not novelty_evidence or not novelty_evidence.top_k_papers:
+        return "No OpenAlex papers returned."
+    lines = []
+    for idx, paper in enumerate(novelty_evidence.top_k_papers[:10], 1):
+        title = paper.get("title", "Untitled")
+        year = paper.get("publication_year", "N/A")
+        cited = paper.get("cited_by_count", 0)
+        venue = paper.get("venue", "unknown venue")
+        lines.append(f'{idx}. "{title}" ({year}, cited={cited}) — {venue}')
+    return "\n".join(lines)
+
+
+def _set_nested(topic_dict: dict, path: str, value) -> None:
+    parts = path.split(".")
+    cur = topic_dict
+    for part in parts[:-1]:
+        cur = cur.setdefault(part, {})
+    cur[parts[-1]] = value
+
 
 def _apply_operations(
     topic: Topic,
     operations: list[dict],
     seed_candidate: SeedCandidate,
-) -> tuple[Topic, SeedCandidate]:
-    """Apply suggested refine operations to produce a modified Topic copy.
-
-    Operations reference field paths on the Topic model and carry a 'value'
-    key with the proposed replacement.  Unknown ops are skipped with a warning.
-    """
+) -> tuple[Topic, SeedCandidate, dict]:
     import copy
 
     topic_dict = topic.model_dump()
-    new_parent_id = topic.meta.topic_id
+    original_topic = topic.model_dump()
+    new_seed = copy.copy(seed_candidate)
     new_seed_round = topic.meta.seed_round + 1
+    slot_diff: dict = {}
 
     for op in operations:
         op_name = op.get("op", "")
+        params = op.get("params", {})
         value = op.get("value")
-        if value is None:
-            continue
+        if value is not None and isinstance(params, dict):
+            params = {**params, "value": value}
+        if not isinstance(params, dict):
+            params = {}
 
         try:
-            if op_name == "change_exposure_family":
-                topic_dict["exposure_X"]["family"] = value
-            elif op_name == "narrow_exposure_variable":
-                topic_dict["exposure_X"]["specific_variable"] = value
-            elif op_name == "change_outcome_family":
-                topic_dict["outcome_Y"]["family"] = value
-            elif op_name == "narrow_outcome_variable":
-                topic_dict["outcome_Y"]["specific_variable"] = value
-            elif op_name == "change_identification_strategy":
-                topic_dict["identification"]["primary"] = value
-            elif op_name == "add_key_threats":
-                existing = topic_dict["identification"].get("key_threats", [])
-                new_threats = value if isinstance(value, list) else [value]
-                topic_dict["identification"]["key_threats"] = list(
-                    dict.fromkeys(existing + new_threats)
-                )
-            elif op_name == "add_mitigations":
-                existing = topic_dict["identification"].get("mitigations", [])
-                new_mit = value if isinstance(value, list) else [value]
-                topic_dict["identification"]["mitigations"] = list(
-                    dict.fromkeys(existing + new_mit)
-                )
-            elif op_name == "change_geography":
-                topic_dict["spatial_scope"]["geography"] = value
-            elif op_name == "change_spatial_unit":
-                topic_dict["spatial_scope"]["spatial_unit"] = value
-                topic_dict["exposure_X"]["spatial_unit"] = value
-                topic_dict["outcome_Y"]["spatial_unit"] = value
-            elif op_name == "change_sampling_mode":
-                topic_dict["spatial_scope"]["sampling_mode"] = value
-            elif op_name == "adjust_temporal_scope":
-                if isinstance(value, dict):
-                    topic_dict["temporal_scope"].update(value)
-            elif op_name == "change_frequency":
-                topic_dict["temporal_scope"]["frequency"] = value
-            elif op_name == "declare_additional_sources":
-                new_sources = value if isinstance(value, list) else [value]
-                seed_candidate = copy.copy(seed_candidate)
-                seed_candidate.declared_sources = list(
-                    dict.fromkeys(seed_candidate.declared_sources + new_sources)
-                )
-            elif op_name == "change_contribution_type":
-                topic_dict["contribution"]["primary"] = value
-            elif op_name == "strengthen_contribution_statement":
-                topic_dict["contribution"]["statement"] = value
-            elif op_name == "add_gap_addressed":
-                topic_dict["contribution"]["gap_addressed"] = value
-            elif op_name == "add_measurement_proxy":
-                topic_dict["exposure_X"]["measurement_proxy"] = value
+            if op_name == "change_geography" and "value" in params:
+                topic_dict["spatial_scope"]["geography"] = params["value"]
+            elif op_name == "change_spatial_unit" and "value" in params:
+                topic_dict["spatial_scope"]["spatial_unit"] = params["value"]
+            elif op_name == "change_X_spatial_unit" and "value" in params:
+                topic_dict["exposure_X"]["spatial_unit"] = params["value"]
+            elif op_name == "change_Y_spatial_unit" and "value" in params:
+                topic_dict["outcome_Y"]["spatial_unit"] = params["value"]
+            elif op_name == "aggregate_X_up":
+                unit = params.get("target_unit") or params.get("value")
+                if unit:
+                    topic_dict["exposure_X"]["spatial_unit"] = unit
+            elif op_name == "disaggregate_Y_down":
+                unit = params.get("target_unit") or params.get("value")
+                if unit:
+                    topic_dict["outcome_Y"]["spatial_unit"] = unit
+            elif op_name == "harmonize_both_to":
+                unit = params.get("common_unit") or params.get("value")
+                if unit:
+                    topic_dict["exposure_X"]["spatial_unit"] = unit
+                    topic_dict["outcome_Y"]["spatial_unit"] = unit
+            elif op_name == "add_fixed_effects":
+                topic_dict["identification"]["primary"] = "fixed_effects"
+            elif op_name == "switch_to_natural_experiment":
+                topic_dict["identification"]["requires_exogenous_shock"] = True
+                topic_dict["identification"]["primary"] = "diff_in_diff"
+            elif op_name == "narrow_to_movers_sample":
+                topic_dict["spatial_scope"]["sampling_mode"] = "longitudinal"
+            elif op_name == "switch_to_RDD":
+                topic_dict["identification"]["primary"] = "regression_discontinuity"
+            elif op_name == "swap_geography":
+                geo = params.get("new_geography") or params.get("value")
+                if geo:
+                    topic_dict["spatial_scope"]["geography"] = geo
+            elif op_name == "swap_temporal":
+                years = params.get("new_years")
+                if isinstance(years, list) and len(years) >= 2:
+                    topic_dict["temporal_scope"]["start_year"] = int(min(years))
+                    topic_dict["temporal_scope"]["end_year"] = int(max(years))
+            elif op_name == "swap_X_measurement":
+                specific = params.get("new_specific")
+                proxy = params.get("new_proxy")
+                if specific:
+                    topic_dict["exposure_X"]["specific_variable"] = specific
+                if proxy:
+                    topic_dict["exposure_X"]["measurement_proxy"] = proxy
+            elif op_name == "add_heterogeneity_dim":
+                dim = params.get("dimension")
+                if dim:
+                    statement = topic_dict["contribution"].get("statement", "")
+                    topic_dict["contribution"]["statement"] = (
+                        f"{statement} Includes heterogeneity by {dim}."
+                    ).strip()
+            elif op_name == "substitute_X_source":
+                src = params.get("new_source") or params.get("value")
+                if src:
+                    new_seed.declared_sources = list(
+                        dict.fromkeys([src, *new_seed.declared_sources])
+                    )
+            elif op_name == "narrow_scope":
+                scope = params.get("new_scope") or params.get("value")
+                if scope:
+                    topic_dict["spatial_scope"]["geography"] = scope
+            elif op_name == "shift_years":
+                years = params.get("new_years")
+                if isinstance(years, list) and len(years) >= 2:
+                    topic_dict["temporal_scope"]["start_year"] = int(min(years))
+                    topic_dict["temporal_scope"]["end_year"] = int(max(years))
+            elif op_name == "sharpen_contribution":
+                new_primary = params.get("new_primary")
+                if new_primary:
+                    topic_dict["contribution"]["primary"] = new_primary
+                if params.get("new_statement"):
+                    topic_dict["contribution"]["statement"] = params["new_statement"]
+                if params.get("new_gap"):
+                    topic_dict["contribution"]["gap_addressed"] = params["new_gap"]
             elif op_name == "free_form":
-                # TODO: structured handler for free_form pending data-driven op expansion
-                logger.info("free_form op (value=%r) — no field applied until handler added", value)
-            else:
-                logger.warning("Unknown refine operation: %s — skipped", op_name)
-        except Exception as e:
-            logger.warning("Failed to apply op %s: %s", op_name, e)
+                modified = params.get("modified_fields", {})
+                if isinstance(modified, dict):
+                    for path, val in modified.items():
+                        _set_nested(topic_dict, str(path), val)
+                    slot_diff["free_form"] = {
+                        "rationale": params.get("rationale", ""),
+                        "fields": sorted(str(p) for p in modified.keys()),
+                    }
+            elif op_name == "change_exposure_family" and "value" in params:
+                topic_dict["exposure_X"]["family"] = params["value"]
+            elif op_name == "change_outcome_family" and "value" in params:
+                topic_dict["outcome_Y"]["family"] = params["value"]
+            elif op_name == "change_identification_strategy" and "value" in params:
+                topic_dict["identification"]["primary"] = params["value"]
+            elif op_name == "declare_additional_sources" and "value" in params:
+                new_sources = params["value"] if isinstance(params["value"], list) else [params["value"]]
+                new_seed.declared_sources = list(dict.fromkeys(new_seed.declared_sources + new_sources))
+            elif op_name == "strengthen_contribution_statement" and "value" in params:
+                topic_dict["contribution"]["statement"] = params["value"]
+            elif op_name == "add_gap_addressed" and "value" in params:
+                topic_dict["contribution"]["gap_addressed"] = params["value"]
+        except Exception as exc:
+            logger.warning("Failed to apply op %s: %s", op_name, exc)
 
     topic_dict["meta"]["seed_round"] = new_seed_round
-    topic_dict["meta"]["parent_topic_id"] = new_parent_id
-
+    topic_dict["meta"]["parent_topic_id"] = topic.meta.topic_id
     new_topic = Topic.model_validate(topic_dict)
-    return new_topic, seed_candidate
 
+    for path in (
+        "exposure_X.family",
+        "exposure_X.specific_variable",
+        "exposure_X.spatial_unit",
+        "outcome_Y.family",
+        "outcome_Y.specific_variable",
+        "outcome_Y.spatial_unit",
+        "spatial_scope.geography",
+        "spatial_scope.spatial_unit",
+        "temporal_scope.start_year",
+        "temporal_scope.end_year",
+        "identification.primary",
+        "identification.requires_exogenous_shock",
+        "contribution.primary",
+        "contribution.statement",
+        "contribution.gap_addressed",
+    ):
+        before = original_topic
+        after = topic_dict
+        for part in path.split("."):
+            before = before.get(part, None) if isinstance(before, dict) else None
+            after = after.get(part, None) if isinstance(after, dict) else None
+        if before != after:
+            slot_diff[path] = {"before": before, "after": after}
 
-# ── LLM gate scorer ───────────────────────────────────────────────────────────
+    return new_topic, new_seed, slot_diff
+
 
 def _llm_score_gate(
     gate_id: str,
@@ -204,115 +273,291 @@ def _llm_score_gate(
     topic: Topic,
     novelty_evidence: Optional[NoveltyEvidence],
     llm,
-) -> LLMCallRecord:
-    """Call LLM to score a single refinable gate; return LLMCallRecord."""
-    # Try loading template from reflection_critique.txt first.
+) -> tuple[LLMCallRecord, dict]:
     templates = _load_critique_templates()
-    gate_cfg = templates.get(gate_id, {})
-    template_str = gate_cfg.get("template", "")
-    prompt = ""
-    if template_str:
-        try:
-            prompt = template_str.format(
-                exposure_variable=topic.exposure_X.specific_variable,
-                exposure_family=topic.exposure_X.family.value,
-                outcome_variable=topic.outcome_Y.specific_variable,
-                outcome_family=topic.outcome_Y.family.value,
-                geography=topic.spatial_scope.geography,
-                spatial_unit=topic.spatial_scope.spatial_unit,
-                method=topic.identification.primary.value,
-                key_threats=topic.identification.key_threats,
-                mitigations=topic.identification.mitigations,
-                contribution_statement=topic.contribution.statement,
-                gap_addressed=topic.contribution.gap_addressed or "",
-                total_hits=getattr(novelty_evidence, "total_hits", 0),
-                four_tuple_match_count=getattr(novelty_evidence, "four_tuple_match_count", 0),
-            )
-        except (KeyError, ValueError) as e:
-            logger.warning("Template formatting failed for %s: %s — using built-in prompt", gate_id, e)
-            prompt = ""
+    template = templates.get(gate_id, {}).get("template", "")
+    if not template:
+        raise ValueError(f"Missing critique template for {gate_id}")
 
-    # Fall back to built-in prompts when template unavailable or failed.
-    if not prompt:
-        _builtins = {
-            "G1": (
-                f"Score 1-5 the mechanistic plausibility of:\n"
-                f"Exposure: {topic.exposure_X.specific_variable} ({topic.exposure_X.family.value})\n"
-                f"Outcome: {topic.outcome_Y.specific_variable} ({topic.outcome_Y.family.value})\n"
-                f"Geography: {topic.spatial_scope.geography}\n"
-                'Reply JSON only: {"score": <1-5>, "reasoning": "..."}'
-            ),
-            "G4": (
-                f"Score 1-5 the validity of this identification strategy:\n"
-                f"Method: {topic.identification.primary.value}\n"
-                f"Key threats: {topic.identification.key_threats}\n"
-                f"Mitigations: {topic.identification.mitigations}\n"
-                'Reply JSON only: {"score": <1-5>, "reasoning": "..."}'
-            ),
-            "G5": (
-                f"Score 1-5 the novelty of this research topic given "
-                f"{getattr(novelty_evidence, 'four_tuple_match_count', 0)} exact four-tuple matches "
-                f"out of {getattr(novelty_evidence, 'total_hits', 0)} papers found:\n"
-                f"Topic: {topic.free_form_title or topic.exposure_X.specific_variable} → "
-                f"{topic.outcome_Y.specific_variable}\n"
-                'Reply JSON only: {"score": <1-5>, "reasoning": "..."}'
-            ),
-            "G7": (
-                f"Score 1-5 the clarity of this contribution statement:\n"
-                f'"{topic.contribution.statement}"\n'
-                f'Gap addressed: "{topic.contribution.gap_addressed}"\n'
-                'Reply JSON only: {"score": <1-5>, "reasoning": "..."}'
-            ),
-        }
-        prompt = _builtins.get(gate_id, f'Score 1-5: {gate_name}. Reply JSON only: {{"score": <1-5>, "reasoning": ""}}')
+    prompt = template.format(
+        exposure_variable=topic.exposure_X.specific_variable,
+        exposure_family=topic.exposure_X.family.value,
+        outcome_variable=topic.outcome_Y.specific_variable,
+        outcome_family=topic.outcome_Y.family.value,
+        geography=topic.spatial_scope.geography,
+        spatial_unit=topic.spatial_scope.spatial_unit,
+        method=topic.identification.primary.value,
+        key_threats=topic.identification.key_threats,
+        mitigations=topic.identification.mitigations,
+        contribution_statement=topic.contribution.statement,
+        gap_addressed=topic.contribution.gap_addressed or "",
+        total_hits=getattr(novelty_evidence, "total_hits", 0),
+        four_tuple_match_count=getattr(novelty_evidence, "four_tuple_match_count", 0),
+        oa_top_papers_formatted=_format_openalex_top_papers(novelty_evidence),
+        target_venues=topic.target_venues,
+    )
 
-    try:
-        from langchain_core.messages import HumanMessage
+    from langchain_core.messages import HumanMessage
 
-        response = llm.invoke([HumanMessage(content=prompt)])
-        raw = response.content.strip()
-        # Strip markdown fences if present
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-        parsed = json.loads(raw)
-        score = int(parsed.get("score", 3))
-        reasoning = parsed.get("reasoning", "")
-        usage = getattr(response, "usage_metadata", {}) or {}
-        tokens_in = usage.get("input_tokens", 0)
-        tokens_out = usage.get("output_tokens", 0)
-        cost = (tokens_in * 0.00000025 + tokens_out * 0.00000125)  # rough Gemini flash estimate
-    except Exception as e:
-        logger.warning("LLM gate %s scoring failed: %s — defaulting score=3", gate_id, e)
-        score, reasoning, tokens_in, tokens_out, cost = 3, str(e), 0, 0, 0.0
-
-    model_name = getattr(llm, "model", "unknown")
-    return LLMCallRecord(
+    response = llm.invoke([HumanMessage(content=prompt)])
+    raw = response.content.strip()
+    if raw.startswith("```"):
+        parts = raw.split("```")
+        raw = parts[1] if len(parts) > 1 else raw
+        if raw.startswith("json"):
+            raw = raw[4:]
+    parsed = json.loads(raw)
+    usage = getattr(response, "usage_metadata", {}) or {}
+    tokens_in = usage.get("input_tokens", 0)
+    tokens_out = usage.get("output_tokens", 0)
+    cost = tokens_in * 0.00000025 + tokens_out * 0.00000125
+    score = parsed.get("score")
+    score = int(score) if score is not None else None
+    record = LLMCallRecord(
         gate_id=gate_id,
-        model=model_name,
+        model=getattr(llm, "model", "unknown"),
         tokens_in=tokens_in,
         tokens_out=tokens_out,
         cost_usd=cost,
         score=score,
-        reasoning=reasoning,
+        reasoning=parsed.get("reasoning", ""),
     )
+    return record, parsed
+
+
+def _llm_score_all_refinable_gates(
+    topic: Topic,
+    novelty_evidence: Optional[NoveltyEvidence],
+    llm,
+) -> tuple[dict[str, LLMCallRecord], dict]:
+    templates = _load_critique_templates()
+    template = templates.get("BATCH", {}).get("template", "")
+    if not template:
+        raise ValueError("BATCH critique template missing")
+
+    prompt = template.format(
+        exposure_variable=topic.exposure_X.specific_variable,
+        exposure_family=topic.exposure_X.family.value,
+        outcome_variable=topic.outcome_Y.specific_variable,
+        outcome_family=topic.outcome_Y.family.value,
+        geography=topic.spatial_scope.geography,
+        spatial_unit=topic.spatial_scope.spatial_unit,
+        method=topic.identification.primary.value,
+        key_threats=topic.identification.key_threats,
+        mitigations=topic.identification.mitigations,
+        contribution_statement=topic.contribution.statement,
+        gap_addressed=topic.contribution.gap_addressed or "",
+        total_hits=getattr(novelty_evidence, "total_hits", 0),
+        four_tuple_match_count=getattr(novelty_evidence, "four_tuple_match_count", 0),
+        oa_top_papers_formatted=_format_openalex_top_papers(novelty_evidence),
+        target_venues=topic.target_venues,
+    )
+    from langchain_core.messages import HumanMessage
+
+    response = llm.invoke([HumanMessage(content=prompt)])
+    raw = response.content.strip()
+    if raw.startswith("```"):
+        parts = raw.split("```")
+        raw = parts[1] if len(parts) > 1 else raw
+        if raw.startswith("json"):
+            raw = raw[4:]
+    parsed = json.loads(raw)
+    usage = getattr(response, "usage_metadata", {}) or {}
+    tokens_in = usage.get("input_tokens", 0)
+    tokens_out = usage.get("output_tokens", 0)
+    total_cost = tokens_in * 0.00000025 + tokens_out * 0.00000125
+
+    records: dict[str, LLMCallRecord] = {}
+    for idx, gate_id in enumerate(("G1", "G4", "G5", "G7")):
+        payload = parsed.get(gate_id, {})
+        score = payload.get("score")
+        score = int(score) if score is not None else None
+        records[gate_id] = LLMCallRecord(
+            gate_id=gate_id,
+            model=getattr(llm, "model", "unknown"),
+            tokens_in=tokens_in if idx == 0 else 0,
+            tokens_out=tokens_out if idx == 0 else 0,
+            cost_usd=total_cost if idx == 0 else 0.0,
+            score=score,
+            reasoning=payload.get("reasoning", ""),
+        )
+    return records, parsed
 
 
 def _gate_result_from_llm(record: LLMCallRecord, gate_name: str, threshold: int) -> GateResult:
-    passed = (record.score or 0) >= threshold
+    if record.score is None:
+        return GateResult(
+            gate_id=record.gate_id,
+            name=gate_name,
+            passed=False,
+            refinable=True,
+            reason="llm_call_failed",
+            score=None,
+            max_score=5,
+        )
     return GateResult(
         gate_id=record.gate_id,
         name=gate_name,
-        passed=passed,
+        passed=record.score >= threshold,
         refinable=True,
-        reason="ok" if passed else f"score={record.score} < threshold={threshold}",
+        reason="ok" if record.score >= threshold else f"score={record.score} < threshold={threshold}",
         score=record.score,
         max_score=5,
     )
 
 
-# ── Main reflection loop ──────────────────────────────────────────────────────
+def _llm_propose_operation_values(
+    topic: Topic,
+    seed_candidate: SeedCandidate,
+    operations: list[dict],
+    llm,
+) -> list[dict]:
+    if not llm or not operations:
+        return operations
+
+    try:
+        template = (prompts_dir() / "reflection_refine.txt").read_text()
+        prompt = template.format(
+            topic_id=topic.meta.topic_id,
+            exposure=f"{topic.exposure_X.specific_variable} ({topic.exposure_X.family.value})",
+            outcome=f"{topic.outcome_Y.specific_variable} ({topic.outcome_Y.family.value})",
+            geography=topic.spatial_scope.geography,
+            method=topic.identification.primary.value,
+            spatial_unit=topic.spatial_scope.spatial_unit,
+            declared_sources=", ".join(seed_candidate.declared_sources),
+            operations_list="\n".join(
+                f"- {op.get('op')}: {op.get('description', '')}" for op in operations
+            ),
+            enum_block="",
+            target_venues=topic.target_venues,
+        )
+        try:
+            from langchain_core.messages import HumanMessage
+            response = llm.invoke([HumanMessage(content=prompt)])
+        except Exception:
+            response = llm.invoke(prompt)
+        raw = response.content.strip()
+        if raw.startswith("```"):
+            parts = raw.split("```")
+            raw = parts[1] if len(parts) > 1 else raw
+            if raw.startswith("json"):
+                raw = raw[4:]
+        proposed = json.loads(raw)
+        if not isinstance(proposed, list):
+            return operations
+
+        mapped = {}
+        for item in proposed:
+            if isinstance(item, dict) and "op" in item:
+                mapped[item["op"]] = item
+
+        enriched = []
+        for op in operations:
+            payload = mapped.get(op.get("op", ""))
+            if not payload:
+                enriched.append(op)
+                continue
+            new_op = dict(op)
+            if "value" in payload:
+                new_op["value"] = payload["value"]
+            if "params" in payload and isinstance(payload["params"], dict):
+                new_op["params"] = payload["params"]
+            if "rationale" in payload:
+                new_op["rationale"] = payload["rationale"]
+            enriched.append(new_op)
+        return enriched
+    except Exception as exc:
+        logger.warning("LLM refine value proposal failed: %s", exc)
+        return operations
+
+
+def _select_refine_operations(
+    failed_gates: list[GateResult],
+    max_ops: int = 2,
+    refine_operations_override: Optional[list[dict]] = None,
+    history: Optional[list[str]] = None,
+) -> list[dict]:
+    if refine_operations_override is not None:
+        return refine_operations_override[:max_ops]
+
+    try:
+        from agents.settings import refine_operations_path
+
+        with open(refine_operations_path()) as f:
+            data = yaml.safe_load(f) or {}
+    except Exception:
+        data = {}
+
+    catalog = data.get("operations", [])
+    anti_pairs = {
+        tuple(pair)
+        for pair in data.get("usage_rules", {}).get("anti_oscillation_pairs", [])
+        if isinstance(pair, list) and len(pair) == 2
+    }
+    failed_ids = {r.gate_id for r in failed_gates}
+    selected: list[dict] = []
+
+    last_op = history[-1] if history else None
+    for entry in catalog:
+        targets = set(entry.get("targets_gate", []))
+        if "any" not in targets and not (targets & failed_ids):
+            continue
+        op_name = entry.get("op")
+        if not op_name:
+            continue
+        if last_op and (last_op, op_name) in anti_pairs:
+            continue
+        selected.append(
+            {
+                "op": op_name,
+                "description": entry.get("description", ""),
+                "params_schema": entry.get("params_schema", {}),
+            }
+        )
+        if len(selected) >= max_ops:
+            break
+
+    if not selected:
+        selected.append({"op": "free_form", "description": "fallback"})
+    return selected
+
+
+def _append_round(
+    rounds: list[RoundRecord],
+    round_num: int,
+    pre_refine_topic_snapshot: dict,
+    gate_results: list[GateResult],
+    openalex_queries_log: list[str],
+    llm_critique_raw: dict,
+    llm_calls: list[LLMCallRecord],
+    decision: str,
+    applied_operations: list[dict],
+    slot_diff: dict,
+    four_tuple_sig: str,
+    round_score: float,
+    budget_snapshot: dict,
+    wallclock_seconds: float,
+    g5_skipped: bool = False,
+) -> None:
+    rounds.append(
+        RoundRecord(
+            round_num=round_num,
+            pre_refine_topic_snapshot=pre_refine_topic_snapshot,
+            gate_results=gate_results,
+            openalex_queries_log=openalex_queries_log,
+            llm_critique_raw={**llm_critique_raw, "g5_skipped": g5_skipped},
+            llm_calls=llm_calls,
+            decision=decision,
+            applied_operations=applied_operations,
+            slot_diff=slot_diff,
+            four_tuple_sig=four_tuple_sig,
+            round_score=round_score,
+            budget_snapshot=budget_snapshot,
+            wallclock_seconds=wallclock_seconds,
+            g5_skipped=g5_skipped,
+        )
+    )
+
 
 def run_reflection_loop(
     seed_candidate: SeedCandidate,
@@ -323,352 +568,306 @@ def run_reflection_loop(
     max_rounds: Optional[int] = None,
     refine_operations_override: Optional[list[dict]] = None,
 ) -> ReflectionTrace:
-    """Run the per-topic reflection loop and return a complete ReflectionTrace.
-
-    Parameters
-    ----------
-    seed_candidate:
-        The topic + declared_sources to evaluate.
-    budget:
-        Shared BudgetTracker; check_can_proceed / record_call called each round.
-    rule_engine:
-        Pre-built RuleEngine; created fresh if None.
-    verifier:
-        Pre-built OpenAlexVerifier; created fresh if None.
-    llm:
-        LangChain LLM instance for G1/G4/G5/G7 scoring.  If None, LLM gates
-        default to score=3 (neutral/passing) so the loop can run without API keys.
-    max_rounds:
-        Override reflection_config.yaml max_rounds.
-    """
     cfg = _load_reflection_config()
     r_cfg = cfg.get("reflection", {})
-
     _max_rounds = max_rounds if max_rounds is not None else r_cfg.get("max_rounds", 3)
     _min_rounds = r_cfg.get("min_rounds_before_stop", 2)
     _early_stop_delta = r_cfg.get("early_stop_delta_threshold", 0.5)
     _oscillation_window = r_cfg.get("oscillation_window", 3)
 
-    if rule_engine is None:
-        rule_engine = RuleEngine()
-    if verifier is None:
-        verifier = OpenAlexVerifier()
+    rule_engine = rule_engine or RuleEngine()
+    verifier = verifier or OpenAlexVerifier()
 
-    topic = seed_candidate.topic
-    declared = seed_candidate.declared_sources
-
-    topic_id = topic.meta.topic_id
+    topic_id = seed_candidate.topic.meta.topic_id
     rounds: list[RoundRecord] = []
-    total_cost = 0.0
-    t_start = time.monotonic()
-
-    recent_sigs: list[str] = []
     round_scores: list[float] = []
+    signature_history: list[str] = []
+    op_history: list[str] = []
+    reject_reasons: list[str] = []
     final_status = FinalStatus.PENDING
+    total_cost = 0.0
+    start_wallclock = time.monotonic()
     current_candidate = seed_candidate
+    force_tentative_due_to_no_llm = llm is None
 
     for round_num in range(1, _max_rounds + 1):
-        # Budget guard
+        round_start = time.monotonic()
         try:
             budget.check_can_proceed(topic_id)
-        except BudgetExceededError as e:
-            logger.warning("Budget exceeded for %s: %s", topic_id, e)
+        except BudgetExceededError as exc:
+            reject_reasons.append(str(exc))
             final_status = FinalStatus.TENTATIVE
             break
 
         current_topic = current_candidate.topic
-        current_declared = current_candidate.declared_sources
-        sig = current_topic.four_tuple_signature()
-        recent_sigs.append(sig)
+        four_tuple_sig = current_topic.four_tuple_signature()
+        signature_history.append(four_tuple_sig)
 
-        # Oscillation check
-        if (
-            len(recent_sigs) >= _oscillation_window
-            and len(set(recent_sigs[-_oscillation_window:])) == 1
-        ):
-            logger.info("Oscillation detected for %s — forcing TENTATIVE", topic_id)
+        if len(signature_history) >= _oscillation_window and len(set(signature_history[-_oscillation_window:])) == 1:
             final_status = FinalStatus.TENTATIVE
-            _append_round(rounds, round_num, [], [], "TENTATIVE", [], sig, 0.0)
+            reject_reasons.append("oscillation_detected")
+            _append_round(
+                rounds,
+                round_num,
+                current_topic.model_dump(),
+                [],
+                [],
+                {},
+                [],
+                "TENTATIVE",
+                [],
+                {},
+                four_tuple_sig,
+                0.0,
+                budget.snapshot(),
+                time.monotonic() - round_start,
+            )
             break
 
-        # ── Zero-cost hard-blocker checks ─────────────────────────────────
-        hard_results = rule_engine.run_hard_blockers(current_topic, current_declared)
+        hard_results = rule_engine.run_hard_blockers(current_topic, current_candidate.declared_sources)
         hard_failed = [r for r in hard_results if not r.passed]
-
         if hard_failed:
-            logger.info("Hard-blocker failed for %s: %s", topic_id,
-                        [r.gate_id for r in hard_failed])
-            _append_round(rounds, round_num, hard_results, [], "REJECTED", [], sig, 0.0)
             final_status = FinalStatus.REJECTED
+            reject_reasons.extend([r.reason for r in hard_failed])
+            _append_round(
+                rounds,
+                round_num,
+                current_topic.model_dump(),
+                hard_results,
+                [],
+                {},
+                [],
+                "REJECTED",
+                [],
+                {},
+                four_tuple_sig,
+                0.0,
+                budget.snapshot(),
+                time.monotonic() - round_start,
+            )
             break
 
-        # G4 rule-engine part (zero cost)
         g4_rule = rule_engine.check_G4_threat_coverage(current_topic)
-
-        # ── OpenAlex novelty evidence ─────────────────────────────────────
-        novelty_ev: Optional[NoveltyEvidence] = None
+        novelty_ev = None
         try:
             novelty_ev = verifier.verify_novelty_four_tuple(current_topic)
-        except Exception as e:
-            logger.warning("OpenAlex verifier failed: %s", e)
+        except Exception as exc:
+            logger.warning("OpenAlex verifier failed: %s", exc)
 
-        # ── LLM refinable gates ───────────────────────────────────────────
         llm_calls: list[LLMCallRecord] = []
+        llm_critique_raw: dict = {}
+        g5_skipped = novelty_ev is not None and novelty_ev.four_tuple_match_count is None
         refinable_results: list[GateResult] = []
 
-        for gate_id, gate_name, threshold in [
-            ("G1", "mechanism_plausibility", 4),
-            ("G4", "identification_validity", 4),
-            ("G5", "novelty", 3),
-            ("G7", "contribution_clarity", 4),
-        ]:
-            if llm is not None:
-                rec = _llm_score_gate(gate_id, gate_name, current_topic, novelty_ev, llm)
-            else:
-                # No LLM: use rule-engine G4 result for G4, neutral score=4 for others
+        if llm is None:
+            llm_critique_raw = {"reason": "llm_unavailable_neutral_fallback"}
+            reject_reasons.append("llm_unavailable_neutral_fallback")
+            for gate_id, gate_name, threshold in (
+                ("G1", "mechanism_plausibility", 4),
+                ("G4", "identification_validity", 4),
+                ("G5", "novelty", 3),
+                ("G7", "contribution_clarity", 4),
+            ):
                 if gate_id == "G4":
-                    rec = LLMCallRecord(
-                        gate_id="G4", model="rule_engine",
-                        tokens_in=0, tokens_out=0, cost_usd=0.0,
-                        score=4 if g4_rule.passed else 2,
-                        reasoning=g4_rule.reason,
-                    )
+                    score = 4 if g4_rule.passed else 2
+                    reason = g4_rule.reason
                 else:
-                    rec = LLMCallRecord(
-                        gate_id=gate_id, model="mock_neutral",
-                        tokens_in=0, tokens_out=0, cost_usd=0.0,
-                        score=4, reasoning="no_llm_neutral",
+                    score = 3
+                    reason = "mock_neutral"
+                rec = LLMCallRecord(
+                    gate_id=gate_id,
+                    model="mock_neutral",
+                    tokens_in=0,
+                    tokens_out=0,
+                    cost_usd=0.0,
+                    score=score,
+                    reasoning=reason,
+                )
+                llm_calls.append(rec)
+                refinable_results.append(_gate_result_from_llm(rec, gate_name, threshold))
+        else:
+            gate_records: dict[str, LLMCallRecord] = {}
+            try:
+                gate_records, llm_critique_raw = _llm_score_all_refinable_gates(current_topic, novelty_ev, llm)
+            except Exception as exc:
+                logger.warning("Batch critique failed: %s; fallback to per-gate", exc)
+                for gate_id, gate_name in (
+                    ("G1", "mechanism_plausibility"),
+                    ("G4", "identification_validity"),
+                    ("G5", "novelty"),
+                    ("G7", "contribution_clarity"),
+                ):
+                    try:
+                        rec, parsed = _llm_score_gate(gate_id, gate_name, current_topic, novelty_ev, llm)
+                        gate_records[gate_id] = rec
+                        llm_critique_raw[gate_id] = parsed
+                    except Exception as gate_exc:
+                        gate_records[gate_id] = LLMCallRecord(
+                            gate_id=gate_id,
+                            model=getattr(llm, "model", "unknown"),
+                            tokens_in=0,
+                            tokens_out=0,
+                            cost_usd=0.0,
+                            score=None,
+                            reasoning=str(gate_exc),
+                        )
+
+            for gate_id, gate_name, threshold in (
+                ("G1", "mechanism_plausibility", 4),
+                ("G4", "identification_validity", 4),
+                ("G5", "novelty", 3),
+                ("G7", "contribution_clarity", 4),
+            ):
+                if gate_id == "G5" and g5_skipped:
+                    refinable_results.append(
+                        GateResult(
+                            gate_id="G5",
+                            name="novelty",
+                            passed=True,
+                            refinable=True,
+                            reason="openalex_unavailable_neutral",
+                            score=None,
+                            max_score=5,
+                        )
                     )
-            llm_calls.append(rec)
+                    llm_calls.append(
+                        LLMCallRecord(
+                            gate_id="G5",
+                            model="openalex_neutral",
+                            tokens_in=0,
+                            tokens_out=0,
+                            cost_usd=0.0,
+                            score=None,
+                            reasoning="openalex_unavailable_neutral",
+                        )
+                    )
+                    continue
 
-            gate_res = _gate_result_from_llm(rec, gate_name, threshold)
-            refinable_results.append(gate_res)
-
-            if rec.cost_usd > 0:
-                budget.record_call(topic_id, rec.model,
-                                   rec.tokens_in, rec.tokens_out, rec.cost_usd)
-                total_cost += rec.cost_usd
+                rec = gate_records.get(gate_id)
+                if rec is None:
+                    rec = LLMCallRecord(
+                        gate_id=gate_id,
+                        model=getattr(llm, "model", "unknown"),
+                        tokens_in=0,
+                        tokens_out=0,
+                        cost_usd=0.0,
+                        score=None,
+                        reasoning="missing_gate_record",
+                    )
+                llm_calls.append(rec)
+                if rec.cost_usd > 0:
+                    budget.record_call(topic_id, rec.model, rec.tokens_in, rec.tokens_out, rec.cost_usd)
+                    total_cost += rec.cost_usd
+                refinable_results.append(_gate_result_from_llm(rec, gate_name, threshold))
 
         all_results = hard_results + [g4_rule] + refinable_results
         refinable_failed = [r for r in refinable_results if not r.passed]
-        n_failed = len(refinable_failed)
-
         round_score = (
-            sum(r.score or 0 for r in refinable_results) / len(refinable_results)
-            if refinable_results else 0.0
+            sum(r.score or 0 for r in refinable_results if r.score is not None) / max(1, len(refinable_results))
         )
         round_scores.append(round_score)
 
-        # ── Decision ──────────────────────────────────────────────────────
-        if n_failed == 0:
-            decision = "ACCEPTED"
-            _append_round(rounds, round_num, all_results, llm_calls,
-                          decision, [], sig, round_score)
+        if not refinable_failed and not force_tentative_due_to_no_llm:
             final_status = FinalStatus.ACCEPTED
+            _append_round(
+                rounds,
+                round_num,
+                current_topic.model_dump(),
+                all_results,
+                novelty_ev.queries_log if novelty_ev else [],
+                llm_critique_raw,
+                llm_calls,
+                "ACCEPTED",
+                [],
+                {},
+                four_tuple_sig,
+                round_score,
+                budget.snapshot(),
+                time.monotonic() - round_start,
+                g5_skipped=g5_skipped,
+            )
             break
 
-        if n_failed >= 3:
-            decision = "TENTATIVE"
-            _append_round(rounds, round_num, all_results, llm_calls,
-                          decision, [], sig, round_score)
+        if len(refinable_failed) >= 3 or round_num == _max_rounds or (
+            round_num >= _min_rounds and len(round_scores) >= 2 and abs(round_scores[-1] - round_scores[-2]) < _early_stop_delta
+        ):
             final_status = FinalStatus.TENTATIVE
+            _append_round(
+                rounds,
+                round_num,
+                current_topic.model_dump(),
+                all_results,
+                novelty_ev.queries_log if novelty_ev else [],
+                llm_critique_raw,
+                llm_calls,
+                "TENTATIVE",
+                [],
+                {},
+                four_tuple_sig,
+                round_score,
+                budget.snapshot(),
+                time.monotonic() - round_start,
+                g5_skipped=g5_skipped,
+            )
             break
 
-        # Early-stop check (after min_rounds)
-        if round_num >= _min_rounds and len(round_scores) >= 2:
-            delta = abs(round_scores[-1] - round_scores[-2])
-            if delta < _early_stop_delta:
-                logger.info("Early stop (delta=%.3f) for %s", delta, topic_id)
-                decision = "TENTATIVE"
-                _append_round(rounds, round_num, all_results, llm_calls,
-                              decision, [], sig, round_score)
-                final_status = FinalStatus.TENTATIVE
-                break
-
-        if round_num == _max_rounds:
-            decision = "TENTATIVE"
-            _append_round(rounds, round_num, all_results, llm_calls,
-                          decision, [], sig, round_score)
-            final_status = FinalStatus.TENTATIVE
-            break
-
-        # ── Refine: build operations, propose values, apply ───────────────
-        operations = _select_refine_operations(
+        ops = _select_refine_operations(
             refinable_failed,
             refine_operations_override=refine_operations_override,
+            history=op_history,
         )
-        # Enrich each selected operation with a concrete value from the LLM
-        # so that _apply_operations can actually modify the Topic fields.
         if refine_operations_override is None:
-            operations = _llm_propose_operation_values(
-                current_topic, current_candidate, operations, llm
-            )
-        new_topic, new_candidate = _apply_operations(
-            current_topic, operations, current_candidate
-        )
-        current_candidate = type(current_candidate)(
+            ops = _llm_propose_operation_values(current_topic, current_candidate, ops, llm)
+        new_topic, new_candidate, slot_diff = _apply_operations(current_topic, ops, current_candidate)
+        op_history.extend([op.get("op", "") for op in ops if op.get("op")])
+        current_candidate = SeedCandidate(
             topic=new_topic,
             declared_sources=new_candidate.declared_sources,
             declared_sources_rationale=new_candidate.declared_sources_rationale,
         )
+        _append_round(
+            rounds,
+            round_num,
+            current_topic.model_dump(),
+            all_results,
+            novelty_ev.queries_log if novelty_ev else [],
+            llm_critique_raw,
+            llm_calls,
+            "REFINE",
+            ops,
+            slot_diff,
+            four_tuple_sig,
+            round_score,
+            budget.snapshot(),
+            time.monotonic() - round_start,
+            g5_skipped=g5_skipped,
+        )
 
-        decision = "REFINE"
-        _append_round(rounds, round_num, all_results, llm_calls,
-                      decision, operations, sig, round_score)
-
-    wallclock = time.monotonic() - t_start
-
+    total_wallclock = time.monotonic() - start_wallclock
     trace = ReflectionTrace(
         topic_id=topic_id,
+        seed_version=seed_candidate.topic.model_dump(),
         final_status=final_status,
         rounds=rounds,
+        reject_reasons=reject_reasons,
+        convergence={
+            "score_trajectory": round_scores,
+            "signature_history": signature_history,
+            "early_stop_reason": reject_reasons[-1] if reject_reasons else "",
+        },
+        design_alternatives_considered=[op for op in op_history if op],
         total_cost_usd=total_cost,
-        total_wallclock_seconds=wallclock,
-        final_topic=current_candidate.topic.model_dump() if current_candidate else None,
+        total_wallclock_seconds=total_wallclock,
+        final_topic=current_candidate.topic.model_dump(),
     )
-
     _persist_trace(trace)
     return trace
 
 
-def _append_round(
-    rounds: list[RoundRecord],
-    num: int,
-    gate_results: list[GateResult],
-    llm_calls: list[LLMCallRecord],
-    decision: str,
-    ops: list[dict],
-    sig: str,
-    score: float,
-) -> None:
-    rounds.append(RoundRecord(
-        round_num=num,
-        gate_results=gate_results,
-        llm_calls=llm_calls,
-        decision=decision,
-        applied_operations=ops,
-        four_tuple_sig=sig,
-        round_score=score,
-    ))
-
-
-def _llm_propose_operation_values(
-    topic: Topic,
-    seed_candidate: SeedCandidate,
-    operations: list[dict],
-    llm,
-) -> list[dict]:
-    """Ask LLM to fill in concrete 'value' keys for each selected refine operation.
-
-    Without values, _apply_operations silently skips every op (value is None guard).
-    This function merges LLM-proposed values back into the operations list.
-    Falls back to the original (valueless) list on any error.
-    """
-    if not llm or not operations:
-        return operations
-
-    try:
-        prompt_path = prompts_dir() / "reflection_refine.txt"
-        if prompt_path.exists():
-            template = prompt_path.read_text()
-        else:
-            template = (
-                "Propose concrete values for each refine operation to fix the failing gates.\n"
-                "Topic ID: {topic_id}\nExposure: {exposure}\nOutcome: {outcome}\n"
-                "Geography: {geography}\nMethod: {method}\nSpatial unit: {spatial_unit}\n"
-                "Sources: {declared_sources}\nOperations:\n{operations_list}\n"
-                'Return JSON array: [{{"op":"<name>","value":<value>,"rationale":"..."}}]'
-            )
-
-        ops_list = "\n".join(
-            f"  - {op['op']}: {op.get('description', '')}"
-            for op in operations
-        )
-        prompt = template.format(
-            topic_id=topic.meta.topic_id,
-            exposure=f"{topic.exposure_X.specific_variable} ({topic.exposure_X.family.value})",
-            outcome=f"{topic.outcome_Y.specific_variable} ({topic.outcome_Y.family.value})",
-            geography=topic.spatial_scope.geography,
-            method=topic.identification.primary.value,
-            spatial_unit=topic.spatial_scope.spatial_unit,
-            declared_sources=", ".join(seed_candidate.declared_sources),
-            operations_list=ops_list,
-        )
-
-        from langchain_core.messages import HumanMessage
-        response = llm.invoke([HumanMessage(content=prompt)])
-        raw = response.content.strip()
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-
-        proposed = json.loads(raw)
-        proposed_map = {
-            p["op"]: p.get("value")
-            for p in proposed
-            if isinstance(p, dict) and "op" in p
-        }
-
-        enriched = []
-        for op in operations:
-            v = proposed_map.get(op["op"])
-            enriched.append({**op, "value": v} if v is not None else op)
-        return enriched
-
-    except Exception as e:
-        logger.warning("LLM refine value proposal failed: %s — ops kept without values", e)
-        return operations
-
-
-def _select_refine_operations(
-    failed_gates: list[GateResult],
-    max_ops: int = 2,
-    refine_operations_override: Optional[list[dict]] = None,
-) -> list[dict]:
-    """Select ≤ max_ops refine operations based on which gates failed."""
-    if refine_operations_override is not None:
-        return refine_operations_override[:max_ops]
-
-    try:
-        from agents.settings import refine_operations_path
-        with open(refine_operations_path()) as f:
-            import yaml as _yaml
-            data = _yaml.safe_load(f) or {}
-        catalog = data.get("operations", [])
-    except Exception:
-        catalog = []
-
-    failed_ids = {r.gate_id + "_fail" for r in failed_gates}
-    selected: list[dict] = []
-    for entry in catalog:
-        if any(tag in failed_ids for tag in entry.get("applicable_when", [])):
-            selected.append({"op": entry["op"], "description": entry.get("description", "")})
-            if len(selected) >= max_ops:
-                break
-
-    if not selected:
-        selected.append({"op": "free_form", "description": "Catch-all: no specific op matched the failed gates"})
-    return selected
-
-
 def _persist_trace(trace: ReflectionTrace) -> None:
     try:
-        traces_dir = ideation_traces_dir()
-        path = traces_dir / f"{trace.topic_id}_trace.json"
-
-        def _serialize(obj):
-            if isinstance(obj, (GateResult, LLMCallRecord, RoundRecord, ReflectionTrace)):
-                return asdict(obj)
-            if hasattr(obj, "value"):
-                return obj.value
-            if hasattr(obj, "model_dump"):
-                return obj.model_dump()
-            return str(obj)
-
-        import json as _json
-
+        path = ideation_traces_dir() / f"{trace.topic_id}_trace.json"
         with open(path, "w") as f:
-            _json.dump(asdict(trace), f, default=_serialize, indent=2)
-    except Exception as e:
-        logger.warning("Failed to persist trace for %s: %s", trace.topic_id, e)
+            json.dump(asdict(trace), f, indent=2)
+    except Exception as exc:
+        logger.warning("Failed to persist trace for %s: %s", trace.topic_id, exc)

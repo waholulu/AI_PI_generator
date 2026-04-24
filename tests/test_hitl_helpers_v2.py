@@ -56,7 +56,7 @@ def make_topic_dict(topic_id: str = "tent001") -> dict:
         identification=IdentificationStrategy(
             primary=IdentificationPrimary.FE,
             key_threats=["confounding"],
-            mitigations=["fe_controls"],
+            mitigations={"confounding": "fe_controls"},
         ),
         contribution=Contribution(
             primary=ContributionPrimary.CAUSAL_REFINEMENT,
