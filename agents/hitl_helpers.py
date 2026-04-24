@@ -15,10 +15,70 @@ from typing import Any, Dict, List, Optional
 from agents import settings
 from agents.logging_config import get_logger
 from agents.memory_retriever import MemoryRetriever
+from agents.research_plan_builder import build_research_plan_from_candidate
 
 logger = get_logger(__name__)
 
 MAX_REGENERATION_ROUNDS = int(os.getenv("HITL_MAX_REGENERATION_ROUNDS", "3"))
+
+
+def apply_idea_selection(idea_index: int) -> str | None:
+    """Promote candidate at *idea_index* to rank-1 and sync plan/context."""
+    screening_path = settings.topic_screening_path()
+    context_path = settings.research_context_path()
+    plan_path = settings.research_plan_path()
+
+    if not os.path.exists(screening_path):
+        return None
+
+    try:
+        with open(screening_path, "r", encoding="utf-8") as f:
+            screening = json.load(f)
+    except Exception:
+        return None
+
+    candidates: list = screening.get("candidates", [])
+    if idea_index < 0 or idea_index >= len(candidates):
+        return None
+
+    selected = candidates.pop(idea_index)
+    candidates.insert(0, selected)
+    for i, candidate in enumerate(candidates):
+        candidate["rank"] = i + 1
+    screening["candidates"] = candidates
+
+    with open(screening_path, "w", encoding="utf-8") as f:
+        json.dump(screening, f, indent=2, ensure_ascii=False)
+
+    run_id = screening.get("run_id", "unknown")
+    selected_title = str(selected.get("title") or "")
+
+    if os.path.exists(plan_path):
+        try:
+            plan = build_research_plan_from_candidate(
+                selected,
+                evaluation=selected.get("evaluation"),
+                run_id=run_id,
+            )
+            with open(plan_path, "w", encoding="utf-8") as f:
+                json.dump(plan.model_dump(), f, indent=2, ensure_ascii=False)
+        except Exception as exc:
+            logger.warning("Could not sync research_plan.json after selection: %s", exc)
+
+    if os.path.exists(context_path):
+        try:
+            with open(context_path, "r", encoding="utf-8") as f:
+                ctx = json.load(f)
+        except Exception:
+            ctx = {}
+        if not isinstance(ctx, dict):
+            ctx = {}
+        ctx["selected_topic"] = selected
+        ctx["selection_overridden"] = True
+        with open(context_path, "w", encoding="utf-8") as f:
+            json.dump(ctx, f, indent=2, ensure_ascii=False)
+
+    return selected_title
 
 
 def load_validated_topics(validation_path: Optional[str] = None) -> List[Dict[str, Any]]:

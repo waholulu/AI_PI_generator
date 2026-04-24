@@ -8,6 +8,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from agents.orchestrator import build_orchestrator, ResearchState
 from agents.hitl_helpers import (
+    apply_idea_selection,
     load_validated_topics,
     load_tentative_topics,
     promote_tentative,
@@ -142,50 +143,10 @@ with tab_monitor:
                             st.rerun()
                         else:
                             with st.spinner("应用选题并恢复工作流..."):
-                                if selected_index != 0:
-                                    from agents import settings as _settings
-                                    screening_path = _settings.topic_screening_path()
-                                    context_path = _settings.research_context_path()
-                                    plan_path = _settings.research_plan_path()
-                                    try:
-                                        with open(screening_path, "r", encoding="utf-8") as f:
-                                            screening = json.load(f)
-                                        cands = screening.get("candidates", [])
-                                        if selected_index < len(cands):
-                                            picked = cands.pop(selected_index)
-                                            cands.insert(0, picked)
-                                            for j, c in enumerate(cands):
-                                                c["rank"] = j + 1
-                                            screening["candidates"] = cands
-                                            with open(screening_path, "w", encoding="utf-8") as f:
-                                                json.dump(screening, f, indent=2, ensure_ascii=False)
-                                            selected_title = picked.get("title", "")
-                                            if os.path.exists(context_path):
-                                                with open(context_path, "r", encoding="utf-8") as f:
-                                                    ctx = json.load(f)
-                                                if isinstance(ctx, dict):
-                                                    ctx["selected_topic"] = {
-                                                        "title": selected_title,
-                                                        "score": picked.get("final_score", picked.get("initial_score")),
-                                                        "quantitative_specs": picked.get("quantitative_specs", {}),
-                                                        "data_sources": picked.get("data_sources", []),
-                                                        "publishability": picked.get("publishability", ""),
-                                                        "selection_overridden": True,
-                                                    }
-                                                    with open(context_path, "w", encoding="utf-8") as f:
-                                                        json.dump(ctx, f, indent=2, ensure_ascii=False)
-                                            if os.path.exists(plan_path):
-                                                with open(plan_path, "r", encoding="utf-8") as f:
-                                                    plan = json.load(f)
-                                                plan["project_title"] = selected_title
-                                                plan["topic_screening"] = {
-                                                    "top_candidate_title": selected_title,
-                                                    "manually_selected": True,
-                                                }
-                                                with open(plan_path, "w", encoding="utf-8") as f:
-                                                    json.dump(plan, f, indent=2, ensure_ascii=False)
-                                    except Exception as exc:
-                                        st.error(f"应用选题失败: {exc}")
+                                selected_title = apply_idea_selection(selected_index)
+                                if not selected_title:
+                                    st.error("应用选题失败")
+                                    st.stop()
 
                                 for event in graph.stream(None, config, stream_mode="values"):
                                     pass

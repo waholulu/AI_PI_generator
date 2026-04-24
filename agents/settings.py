@@ -194,6 +194,10 @@ def draft_path() -> str:
     return str(output_dir() / "Draft_v1.md")
 
 
+def research_memo_prompt_path() -> str:
+    return str(prompts_dir() / "research_memo_drafter.txt")
+
+
 def references_bib_path() -> str:
     return str(output_dir() / "references.bib")
 
@@ -243,6 +247,10 @@ def raw_data_dir() -> Path:
 
 def raw_manifest_path() -> str:
     return str(raw_data_dir() / "manifest.json")
+
+
+def data_access_report_path() -> str:
+    return str(output_dir() / "data_access_report.json")
 
 
 # Memory files

@@ -37,6 +37,7 @@ from agents import settings
 from agents.logging_config import setup_logging, get_logger
 
 from api import log_store, run_manager
+from agents.hitl_helpers import apply_idea_selection
 from api.models import (
     ApproveRequest,
     ApproveResponse,
@@ -98,81 +99,6 @@ async def serve_ui():
 
 
 # ── Background pipeline execution ────────────────────────────────────
-
-def _apply_idea_selection(run_id: str, thread_id: str, idea_index: int) -> Optional[str]:
-    """Promote candidate at *idea_index* to rank-1 and persist the updated files.
-
-    Reads ``topic_screening.json`` from the run's scoped output directory,
-    rotates the selected candidate to position 0, re-assigns ranks, and
-    updates ``research_context.json``'s ``selected_topic`` accordingly.
-
-    Returns the title of the newly selected idea, or None if the index is invalid.
-    """
-    import json as _json
-
-    scope_token = settings.activate_run_scope(run_id)
-    try:
-        screening_path = settings.topic_screening_path()
-        context_path = settings.research_context_path()
-        plan_path = settings.research_plan_path()
-
-        if not Path(screening_path).exists():
-            return None
-
-        with open(screening_path, "r", encoding="utf-8") as f:
-            screening = _json.load(f)
-
-        candidates: list = screening.get("candidates", [])
-        if idea_index < 0 or idea_index >= len(candidates):
-            return None
-
-        # Rotate selected candidate to front
-        selected = candidates.pop(idea_index)
-        candidates.insert(0, selected)
-        for i, c in enumerate(candidates):
-            c["rank"] = i + 1
-        screening["candidates"] = candidates
-
-        with open(screening_path, "w", encoding="utf-8") as f:
-            _json.dump(screening, f, indent=2, ensure_ascii=False)
-
-        selected_title: str = selected.get("title", "")
-
-        # Update research_context.json
-        if Path(context_path).exists():
-            try:
-                with open(context_path, "r", encoding="utf-8") as f:
-                    ctx = _json.load(f)
-                if isinstance(ctx, dict):
-                    ctx["selected_topic"] = {
-                        "title": selected_title,
-                        "score": selected.get("final_score", selected.get("initial_score")),
-                        "quantitative_specs": selected.get("quantitative_specs", {}),
-                        "data_sources": selected.get("data_sources", []),
-                        "publishability": selected.get("publishability", ""),
-                        "selection_overridden": True,
-                    }
-                    with open(context_path, "w", encoding="utf-8") as f:
-                        _json.dump(ctx, f, indent=2, ensure_ascii=False)
-            except Exception as exc:
-                logger.warning("Could not update research_context.json after idea selection: %s", exc)
-
-        # Update research_plan.json title to match the new top-1
-        if Path(plan_path).exists():
-            try:
-                with open(plan_path, "r", encoding="utf-8") as f:
-                    plan = _json.load(f)
-                plan["project_title"] = selected_title
-                plan["topic_screening"] = {"top_candidate_title": selected_title, "manually_selected": True}
-                with open(plan_path, "w", encoding="utf-8") as f:
-                    _json.dump(plan, f, indent=2, ensure_ascii=False)
-            except Exception as exc:
-                logger.warning("Could not update research_plan.json after idea selection: %s", exc)
-
-        return selected_title
-    finally:
-        settings.deactivate_run_scope(scope_token)
-
 
 async def _run_pipeline(run_id: str, thread_id: str, domain_input: str) -> None:
     """Run the pipeline phases in the background, handling HITL interrupt."""
@@ -469,9 +395,14 @@ async def approve_hitl(run_id: str, req: ApproveRequest = ApproveRequest()):
             detail="selected_idea_index is required when action='select'.",
         )
 
-    selected_title = await asyncio.to_thread(
-        _apply_idea_selection, run_id, run.thread_id, req.selected_idea_index
-    )
+    def _apply() -> str | None:
+        scope_token = settings.activate_run_scope(run_id)
+        try:
+            return apply_idea_selection(req.selected_idea_index)
+        finally:
+            settings.deactivate_run_scope(scope_token)
+
+    selected_title = await asyncio.to_thread(_apply)
     if selected_title is None:
         raise HTTPException(
             status_code=422,

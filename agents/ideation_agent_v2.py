@@ -1,20 +1,17 @@
 """
-IdeationAgentV2 — dual-mode topic ideation (Level 1: user topic, Level 2: domain search).
+IdeationAgentV2 — dual-mode topic ideation (Level 1 + Level 2).
 
-Level 1 (--mode level_1 / --user-topic path.yaml):
-  - Loads user-provided structured YAML, validates as Topic
-  - Runs hard-blockers (G2/G3/G6) synchronously — raises HITLInterruption on any fail
-  - Calls run_reflection_loop with max_rounds=1
-  - ACCEPTED → produces research_plan.json + topic_screening.json
-  - TENTATIVE after 1 round → raises HITLInterruption
+Level 1:
+  - validate user topic
+  - run one reflection pass
+  - evaluate candidate once
+  - emit contract-valid research_plan.json
 
-Level 2 (--mode level_2 / default):
-  - Generates 30 SeedCandidates from ideation_seed prompt
-  - Runs reflection loop per topic (parallel, max 5 workers)
-  - Splits ACCEPTED / TENTATIVE / REJECTED
-  - ACCEPTED → ranks → top-3 → data verification → research_plan.json
-  - TENTATIVE → writes tentative_pool.json
-  - Writes ideation_run_summary.json
+Level 2:
+  - default AUTOPI_IDEATION_MODE=simple: one-pass candidate generation + evaluation
+  - optional AUTOPI_IDEATION_MODE=reflection: keep legacy reflection path
+  - all emitted candidates include `evaluation`
+  - research_plan.json is always validated against ResearchPlan schema
 """
 
 from __future__ import annotations
@@ -28,11 +25,13 @@ from typing import Any, Optional
 
 import yaml
 
+from agents.candidate_evaluator import evaluate_candidate
 from agents.budget_tracker import BudgetExceededError, BudgetTracker
 from agents.logging_config import get_logger
 from agents.memory_retriever import MemoryRetriever
 from agents.openalex_verifier import OpenAlexVerifier
 from agents.reflection_loop import ReflectionTrace, run_reflection_loop
+from agents.research_plan_builder import build_research_plan_from_candidate
 from agents.rule_engine import RuleEngine
 from agents import settings
 from models.topic_schema import (
@@ -41,6 +40,7 @@ from models.topic_schema import (
     SeedCandidate,
     Topic,
 )
+from models.research_plan_schema import ResearchPlan
 
 logger = get_logger(__name__)
 
@@ -154,6 +154,9 @@ class IdeationAgentV2:
             per_run_budget_usd=budget_override_usd
         )
         self._llm = self._init_llm()
+        self.ideation_mode = os.getenv("AUTOPI_IDEATION_MODE", "simple").strip().lower()
+        if self.ideation_mode not in {"simple", "reflection"}:
+            self.ideation_mode = "simple"
 
     def _init_llm(self):
         try:
@@ -166,6 +169,65 @@ class IdeationAgentV2:
         except Exception as e:
             logger.warning("LLM init failed: %s — running without LLM", e)
             return None
+
+    @staticmethod
+    def _verdict_rank(verdict: str) -> int:
+        return {"pass": 2, "warning": 1, "fail": 0}.get(verdict, 0)
+
+    def _evaluate_candidate_entry(self, candidate: dict, run_id: str) -> tuple[dict, dict]:
+        """Build a contract-valid plan + deterministic candidate evaluation."""
+        bootstrap_plan = build_research_plan_from_candidate(candidate, evaluation=None, run_id=run_id)
+        evaluation = evaluate_candidate(candidate, bootstrap_plan, llm=self._llm)
+        candidate["evaluation"] = evaluation.model_dump()
+        final_plan = build_research_plan_from_candidate(
+            candidate, evaluation=candidate["evaluation"], run_id=run_id
+        )
+        validated = ResearchPlan.model_validate(final_plan.model_dump())
+        return candidate, validated.model_dump()
+
+    def _run_simple_screening(
+        self,
+        seeds: list[SeedCandidate],
+        run_id: str,
+        top_k: int = 3,
+    ) -> tuple[list[dict], list[dict]]:
+        ranked: list[dict] = []
+        for seed in seeds:
+            entry = {
+                **seed.topic.to_legacy_dict(),
+                "rank": 0,
+                "final_status": "EVALUATED",
+                "declared_sources": seed.declared_sources,
+                "legacy_six_gates": {},
+                "reflection_trace_id": seed.topic.meta.topic_id,
+            }
+            if _is_placeholder_candidate(entry):
+                continue
+            evaluated, _ = self._evaluate_candidate_entry(entry, run_id)
+            ranked.append(evaluated)
+
+        ranked.sort(
+            key=lambda c: (
+                self._verdict_rank((c.get("evaluation") or {}).get("overall_verdict", "fail")),
+                float((c.get("evaluation") or {}).get("score", 0.0)),
+            ),
+            reverse=True,
+        )
+        for i, candidate in enumerate(ranked):
+            candidate["rank"] = i + 1
+        return ranked[:top_k], ranked
+
+    def _persist_screening_and_plan(self, run_id: str, screening: dict, top_candidate: dict) -> tuple[str, str]:
+        screening_path = settings.topic_screening_path()
+        with open(screening_path, "w", encoding="utf-8") as f:
+            json.dump(screening, f, indent=2, ensure_ascii=False)
+
+        _, plan_dict = self._evaluate_candidate_entry(top_candidate, run_id)
+        plan_path = settings.research_plan_path()
+        os.makedirs(os.path.dirname(plan_path), exist_ok=True)
+        with open(plan_path, "w", encoding="utf-8") as f:
+            json.dump(plan_dict, f, indent=2, ensure_ascii=False)
+        return screening_path, plan_path
 
     # ── Level 1 ───────────────────────────────────────────────────────────────
 
@@ -280,10 +342,10 @@ class IdeationAgentV2:
         with open(screening_path, "w") as f:
             json.dump(screening, f, indent=2, ensure_ascii=False)
 
+        _, plan = self._evaluate_candidate_entry(candidate_entry, run_id)
         plan_path = settings.research_plan_path()
-        plan = _build_research_plan(candidate_entry, run_id)
         os.makedirs(os.path.dirname(plan_path), exist_ok=True)
-        with open(plan_path, "w") as f:
+        with open(plan_path, "w", encoding="utf-8") as f:
             json.dump(plan, f, indent=2, ensure_ascii=False)
 
         return {
@@ -296,7 +358,7 @@ class IdeationAgentV2:
     # ── Level 2 ───────────────────────────────────────────────────────────────
 
     def run_level2(self, state: dict) -> dict:
-        """Level 2: generate 30 seed candidates, run parallel reflection loop."""
+        """Level 2: default simple one-pass screening, optional reflection mode."""
         domain = state.get("domain_input", "Urban Planning and Health")
         run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:6]
         t_start_dt = datetime.now(timezone.utc)
@@ -306,34 +368,31 @@ class IdeationAgentV2:
         field_scan_context = _load_field_scan_context(field_scan_path)
         memory_context = _load_memory_context(self.memory, domain)
 
+        seeds = self._generate_seeds(domain, field_scan_context, memory_context)
+        simple_limit = int(os.getenv("IDEATION_SIMPLE_CANDIDATE_COUNT", "20"))
+        seeds = seeds[: max(1, simple_limit)]
+
+        if self.ideation_mode != "reflection":
+            ranked_top, ranked_all = self._run_simple_screening(seeds, run_id=run_id, top_k=3)
+            t_end = datetime.now(timezone.utc).timestamp()
+            return self._emit_level2_outputs_simple(
+                top_candidates=ranked_top,
+                all_candidates=ranked_all,
+                domain=domain,
+                run_id=run_id,
+                started_at=t_start_dt,
+                wallclock=t_end - t_start,
+            )
+
         accepted: list[tuple[SeedCandidate, ReflectionTrace]] = []
         tentative: list[tuple[SeedCandidate, ReflectionTrace]] = []
         rejected: list[tuple[SeedCandidate, ReflectionTrace]] = []
-
-        max_attempts = 2  # default: first pass + one automatic rerun
-        for attempt in range(1, max_attempts + 1):
-            seeds = self._generate_seeds(domain, field_scan_context, memory_context)
-            logger.info("Generated %d seed candidates (attempt %d/%d)", len(seeds), attempt, max_attempts)
-            accepted, tentative, rejected = self._run_reflection_batch(seeds)
-            if accepted:
-                break
-            if attempt < max_attempts:
-                logger.warning("No ACCEPTED candidates in attempt %d — auto rerunning once", attempt)
-
-        logger.info(
-            "Reflection done — ACCEPTED: %d, TENTATIVE: %d, REJECTED: %d",
-            len(accepted), len(tentative), len(rejected),
-        )
-
-        # Rank accepted → top-3
+        accepted, tentative, rejected = self._run_reflection_batch(seeds)
         top_candidates = self._rank_and_select(accepted, domain)[:3]
-
-        # Write tentative pool
         self._write_tentative_pool(tentative, run_id)
 
-        # Build outputs
         t_end = datetime.now(timezone.utc).timestamp()
-        return self._emit_level2_outputs(
+        return self._emit_level2_outputs_reflection(
             top_candidates, tentative, rejected, len(accepted), domain, run_id, t_start_dt,
             wallclock=t_end - t_start,
             total_attempted=len(seeds),
@@ -518,7 +577,7 @@ class IdeationAgentV2:
             json.dump({"run_id": run_id, "tentative": pool}, f, indent=2, ensure_ascii=False)
         logger.info("Wrote %d tentative topics to %s", len(pool), path)
 
-    def _emit_level2_outputs(
+    def _emit_level2_outputs_reflection(
         self,
         top_candidates: list[dict],
         tentative: list,
@@ -533,9 +592,38 @@ class IdeationAgentV2:
         if not top_candidates:
             if tentative or rejected:
                 logger.warning(
-                    "No ACCEPTED candidates after rerun — listing best near-pass candidates"
+                    "No ACCEPTED candidates after rerun — evaluating near-pass candidates"
                 )
-                top_candidates = self._rank_near_pass_fallbacks(tentative, rejected)[:3]
+                fallback_candidates: list[dict] = []
+                for seed, trace in (tentative + rejected):
+                    legacy_gates = _build_legacy_gates_map(trace)
+                    last_round = trace.rounds[-1] if trace.rounds else None
+                    score = last_round.round_score if last_round else 0.0
+                    entry = {
+                        **seed.topic.to_legacy_dict(),
+                        "rank": 0,
+                        "final_status": trace.final_status.value,
+                        "declared_sources": seed.declared_sources,
+                        "legacy_six_gates": legacy_gates,
+                        "reflection_trace_id": seed.topic.meta.topic_id,
+                        "_reflection_score": score,
+                    }
+                    if _is_placeholder_candidate(entry):
+                        continue
+                    evaluated, _ = self._evaluate_candidate_entry(entry, run_id)
+                    fallback_candidates.append(evaluated)
+                fallback_candidates.sort(
+                    key=lambda c: (
+                        self._verdict_rank((c.get("evaluation") or {}).get("overall_verdict", "fail")),
+                        float((c.get("evaluation") or {}).get("score", 0.0)),
+                        float(c.get("_reflection_score", 0.0)),
+                    ),
+                    reverse=True,
+                )
+                for i, candidate in enumerate(fallback_candidates):
+                    candidate["rank"] = i + 1
+                    candidate.pop("_reflection_score", None)
+                top_candidates = fallback_candidates[:3]
 
         if not top_candidates:
             raise IdeationSeedGenerationError(
@@ -543,17 +631,26 @@ class IdeationAgentV2:
                 "aborting rather than emitting a placeholder."
             )
 
+        evaluated_candidates: list[dict] = []
+        first_plan: dict | None = None
+        for candidate in top_candidates:
+            evaluated, plan_dict = self._evaluate_candidate_entry(candidate, run_id)
+            evaluated_candidates.append(evaluated)
+            if first_plan is None:
+                first_plan = plan_dict
+
         screening = {
             "run_id": run_id,
             "input_mode": "level_2",
+            "ideation_mode": self.ideation_mode,
             "domain": domain,
-            "candidates": top_candidates,
+            "candidates": evaluated_candidates,
         }
         screening_path = settings.topic_screening_path()
         with open(screening_path, "w") as f:
             json.dump(screening, f, indent=2, ensure_ascii=False)
 
-        plan = _build_research_plan(top_candidates[0], run_id)
+        plan = first_plan or {}
         plan_path = settings.research_plan_path()
         os.makedirs(os.path.dirname(plan_path), exist_ok=True)
         with open(plan_path, "w") as f:
@@ -576,7 +673,7 @@ class IdeationAgentV2:
             "total_wallclock_seconds": wallclock,
             "trace_files": [
                 str(settings.ideation_traces_dir() / f"{c.get('topic_id', c.get('reflection_trace_id', '?'))}_trace.json")
-                for c in top_candidates
+                for c in evaluated_candidates
             ],
         }
         summary_path = settings.ideation_run_summary_path()
@@ -587,7 +684,7 @@ class IdeationAgentV2:
         context = {
             "domain": domain,
             "run_id": run_id,
-            "selected_topic": top_candidates[0] if top_candidates else {},
+            "selected_topic": evaluated_candidates[0] if evaluated_candidates else {},
         }
         with open(context_path, "w") as f:
             json.dump(context, f, indent=2, ensure_ascii=False)
@@ -600,65 +697,83 @@ class IdeationAgentV2:
             "degraded_nodes": [],
         }
 
-    def _rank_near_pass_fallbacks(
+    def _emit_level2_outputs_simple(
         self,
-        tentative: list[tuple[SeedCandidate, ReflectionTrace]],
-        rejected: list[tuple[SeedCandidate, ReflectionTrace]],
-    ) -> list[dict]:
-        """Build fallback candidates ranked by gate pass count, then round score.
+        top_candidates: list[dict],
+        all_candidates: list[dict],
+        domain: str,
+        run_id: str,
+        started_at: datetime,
+        wallclock: float,
+    ) -> dict:
+        if not top_candidates:
+            raise IdeationSeedGenerationError(
+                f"No usable topics generated for domain '{domain}' in simple mode."
+            )
 
-        Also marks US-focused topics in the displayed title.
-        """
-        ranked: list[dict] = []
-        for seed, trace in (tentative + rejected):
-            legacy_gates = _build_legacy_gates_map(trace)
-            last_round = trace.rounds[-1] if trace.rounds else None
-            score = last_round.round_score if last_round else 0.0
-            gate_results = last_round.gate_results if last_round else []
-            passed_count = sum(1 for r in gate_results if r.passed)
-            is_us = self._is_us_topic(seed.topic.spatial_scope.geography)
-            base_dict = seed.topic.to_legacy_dict()
-            display_title = base_dict.get("title", "")
-            if is_us:
-                display_title = f"[US] {display_title}"
-            entry = {
-                **base_dict,
-                "title": display_title,
-                "rank": 0,
-                "final_status": trace.final_status.value,
-                "declared_sources": seed.declared_sources,
-                "legacy_six_gates": legacy_gates,
-                "reflection_trace_id": seed.topic.meta.topic_id,
-                "passed_gates_count": passed_count,
-                "is_us_topic": is_us,
-                "_sort_score": score,
-            }
-            if _is_placeholder_candidate(entry):
-                logger.warning(
-                    "Dropping placeholder near-pass candidate: %s",
-                    entry.get("title") or entry.get("topic_id"),
-                )
-                continue
-            ranked.append(entry)
+        evaluated_candidates: list[dict] = []
+        first_plan: dict | None = None
+        for candidate in top_candidates:
+            evaluated, plan_dict = self._evaluate_candidate_entry(candidate, run_id)
+            evaluated_candidates.append(evaluated)
+            if first_plan is None:
+                first_plan = plan_dict
 
-        ranked.sort(
-            key=lambda x: (
-                x.get("passed_gates_count", 0),
-                x.get("_sort_score", 0),
-            ),
-            reverse=True,
-        )
-        for i, c in enumerate(ranked):
-            c["rank"] = i + 1
-            c.pop("_sort_score", None)
-        return ranked
+        screening = {
+            "run_id": run_id,
+            "input_mode": "level_2",
+            "ideation_mode": self.ideation_mode,
+            "domain": domain,
+            "candidates": evaluated_candidates,
+            "all_candidates_count": len(all_candidates),
+        }
+        screening_path = settings.topic_screening_path()
+        with open(screening_path, "w", encoding="utf-8") as f:
+            json.dump(screening, f, indent=2, ensure_ascii=False)
 
-    @staticmethod
-    def _is_us_topic(geography: str | None) -> bool:
-        geo = (geography or "").lower()
-        return geo == "us" or any(
-            token in geo for token in ["united states", "u.s.", "u.s", "usa", "us "]
-        )
+        plan_path = settings.research_plan_path()
+        os.makedirs(os.path.dirname(plan_path), exist_ok=True)
+        with open(plan_path, "w", encoding="utf-8") as f:
+            json.dump(first_plan or {}, f, indent=2, ensure_ascii=False)
+
+        status_counts = {"pass": 0, "warning": 0, "fail": 0}
+        for candidate in all_candidates:
+            verdict = (candidate.get("evaluation") or {}).get("overall_verdict", "fail")
+            if verdict in status_counts:
+                status_counts[verdict] += 1
+
+        summary = {
+            "run_id": run_id,
+            "started_at": started_at.isoformat(),
+            "ended_at": datetime.now(timezone.utc).isoformat(),
+            "input_mode": "level_2",
+            "ideation_mode": self.ideation_mode,
+            "input_summary": domain,
+            "total_topics_attempted": len(all_candidates),
+            "status_breakdown": status_counts,
+            "total_cost_usd": self.budget.snapshot()["per_run_spent_usd"],
+            "total_wallclock_seconds": wallclock,
+        }
+        summary_path = settings.ideation_run_summary_path()
+        with open(summary_path, "w", encoding="utf-8") as f:
+            json.dump(summary, f, indent=2, ensure_ascii=False)
+
+        context_path = settings.research_context_path()
+        context = {
+            "domain": domain,
+            "run_id": run_id,
+            "selected_topic": evaluated_candidates[0] if evaluated_candidates else {},
+        }
+        with open(context_path, "w", encoding="utf-8") as f:
+            json.dump(context, f, indent=2, ensure_ascii=False)
+
+        return {
+            "execution_status": "harvesting",
+            "candidate_topics_path": screening_path,
+            "current_plan_path": plan_path,
+            "research_context_path": context_path,
+            "degraded_nodes": [],
+        }
 
     def run(self, state: dict) -> dict:
         mode = state.get("ideation_mode", "level_2")
@@ -701,26 +816,6 @@ def _load_memory_context(memory: MemoryRetriever, domain: str) -> str:
         return json.dumps(ctx, indent=2, ensure_ascii=False)
     except Exception:
         return "Memory unavailable."
-
-
-def _build_research_plan(candidate: dict, run_id: str) -> dict:
-    return {
-        "project_title": candidate.get("title", "Research Topic"),
-        "run_id": run_id,
-        "study_type": "quantitative_causal",
-        "topic_screening": {
-            "top_candidate_title": candidate.get("title", ""),
-            "legacy_six_gates": candidate.get("legacy_six_gates", {}),
-        },
-        "research_questions": [],
-        "hypotheses": [],
-        "unit_of_analysis": candidate.get("exposure_variable", ""),
-        "outcomes": [{"name": candidate.get("outcome_variable", "")}],
-        "exposures": [{"name": candidate.get("exposure_variable", "")}],
-        "keywords": [],
-        "data_sources": [{"name": s} for s in candidate.get("declared_sources", [])],
-        "methodology": {"identification": candidate.get("method", "")},
-    }
 
 
 def _dict_to_seed_candidate(item: dict, domain: str, idx: int) -> SeedCandidate:

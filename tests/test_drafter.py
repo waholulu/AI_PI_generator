@@ -1,10 +1,11 @@
+import json
 import os
 from typing import Any, Dict
 
 import pytest
 
+from agents import drafter_agent, settings
 from agents.orchestrator import ResearchState
-from agents import drafter_agent
 
 
 class _FakeLLM:
@@ -22,57 +23,72 @@ class _FakeLLM:
 
 def test_drafter_node_offline(monkeypatch: pytest.MonkeyPatch) -> None:
     """Ensure drafter node runs using a mocked LLM and writes a draft."""
-    os.makedirs("config", exist_ok=True)
-    os.makedirs("output", exist_ok=True)
-    os.makedirs("prompts", exist_ok=True)
+    plan = {
+        "run_id": "r1",
+        "project_title": "Test topic",
+        "research_question": "How does X affect Y?",
+        "short_rationale": "A concise rationale about policy relevance.",
+        "geography": "US",
+        "time_window": "2010-2020",
+        "exposure": {"name": "X", "measurement_proxy": "x"},
+        "outcome": {"name": "Y", "measurement_proxy": "y"},
+        "identification": {"primary_method": "fixed_effects", "key_threats": ["confounding"]},
+        "data_sources": [{"name": "Source A", "access_url": "https://example.org/a.csv", "expected_format": "csv"}],
+        "literature_queries": ["x y", "x data", "y data"],
+        "feasibility": {"overall_verdict": "warning"},
+    }
+    plan_path = settings.research_plan_path()
+    os.makedirs(os.path.dirname(plan_path), exist_ok=True)
+    with open(plan_path, "w", encoding="utf-8") as f:
+        json.dump(plan, f)
 
-    with open("config/research_plan.json", "w", encoding="utf-8") as f:
-        f.write('{"keywords": ["test"]}')
-
-    # Minimal literature index file so loader sees something
-    os.makedirs("data/literature", exist_ok=True)
-    with open("data/literature/index.json", "w", encoding="utf-8") as f:
-        f.write("[]")
-
-    with open("prompts/academic_drafter.txt", "w", encoding="utf-8") as f:
-        f.write("Test prompt")
+    index_path = settings.literature_index_path()
+    os.makedirs(os.path.dirname(index_path), exist_ok=True)
+    with open(index_path, "w", encoding="utf-8") as f:
+        json.dump([], f)
 
     # Patch DrafterAgent to use fake LLM instead of real Gemini
-    def _fake_init(self: drafter_agent.DrafterAgent) -> None:
-        self.output_md = "output/Draft_v1.md"
-        self.llm = _FakeLLM()
-
-    monkeypatch.setattr(drafter_agent.DrafterAgent, "__init__", _fake_init)  # type: ignore[arg-type]
+    monkeypatch.setattr(drafter_agent.DrafterAgent, "_init_llm", lambda self: _FakeLLM())  # type: ignore[arg-type]
 
     state = ResearchState(
-        current_plan_path="config/research_plan.json",
-        literature_inventory_path="data/literature/index.json",
+        current_plan_path=plan_path,
+        literature_inventory_path=index_path,
         execution_status="drafting",
     )
     new_state = drafter_agent.drafter_node(state)
 
     assert new_state["execution_status"] == "fetching"
-    assert os.path.exists("output/Draft_v1.md")
-    with open("output/Draft_v1.md", "r", encoding="utf-8") as f:
+    assert os.path.exists(settings.draft_path())
+    with open(settings.draft_path(), "r", encoding="utf-8") as f:
         content = f.read()
-    assert "Test Draft" in content
+    assert "# Research Memo" in content
 
 
 def test_drafter_node_fallback_on_llm_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     """Ensure drafter writes fallback content when LLM raises an exception."""
-    os.makedirs("config", exist_ok=True)
-    os.makedirs("output", exist_ok=True)
-    os.makedirs("prompts", exist_ok=True)
+    plan = {
+        "run_id": "r1",
+        "project_title": "Fallback topic",
+        "research_question": "How does X affect Y?",
+        "short_rationale": "A concise rationale about policy relevance.",
+        "geography": "US",
+        "time_window": "2010-2020",
+        "exposure": {"name": "X", "measurement_proxy": "x"},
+        "outcome": {"name": "Y", "measurement_proxy": "y"},
+        "identification": {"primary_method": "fixed_effects", "key_threats": ["confounding"]},
+        "data_sources": [{"name": "Source A", "access_url": "https://example.org/a.csv", "expected_format": "csv"}],
+        "literature_queries": ["x y", "x data", "y data"],
+        "feasibility": {"overall_verdict": "warning"},
+    }
+    plan_path = settings.research_plan_path()
+    os.makedirs(os.path.dirname(plan_path), exist_ok=True)
+    with open(plan_path, "w", encoding="utf-8") as f:
+        json.dump(plan, f)
 
-    with open("config/research_plan.json", "w", encoding="utf-8") as f:
-        f.write('{"keywords": ["test"]}')
-
-    os.makedirs("data/literature", exist_ok=True)
-    with open("data/literature/index.json", "w", encoding="utf-8") as f:
-        f.write("[]")
-
-    with open("prompts/academic_drafter.txt", "w", encoding="utf-8") as f:
-        f.write("Test prompt")
+    index_path = settings.literature_index_path()
+    os.makedirs(os.path.dirname(index_path), exist_ok=True)
+    with open(index_path, "w", encoding="utf-8") as f:
+        json.dump([], f)
 
     class _BrokenLLM:
         def __init__(self, *_: Any, **__: Any) -> None:  # pragma: no cover
@@ -81,24 +97,62 @@ def test_drafter_node_fallback_on_llm_failure(monkeypatch: pytest.MonkeyPatch) -
         def invoke(self, _: Dict[str, Any]) -> Any:
             raise RuntimeError("Simulated LLM failure")
 
-    def _failing_init(self: drafter_agent.DrafterAgent) -> None:
-        self.output_md = "output/Draft_v1.md"
-        self.llm = _BrokenLLM()
-
-    monkeypatch.setattr(drafter_agent.DrafterAgent, "__init__", _failing_init)  # type: ignore[arg-type]
+    monkeypatch.setattr(drafter_agent.DrafterAgent, "_init_llm", lambda self: _BrokenLLM())  # type: ignore[arg-type]
 
     state = ResearchState(
-        current_plan_path="config/research_plan.json",
-        literature_inventory_path="data/literature/index.json",
+        current_plan_path=plan_path,
+        literature_inventory_path=index_path,
         execution_status="drafting",
     )
     new_state = drafter_agent.drafter_node(state)
 
     # Fallback must still transition state and write a file
     assert new_state["execution_status"] == "fetching"
-    assert os.path.exists("output/Draft_v1.md")
-    with open("output/Draft_v1.md", "r", encoding="utf-8") as f:
+    assert os.path.exists(settings.draft_path())
+    with open(settings.draft_path(), "r", encoding="utf-8") as f:
         content = f.read()
-    # The known fallback sentinel from DrafterAgent.run
-    assert "Fallback Draft" in content or "Failed to reach API" in content
+    assert "literature evidence is limited" in content
+
+
+def test_drafter_fallback_has_eight_sections(monkeypatch: pytest.MonkeyPatch) -> None:
+    plan = {
+        "run_id": "r2",
+        "project_title": "Section test",
+        "research_question": "How does X affect Y?",
+        "short_rationale": "A concise rationale about policy relevance.",
+        "geography": "US",
+        "time_window": "2010-2020",
+        "exposure": {"name": "X", "measurement_proxy": "x"},
+        "outcome": {"name": "Y", "measurement_proxy": "y"},
+        "identification": {"primary_method": "fixed_effects", "key_threats": ["confounding"]},
+        "data_sources": [{"name": "Source A", "access_url": "https://example.org/a.csv", "expected_format": "csv"}],
+        "literature_queries": ["x y", "x data", "y data"],
+        "feasibility": {"overall_verdict": "warning"},
+    }
+    plan_path = settings.research_plan_path()
+    os.makedirs(os.path.dirname(plan_path), exist_ok=True)
+    with open(plan_path, "w", encoding="utf-8") as f:
+        json.dump(plan, f)
+
+    class _BrokenLLM:
+        def invoke(self, _: Dict[str, Any]) -> Any:
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(drafter_agent.DrafterAgent, "_init_llm", lambda self: _BrokenLLM())  # type: ignore[arg-type]
+    out = drafter_agent.drafter_node(ResearchState(current_plan_path=plan_path, execution_status="drafting"))
+    assert out["execution_status"] == "fetching"
+
+    with open(settings.draft_path(), "r", encoding="utf-8") as f:
+        memo = f.read()
+    for heading in [
+        "## 1. Proposed Title",
+        "## 2. Research Question",
+        "## 3. Why This Matters",
+        "## 4. Data and Measurement",
+        "## 5. Empirical Strategy",
+        "## 6. Related Literature",
+        "## 7. Main Risks",
+        "## 8. Recommended Next Steps",
+    ]:
+        assert heading in memo
 

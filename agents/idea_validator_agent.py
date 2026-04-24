@@ -27,6 +27,9 @@ from agents.logging_config import get_logger
 from agents.memory_retriever import MemoryRetriever
 from agents.openalex_utils import search_openalex
 from agents.orchestrator import ResearchState
+from agents.candidate_evaluator import evaluate_candidate
+from agents.research_plan_builder import build_research_plan_from_candidate
+from models.research_plan_schema import ResearchPlan
 
 logger = get_logger(__name__)
 
@@ -397,6 +400,122 @@ class IdeaValidatorAgent:
             screening_data = json.load(f)
 
         candidates = screening_data.get("candidates", [])
+        if candidates and all(isinstance(c, dict) and c.get("evaluation") for c in candidates):
+            logger.info("topic_screening already contains evaluation; writing compatibility report only.")
+            validated_ideas = []
+            for idea in candidates:
+                eval_data = idea.get("evaluation") or {}
+                validated_ideas.append(
+                    IdeaValidation(
+                        title=idea.get("title", ""),
+                        rank=idea.get("rank", 0),
+                        brief_rationale=idea.get("brief_rationale", ""),
+                        novelty=NoveltyResult(
+                            verdict=str(eval_data.get("novelty_verdict") or "unknown"),
+                            similar_papers=[],
+                            search_queries_used=[],
+                            was_llm_fallback=False,
+                        ),
+                        data_availability=[],
+                        overall_verdict=(
+                            "passed"
+                            if eval_data.get("overall_verdict") == "pass"
+                            else "failed"
+                            if eval_data.get("overall_verdict") == "fail"
+                            else "warning"
+                        ),
+                        failure_reasons=list(eval_data.get("reasons") or []),
+                    )
+                )
+
+            validation_path = settings.idea_validation_path()
+            report = ValidationReport(
+                run_id=screening_data.get("run_id", "unknown"),
+                validated_ideas=validated_ideas,
+                substitutions_made=0,
+                final_top3_titles=[v.title for v in validated_ideas if v.overall_verdict != "failed"][:3],
+            )
+            os.makedirs(os.path.dirname(validation_path), exist_ok=True)
+            with open(validation_path, "w", encoding="utf-8") as f:
+                json.dump(report.model_dump(), f, indent=2, ensure_ascii=False)
+            return {
+                "validation_report_path": validation_path,
+                "execution_status": "harvesting",
+                "degraded_nodes": self._degraded_nodes,
+            }
+
+        if candidates:
+            logger.info("topic_screening missing evaluation fields; running CandidateEvaluator wrapper.")
+            evaluated_candidates = []
+            run_id = screening_data.get("run_id", "unknown")
+            for idx, candidate in enumerate(candidates):
+                candidate = dict(candidate)
+                if not candidate.get("rank"):
+                    candidate["rank"] = idx + 1
+                plan = build_research_plan_from_candidate(candidate, evaluation=None, run_id=run_id)
+                plan_validated = ResearchPlan.model_validate(plan.model_dump())
+                evaluation = evaluate_candidate(candidate, plan_validated, llm=self.llm)
+                candidate["evaluation"] = evaluation.model_dump()
+                evaluated_candidates.append(candidate)
+
+            evaluated_candidates.sort(
+                key=lambda c: (
+                    {"pass": 2, "warning": 1, "fail": 0}.get(
+                        (c.get("evaluation") or {}).get("overall_verdict", "fail"), 0
+                    ),
+                    float((c.get("evaluation") or {}).get("score", 0.0)),
+                ),
+                reverse=True,
+            )
+            for i, candidate in enumerate(evaluated_candidates):
+                candidate["rank"] = i + 1
+
+            screening_data["candidates"] = evaluated_candidates
+            with open(screening_path, "w", encoding="utf-8") as f:
+                json.dump(screening_data, f, indent=2, ensure_ascii=False)
+
+            validation_path = settings.idea_validation_path()
+            validated_ideas = []
+            for idea in evaluated_candidates:
+                eval_data = idea.get("evaluation") or {}
+                validated_ideas.append(
+                    IdeaValidation(
+                        title=idea.get("title", ""),
+                        rank=idea.get("rank", 0),
+                        brief_rationale=idea.get("brief_rationale", ""),
+                        novelty=NoveltyResult(
+                            verdict=str(eval_data.get("novelty_verdict") or "unknown"),
+                            similar_papers=[],
+                            search_queries_used=[],
+                            was_llm_fallback=False,
+                        ),
+                        data_availability=[],
+                        overall_verdict=(
+                            "passed"
+                            if eval_data.get("overall_verdict") == "pass"
+                            else "failed"
+                            if eval_data.get("overall_verdict") == "fail"
+                            else "warning"
+                        ),
+                        failure_reasons=list(eval_data.get("reasons") or []),
+                    )
+                )
+
+            report = ValidationReport(
+                run_id=screening_data.get("run_id", "unknown"),
+                validated_ideas=validated_ideas,
+                substitutions_made=0,
+                final_top3_titles=[v.title for v in validated_ideas if v.overall_verdict != "failed"][:3],
+            )
+            os.makedirs(os.path.dirname(validation_path), exist_ok=True)
+            with open(validation_path, "w", encoding="utf-8") as f:
+                json.dump(report.model_dump(), f, indent=2, ensure_ascii=False)
+            return {
+                "validation_report_path": validation_path,
+                "execution_status": "harvesting",
+                "degraded_nodes": self._degraded_nodes,
+            }
+
         backup_pool = list(screening_data.get("backup_candidates", []))
         run_id = screening_data.get("run_id", "unknown")
         domain = state.get("domain_input", "")

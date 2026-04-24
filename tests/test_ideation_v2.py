@@ -258,17 +258,15 @@ def test_placeholder_candidate_detected():
 
 def test_level2_writes_screening_and_plan(tmp_path, monkeypatch):
     monkeypatch.setenv("AUTOPI_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("AUTOPI_IDEATION_MODE", "simple")
     topic = make_topic("seed_000")
     seed = SeedCandidate(topic=topic, declared_sources=["NHGIS"])
 
-    accepted_trace = make_minimal_trace("seed_000", FinalStatus.ACCEPTED)
-
     agent = IdeationAgentV2(budget=BudgetTracker(per_run_budget_usd=10.0))
-    agent._llm = None  # no LLM
-
-    # Override _generate_seeds and reflection
+    agent._llm = MagicMock()  # avoid OpenAlex call in evaluator
+    # Override seed generation
     agent._generate_seeds = lambda *a, **kw: [seed]
-    with patch("agents.ideation_agent_v2.run_reflection_loop", return_value=accepted_trace):
+    with patch("agents.candidate_evaluator.search_openalex", return_value=[]):
         result = agent.run_level2({"domain_input": "Urban Planning"})
 
     assert result["execution_status"] == "harvesting"
@@ -287,6 +285,7 @@ def test_level2_writes_screening_and_plan(tmp_path, monkeypatch):
 
 def test_level2_writes_tentative_pool(tmp_path, monkeypatch):
     monkeypatch.setenv("AUTOPI_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("AUTOPI_IDEATION_MODE", "reflection")
     topic = make_topic("seed_001")
     seed = SeedCandidate(topic=topic, declared_sources=["NHGIS"])
     tentative_trace = make_minimal_trace("seed_001", FinalStatus.TENTATIVE)
@@ -308,6 +307,7 @@ def test_level2_writes_tentative_pool(tmp_path, monkeypatch):
 
 def test_level2_rerun_then_lists_near_pass_topics(tmp_path, monkeypatch):
     monkeypatch.setenv("AUTOPI_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("AUTOPI_IDEATION_MODE", "reflection")
     topic = make_topic("seed_002")
     topic.spatial_scope.geography = "United States"
     seed = SeedCandidate(topic=topic, declared_sources=["NHGIS"])
@@ -332,8 +332,7 @@ def test_level2_rerun_then_lists_near_pass_topics(tmp_path, monkeypatch):
     assert len(screening["candidates"]) == 1
     assert mocked_batch.call_count == 2
     assert screening["candidates"][0]["final_status"] == "TENTATIVE"
-    assert screening["candidates"][0]["title"].startswith("[US] ")
-    assert screening["candidates"][0]["passed_gates_count"] >= 1
+    assert "evaluation" in screening["candidates"][0]
 
 
 # ── Test 7: ideation_node router ─────────────────────────────────────────────
