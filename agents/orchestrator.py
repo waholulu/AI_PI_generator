@@ -38,6 +38,9 @@ class _Module1State(ResearchState, total=False):
     legacy_ideation: bool          # True → use IdeationAgentV0 (legacy path)
     user_topic_path: Optional[str] # Path to user-supplied topic YAML (Level 1 mode)
     ideation_mode: str             # "level_1" | "level_2"
+    budget_override_usd: Optional[float]
+    skip_reflection: bool
+    hitl_interruption: dict
 
 
 def _build_checkpointer():

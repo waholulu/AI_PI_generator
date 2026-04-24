@@ -84,6 +84,64 @@ def compute_budget_stats(traces: list[dict]) -> dict:
     return {"total_usd": total, "avg_usd": avg, "max_usd": max_cost, "n": len(costs)}
 
 
+def compute_cost_histogram(traces: list[dict]) -> list[tuple[str, int]]:
+    buckets = [
+        (0.0, 0.05, "[0,0.05)"),
+        (0.05, 0.10, "[0.05,0.1)"),
+        (0.10, 0.20, "[0.1,0.2)"),
+        (0.20, 0.50, "[0.2,0.5)"),
+        (0.50, 1.00, "[0.5,1.0)"),
+        (1.00, float("inf"), "[1.0,+inf)"),
+    ]
+    counts = {label: 0 for _, _, label in buckets}
+    for trace in traces:
+        c = float(trace.get("total_cost_usd", 0.0) or 0.0)
+        for low, high, label in buckets:
+            if low <= c < high:
+                counts[label] += 1
+                break
+    return [(label, counts[label]) for _, _, label in buckets]
+
+
+def compute_free_form_rationale_top(traces: list[dict], limit: int = 30) -> list[tuple[str, int]]:
+    counter: Counter = Counter()
+    for trace in traces:
+        for rnd in trace.get("rounds", []):
+            for op in rnd.get("applied_operations", []):
+                if op.get("op") != "free_form":
+                    continue
+                rationale = (
+                    op.get("params", {}).get("rationale")
+                    or op.get("rationale")
+                    or ""
+                ).strip()
+                if rationale:
+                    counter[rationale] += 1
+    return counter.most_common(limit)
+
+
+def compute_op_to_accept_rate(traces: list[dict]) -> list[tuple[str, int, int, float]]:
+    op_stats: dict[str, list[int]] = defaultdict(lambda: [0, 0])  # total, accepted
+    for trace in traces:
+        final = trace.get("final_status")
+        ops = set()
+        for rnd in trace.get("rounds", []):
+            for op in rnd.get("applied_operations", []):
+                op_name = op.get("op")
+                if op_name:
+                    ops.add(op_name)
+        for op_name in ops:
+            op_stats[op_name][0] += 1
+            if final == "ACCEPTED":
+                op_stats[op_name][1] += 1
+    rows = []
+    for op, (total, accepted) in op_stats.items():
+        rate = accepted / total if total else 0.0
+        rows.append((op, total, accepted, rate))
+    rows.sort(key=lambda x: x[3], reverse=True)
+    return rows
+
+
 def compute_free_form_completeness(traces: list[dict]) -> dict:
     has_title = 0
     has_abstract = 0
@@ -128,6 +186,9 @@ def render_report(
     budget: dict,
     free_form: dict,
     oscillation: dict,
+    cost_hist: list[tuple[str, int]],
+    free_form_top: list[tuple[str, int]],
+    op_accept_rates: list[tuple[str, int, int, float]],
 ) -> str:
     n = len(traces)
     lines = [
@@ -191,6 +252,30 @@ def render_report(
         lines.append(f"- **Max single topic:** ${budget['max_usd']:.4f}")
         lines.append(f"- **Topics tracked:** {budget['n']}")
         lines.append("")
+        lines.append("### Per-topic cost histogram")
+        max_count = max([c for _, c in cost_hist], default=1)
+        for label, count in cost_hist:
+            bar = "#" * (0 if max_count == 0 else int((count / max_count) * 30))
+            lines.append(f"- {label:>10} | {bar} ({count})")
+        lines.append("")
+
+    lines += ["## Free-form rationale top list", ""]
+    if free_form_top:
+        for rationale, count in free_form_top:
+            lines.append(f"- ({count}) {rationale}")
+    else:
+        lines.append("_No free_form rationale found._")
+    lines.append("")
+
+    lines += ["## Refine op -> final ACCEPT rate", ""]
+    if op_accept_rates:
+        lines.append("| Operation | Traces | ACCEPTED | Accept Rate |")
+        lines.append("|-----------|--------|----------|-------------|")
+        for op, total, accepted, rate in op_accept_rates:
+            lines.append(f"| `{op}` | {total} | {accepted} | {rate:.1%} |")
+    else:
+        lines.append("_No refine operations recorded._")
+    lines.append("")
 
     return "\n".join(lines)
 
@@ -204,7 +289,8 @@ def main():
     traces = load_traces(traces_dir)
 
     if len(traces) < 10:
-        print(f"Only {len(traces)} traces found (< 10). Report will include a notice.", file=sys.stderr)
+        print(f"Only {len(traces)} traces found (< 10). Skip diagnostic report generation.", file=sys.stderr)
+        sys.exit(0)
 
     gate_rates = compute_gate_pass_rates(traces)
     refine_ops = compute_refine_op_frequency(traces)
@@ -212,10 +298,13 @@ def main():
     budget = compute_budget_stats(traces)
     free_form = compute_free_form_completeness(traces)
     oscillation = compute_oscillation_stats(traces)
+    cost_hist = compute_cost_histogram(traces)
+    free_form_top = compute_free_form_rationale_top(traces)
+    op_accept_rates = compute_op_to_accept_rate(traces)
 
     report = render_report(
         traces, gate_rates, refine_ops, status_breakdown,
-        budget, free_form, oscillation,
+        budget, free_form, oscillation, cost_hist, free_form_top, op_accept_rates,
     )
 
     out_path = Path(args.output) if args.output else (global_output_dir() / "diagnostic_report.md")

@@ -62,13 +62,17 @@ def make_topic(
         identification=IdentificationStrategy(
             primary=method,
             key_threats=["reverse_causality", "omitted_variable"],
-            mitigations=["lagged_exposure", "city_fe", "robustness_check"],
+            mitigations={
+                "reverse_causality": "lagged_exposure",
+                "omitted_variable": "city_fe",
+            },
         ),
         contribution=Contribution(
             primary=ContributionPrimary.NOVEL_CONTEXT,
             statement="First causal estimate using US Census panel data.",
             gap_addressed="Prior studies rely on cross-sectional designs.",
         ),
+        target_venues=["Nature Cities"],
         free_form_title="Street connectivity and obesity in US cities",
     )
 

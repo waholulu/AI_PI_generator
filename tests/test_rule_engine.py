@@ -36,7 +36,7 @@ def make_topic(
     end: int = 2020,
     method: IdentificationPrimary = IdentificationPrimary.FE,
     key_threats: list[str] | None = None,
-    mitigations: list[str] | None = None,
+    mitigations: dict[str, str] | None = None,
 ) -> Topic:
     return Topic(
         meta=TopicMeta(topic_id=topic_id),
@@ -63,7 +63,7 @@ def make_topic(
         identification=IdentificationStrategy(
             primary=method,
             key_threats=key_threats if key_threats is not None else ["reverse_causality"],
-            mitigations=mitigations if mitigations is not None else ["lagged_exposure"],
+            mitigations=mitigations if mitigations is not None else {"reverse_causality": "lagged_exposure"},
         ),
         contribution=Contribution(
             primary=ContributionPrimary.NOVEL_CONTEXT,
@@ -109,11 +109,11 @@ class TestG2ScaleAlignment:
         assert r.refinable is False
         assert "rank_diff=5" in r.reason
 
-    def test_unknown_unit_skips_gracefully(self, engine):
+    def test_unknown_unit_blocks_with_actionable_reason(self, engine):
         t = make_topic(x_spatial="nonexistent_unit", y_spatial="tract")
         r = engine.check_G2_scale_alignment(t)
-        assert r.passed is True
-        assert "unknown_spatial_unit_skip" in r.reason
+        assert r.passed is False
+        assert "unknown_spatial_unit" in r.reason
 
     def test_point_vs_country_fails(self, engine):
         # point (1) vs country (10) → diff = 9 → fail
@@ -141,7 +141,7 @@ class TestG3DataAvailability:
         t = make_topic()
         r = engine.check_G3_data_availability(t, ["TOTALLY_UNKNOWN_DB_XYZ"])
         assert r.passed is False
-        assert "no_sources_in_catalog" in r.reason
+        assert "source_not_in_catalog:TOTALLY_UNKNOWN_DB_XYZ" in r.reason
 
     def test_year_before_coverage_fails(self, engine):
         # NHGIS starts 1790; request 1700-1800 should fail on end > y_max only if year_max < 1800
@@ -169,6 +169,21 @@ class TestG3DataAvailability:
         t = make_topic(start=2010, end=2020, x_spatial="point", y_spatial="point")
         r = engine.check_G3_data_availability(t, ["osm"])
         assert r.passed is True
+
+    def test_g3_partial_recognition_now_fails(self, engine):
+        t = make_topic()
+        r = engine.check_G3_data_availability(
+            t, ["NHGIS", "UNKNOWN_SOURCE_X", "UNKNOWN_SOURCE_Y"]
+        )
+        assert r.passed is False
+        assert "source_not_in_catalog:UNKNOWN_SOURCE_X" in r.reason
+        assert "source_not_in_catalog:UNKNOWN_SOURCE_Y" in r.reason
+
+    def test_g3_checks_x_y_spatial_units(self, engine):
+        t = make_topic(x_spatial="block", y_spatial="tract")
+        r = engine.check_G3_data_availability(t, ["NHGIS"])
+        assert r.passed is False
+        assert any("unit_gap" in issue for issue in r.details["coverage_issues"])
 
 
 # ── G6: automation_feasibility ────────────────────────────────────────────────
@@ -212,19 +227,22 @@ class TestG4ThreatCoverage:
     def test_full_coverage_passes(self, engine):
         t = make_topic(
             key_threats=["reverse_causality", "selection_bias"],
-            mitigations=["lagged_exposure", "psm_matching"],
+            mitigations={
+                "reverse_causality": "lagged_exposure",
+                "selection_bias": "psm_matching",
+            },
         )
         # lagged_exposure ~ reverse_causality? ratio may be low; use explicit matches
         t2 = make_topic(
             key_threats=["confounding"],
-            mitigations=["confounding_adjustment"],
+            mitigations={"confounding": "confounding_adjustment"},
         )
         r = engine.check_G4_threat_coverage(t2)
         assert r.passed is True
         assert r.refinable is True
 
     def test_no_threats_skips(self, engine):
-        t = make_topic(key_threats=[], mitigations=["lagged_exposure"])
+        t = make_topic(key_threats=[], mitigations={})
         r = engine.check_G4_threat_coverage(t)
         assert r.passed is True
         assert "no_threats_declared_skip" in r.reason
@@ -242,7 +260,7 @@ class TestG4ThreatCoverage:
         # 1 threat covered, 2 total → 50% < 80%
         t = make_topic(
             key_threats=["confounding", "selection_bias", "omitted_variable"],
-            mitigations=["confounding_correction"],
+            mitigations={"confounding": "confounding_correction"},
         )
         r = engine.check_G4_threat_coverage(t)
         # coverage_ratio depends on fuzzy match; with exact match on first threat only

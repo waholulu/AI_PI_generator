@@ -2,12 +2,8 @@
 Rule engine for deterministic (zero-LLM-cost) gate checks in Module 1.
 
 Implements G2 (scale_alignment), G3 (data_availability), G6 (automation_feasibility),
-and the G4 threat-coverage helper.  Hard-blocker gates return refinable=False; a
+and the G4 threat-coverage helper. Hard-blocker gates return refinable=False; a
 single hard-blocker failure triggers immediate REJECTED in the reflection loop.
-
-YAML configs are loaded lazily and cached; if any config file is missing the
-corresponding gate returns passed=True with reason="config_unavailable_skip"
-so the pipeline degrades gracefully rather than crashing.
 """
 
 from __future__ import annotations
@@ -125,8 +121,8 @@ class RuleEngine:
         if not units:
             return GateResult(
                 gate_id="G2", name="scale_alignment",
-                passed=True, refinable=False,
-                reason="config_unavailable_skip",
+                passed=False, refinable=False,
+                reason="config_unavailable_blocking",
             )
 
         x_unit = topic.exposure_X.spatial_unit.lower().strip()
@@ -142,8 +138,8 @@ class RuleEngine:
                 unknown.append(y_unit)
             return GateResult(
                 gate_id="G2", name="scale_alignment",
-                passed=True, refinable=False,
-                reason=f"unknown_spatial_unit_skip: {unknown}",
+                passed=False, refinable=False,
+                reason=f"unknown_spatial_unit: {unknown}",
                 details={"x_unit": x_unit, "y_unit": y_unit},
             )
 
@@ -162,18 +158,13 @@ class RuleEngine:
     def check_G3_data_availability(
         self, topic: Topic, declared_sources: list[str]
     ) -> GateResult:
-        """Hard-blocker: at least one declared source must be in catalog and cover the topic.
-
-        Only sources that ARE in the catalog are checked for year/spatial coverage.
-        Sources not found in the catalog are noted but do not cause a hard block as
-        long as at least one declared source is recognized.
-        """
+        """Hard-blocker: all declared sources must be cataloged and cover the topic."""
         sources = self._load_data_sources()
         if not sources:
             return GateResult(
                 gate_id="G3", name="data_availability",
-                passed=True, refinable=False,
-                reason="config_unavailable_skip",
+                passed=False, refinable=False,
+                reason="catalog_unavailable_blocking",
             )
 
         if not declared_sources:
@@ -192,12 +183,15 @@ class RuleEngine:
 
         t_start = topic.temporal_scope.start_year
         t_end = topic.temporal_scope.end_year
-        t_spatial = topic.spatial_scope.spatial_unit.lower().strip()
+        topic_units = [
+            topic.exposure_X.spatial_unit.lower().strip(),
+            topic.outcome_Y.spatial_unit.lower().strip(),
+            topic.spatial_scope.spatial_unit.lower().strip(),
+        ]
 
         coverage_issues: list[str] = []   # year/spatial mismatches on recognized sources
-        not_in_catalog: list[str] = []    # unknown source names (soft warning only)
+        not_in_catalog: list[str] = []    # unknown source names (hard fail)
         auth_warnings: list[str] = []
-        recognized_count = 0
 
         for src in declared_sources:
             # Fuzzy catalog lookup
@@ -212,9 +206,8 @@ class RuleEngine:
                     ]
                 else:
                     not_in_catalog.append(src)
+                    coverage_issues.append(f"source_not_in_catalog:{src}")
                     continue
-
-            recognized_count += 1
 
             if entry.get("auth_required", False):
                 auth_warnings.append(src)
@@ -227,25 +220,25 @@ class RuleEngine:
             if y_max is not None and t_end > y_max:
                 coverage_issues.append(f"year_gap:{src} ends {y_max} < requested {t_end}")
 
-            # Spatial unit coverage (warn only if list is non-empty)
+            # Spatial unit coverage across X/Y/scope units
             entry_units = [u.lower() for u in entry.get("spatial_units", [])]
-            if entry_units and not self._fuzzy_match(t_spatial, entry_units, threshold=0.7):
-                coverage_issues.append(f"unit_gap:{src} covers {entry_units} not {t_spatial}")
+            if entry_units:
+                for t_unit in topic_units:
+                    if not self._fuzzy_match(t_unit, entry_units, threshold=0.7):
+                        coverage_issues.append(
+                            f"unit_gap:{src} covers {entry_units} not {t_unit}"
+                        )
 
         if auth_warnings:
             logger.warning("G3: auth_required sources (warn only): %s", auth_warnings)
         if not_in_catalog:
-            logger.warning("G3: sources not in catalog (soft warning): %s", not_in_catalog)
+            logger.warning("G3: sources not in catalog: %s", not_in_catalog)
 
-        # Hard-block only if: no recognized source at all, or a recognized source has coverage issues
-        if recognized_count == 0:
-            reason = "no_sources_in_catalog: " + "; ".join(not_in_catalog)
-            passed = False
-        elif coverage_issues:
+        if coverage_issues:
             reason = "; ".join(coverage_issues)
             passed = False
         else:
-            reason = "ok" if not not_in_catalog else f"ok (unknown_sources_ignored: {not_in_catalog})"
+            reason = "ok"
             passed = True
 
         return GateResult(
@@ -325,15 +318,8 @@ class RuleEngine:
                 reason="no_threats_declared_skip",
             )
 
-        # Fuzzy matching: a mitigation "covers" a threat if similarity >= 0.5
-        covered = 0
-        for threat in threats:
-            for mitigation in mitigations:
-                ratio = difflib.SequenceMatcher(None, threat.lower(), mitigation.lower()).ratio()
-                if ratio >= 0.5:
-                    covered += 1
-                    break
-
+        covered_set = set(threats) & set(mitigations.keys())
+        covered = len(covered_set)
         ratio = covered / len(threats)
         threshold = 0.80
         passed = ratio >= threshold
@@ -341,7 +327,7 @@ class RuleEngine:
             gate_id="G4", name="identification_validity",
             passed=passed, refinable=True,
             reason="ok" if passed else f"coverage={ratio:.2%} < threshold={threshold:.0%}",
-            details={"threats": threats, "mitigations": mitigations,
+            details={"threats": threats, "mitigations": mitigations, "covered_threats": sorted(covered_set),
                      "covered": covered, "coverage_ratio": ratio},
         )
 

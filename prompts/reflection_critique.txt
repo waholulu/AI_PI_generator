@@ -8,6 +8,8 @@
 #   {key_threats}  {mitigations}                 (G4)
 #   {contribution_statement}  {gap_addressed}    (G7)
 #   {total_hits}  {four_tuple_match_count}        (G5)
+#   {oa_top_papers_formatted}                     (G5)
+#   {target_venues}                               (G7)
 #
 # Literal braces in the reply-format line are escaped as {{ and }}.
 
@@ -70,6 +72,9 @@ G5:
       Papers matching on ALL FOUR dimensions
       (exposure family × outcome family × geography type × identification method): {four_tuple_match_count}
 
+    Top OpenAlex papers (for concrete novelty assessment):
+    {oa_top_papers_formatted}
+
     Score novelty given these search results:
       5 = Genuinely novel combination; 0 four-tuple matches; high contribution potential
       4 = Very few matches (1–2); topic adds a clear marginal contribution to an emerging area
@@ -87,6 +92,7 @@ G7:
 
     Contribution statement : "{contribution_statement}"
     Gap addressed          : "{gap_addressed}"
+    Target venues          : {target_venues}
 
     Score how clearly this contribution advances the literature:
       5 = Precisely names the knowledge gap, the proposed advance, and why it matters for theory or policy

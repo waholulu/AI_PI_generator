@@ -165,7 +165,12 @@ def _persist_enriched_top3(
 # ---------------------------------------------------------------------------
 
 class IdeationAgentV0:
-    def __init__(self, use_strict_models: bool = False):
+    def __init__(self, use_strict_models: bool = False, **kwargs):
+        if kwargs:
+            logger.warning(
+                "IdeationAgentV0 ignoring unsupported kwargs: %s",
+                sorted(kwargs.keys()),
+            )
         fast_model = os.getenv("GEMINI_FAST_MODEL", "gemini-2.0-flash-lite")
         pro_model = os.getenv("GEMINI_PRO_MODEL", "gemini-2.5-pro")
         self.fast_llm = ChatGoogleGenerativeAI(model=fast_model, temperature=0.7)

@@ -86,7 +86,65 @@ def _stream_phase(graph, input_state, config, seen_nodes: set, total_nodes: int)
 def _check_hitl_interrupt(graph, config) -> bool:
     """Return True if the graph is currently paused at an interrupt point."""
     snapshot = graph.get_state(config)
+    values = getattr(snapshot, "values", {}) or {}
+    if values.get("hitl_interruption"):
+        return True
     return bool(snapshot.next)
+
+
+def _render_level1_hitl_card(current_state: dict, initial_state: dict) -> str:
+    inter = current_state.get("hitl_interruption", {}) or {}
+    topic_path = current_state.get("user_topic_path", initial_state.get("user_topic_path", "your_topic.yaml"))
+    domain = current_state.get("domain_input", initial_state.get("domain_input", "your domain"))
+
+    failed_gates = inter.get("failed_gates", []) or []
+    failed_gates_section = (
+        "Failed Gates:\n  - " + "\n  - ".join(str(g) for g in failed_gates)
+        if failed_gates
+        else "Failed Gates:\n  - (none provided)"
+    )
+    suggested_ops = inter.get("suggested_operations", []) or []
+    if suggested_ops:
+        lines = []
+        for op in suggested_ops:
+            if isinstance(op, dict):
+                lines.append(f"  - {op.get('op', 'unknown')}: {op.get('description', '')}".rstrip(": "))
+            else:
+                lines.append(f"  - {op}")
+        suggested_ops_section = "Suggested Operations:\n" + "\n".join(lines)
+    else:
+        suggested_ops_section = "Suggested Operations:\n  - (none)"
+
+    diff_from_original = inter.get("diff_from_original", {}) or {}
+    if diff_from_original:
+        diff_section = "Diff from original:\n" + "\n".join(
+            f"  - {k}: {v}" for k, v in diff_from_original.items()
+        )
+    else:
+        diff_section = "Diff from original:\n  - (none)"
+
+    template_path = settings.prompts_dir() / "level1_hitl_card.txt"
+    try:
+        template = template_path.read_text(encoding="utf-8")
+    except Exception:
+        template = (
+            "Level1 HITL Required\n"
+            "Topic: {topic_title}\nTopic ID: {topic_id}\nStatus: {status}\n\n"
+            "{failed_gates_section}\n{suggested_ops_section}\n{diff_section}\n"
+            "Re-run: python main.py --mode level_1 --user-topic {topic_path}\n"
+            "Switch: python main.py --mode level_2 --domain \"{domain}\"\n"
+        )
+
+    return template.format(
+        topic_title=inter.get("topic_title", "(unknown)"),
+        topic_id=inter.get("topic_id", "(unknown)"),
+        status=inter.get("kind", "hitl_required"),
+        failed_gates_section=failed_gates_section,
+        suggested_ops_section=suggested_ops_section,
+        diff_section=diff_section,
+        topic_path=topic_path,
+        domain=domain,
+    )
 
 
 def _display_validation_report() -> list:
@@ -132,6 +190,42 @@ def _display_validation_report() -> list:
                 _log(f"      \u26a0 {reason}", level="HITL")
     print()
     return ideas
+
+
+def _render_level1_hitl_card(current_state: dict) -> None:
+    hitl = current_state.get("hitl_interruption") or {}
+    topic_path = current_state.get("user_topic_path", "<topic.yaml>")
+    domain = current_state.get("domain_input", "")
+    failed = hitl.get("failed_gates") or []
+    suggested = hitl.get("suggested_operations") or []
+    diff = hitl.get("diff_from_original") or {}
+
+    failed_section = "Failed gates: " + (", ".join(failed) if failed else "(none)")
+    suggested_section = "Suggested ops:\n" + (
+        "\n".join(f"  - {op}" for op in suggested) if suggested else "  (none)"
+    )
+    diff_section = "Diff from original:\n" + (
+        json.dumps(diff, ensure_ascii=False, indent=2) if diff else "  (none)"
+    )
+
+    try:
+        tpl_path = settings.prompts_dir() / "level1_hitl_card.txt"
+        tpl = tpl_path.read_text(encoding="utf-8")
+        rendered = tpl.format(
+            topic_title=hitl.get("topic_title", "N/A"),
+            topic_id=hitl.get("topic_id", "N/A"),
+            status=hitl.get("kind", "hitl_required"),
+            failed_gates_section=failed_section,
+            suggested_ops_section=suggested_section,
+            diff_section=diff_section,
+            topic_path=topic_path,
+            domain=domain,
+        )
+        print(rendered)
+    except Exception:
+        _log("Level 1 HITL required.", level="HITL")
+        _log(failed_section, level="HITL")
+        _log(suggested_section, level="HITL")
 
 
 def _prompt_topic_choice(ideas: list, allow_regenerate: bool = True) -> int:
@@ -334,6 +428,8 @@ def main():
         "execution_status": "starting",
         "legacy_ideation": args.legacy_ideation,
         "ideation_mode": args.mode,
+        "budget_override_usd": args.budget_override_usd,
+        "skip_reflection": args.skip_reflection,
     }
     if args.user_topic:
         import os as _os

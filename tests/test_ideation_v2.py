@@ -69,7 +69,7 @@ def make_topic(topic_id: str = "t001") -> Topic:
         identification=IdentificationStrategy(
             primary=IdentificationPrimary.FE,
             key_threats=["confounding"],
-            mitigations=["confounding_control"],
+            mitigations={"confounding": "confounding_control"},
         ),
         contribution=Contribution(
             primary=ContributionPrimary.CAUSAL_REFINEMENT,
@@ -93,17 +93,27 @@ def make_minimal_trace(
     ]
     rnd = RoundRecord(
         round_num=1,
+        pre_refine_topic_snapshot={},
         gate_results=gr,
+        openalex_queries_log=[],
+        llm_critique_raw={},
         llm_calls=[],
         decision=status.value,
         applied_operations=[],
+        slot_diff={},
         four_tuple_sig="abc123",
         round_score=4.0,
+        budget_snapshot={},
+        wallclock_seconds=0.0,
     )
     return ReflectionTrace(
         topic_id=topic_id,
+        seed_version={},
         final_status=status,
         rounds=[rnd],
+        reject_reasons=[],
+        convergence={},
+        design_alternatives_considered=[],
         total_cost_usd=0.01,
         total_wallclock_seconds=0.5,
     )
@@ -114,7 +124,7 @@ def make_minimal_trace(
 def test_build_legacy_gates_map_has_six_fields():
     trace = make_minimal_trace("t001")
     result = _build_legacy_gates_map(trace)
-    for key in ["impact", "data", "novelty", "feasibility", "gap", "contribution"]:
+    for key in ["impact", "quantitative", "novelty", "publishability", "automation", "data_availability"]:
         assert key in result
 
 
@@ -124,7 +134,7 @@ def test_build_legacy_gates_map_reflects_gate_pass():
     ]
     trace = make_minimal_trace("t001", gate_results=gr)
     result = _build_legacy_gates_map(trace)
-    assert result["data"] is False
+    assert result["data_availability"] is False
 
 
 def test_build_legacy_gates_map_includes_full_seven_gates():

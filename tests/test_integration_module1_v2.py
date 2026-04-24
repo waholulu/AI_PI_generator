@@ -53,13 +53,31 @@ def make_accepted_trace(topic_id: str) -> ReflectionTrace:
         GateResult("G7", "contribution_clarity", True, True, "ok", score=4, max_score=5),
     ]
     rnd = RoundRecord(
-        round_num=1, gate_results=gr, llm_calls=[],
-        decision="ACCEPTED", applied_operations=[],
-        four_tuple_sig="sig1", round_score=4.0,
+        round_num=1,
+        pre_refine_topic_snapshot={},
+        gate_results=gr,
+        openalex_queries_log=[],
+        llm_critique_raw={},
+        llm_calls=[],
+        decision="ACCEPTED",
+        applied_operations=[],
+        slot_diff={},
+        four_tuple_sig="sig1",
+        round_score=4.0,
+        budget_snapshot={},
+        wallclock_seconds=0.0,
+        g5_skipped=False,
     )
     return ReflectionTrace(
-        topic_id=topic_id, final_status=FinalStatus.ACCEPTED,
-        rounds=[rnd], total_cost_usd=0.01, total_wallclock_seconds=0.1,
+        topic_id=topic_id,
+        seed_version={},
+        final_status=FinalStatus.ACCEPTED,
+        rounds=[rnd],
+        reject_reasons=[],
+        convergence={},
+        design_alternatives_considered=[],
+        total_cost_usd=0.01,
+        total_wallclock_seconds=0.1,
     )
 
 
@@ -74,13 +92,31 @@ def make_tentative_trace(topic_id: str) -> ReflectionTrace:
         GateResult("G7", "contribution_clarity", False, True, "score=2<4", score=2, max_score=5),
     ]
     rnd = RoundRecord(
-        round_num=1, gate_results=gr, llm_calls=[],
-        decision="TENTATIVE", applied_operations=[],
-        four_tuple_sig="sig2", round_score=1.75,
+        round_num=1,
+        pre_refine_topic_snapshot={},
+        gate_results=gr,
+        openalex_queries_log=[],
+        llm_critique_raw={},
+        llm_calls=[],
+        decision="TENTATIVE",
+        applied_operations=[],
+        slot_diff={},
+        four_tuple_sig="sig2",
+        round_score=1.75,
+        budget_snapshot={},
+        wallclock_seconds=0.0,
+        g5_skipped=False,
     )
     return ReflectionTrace(
-        topic_id=topic_id, final_status=FinalStatus.TENTATIVE,
-        rounds=[rnd], total_cost_usd=0.01, total_wallclock_seconds=0.1,
+        topic_id=topic_id,
+        seed_version={},
+        final_status=FinalStatus.TENTATIVE,
+        rounds=[rnd],
+        reject_reasons=[],
+        convergence={},
+        design_alternatives_considered=[],
+        total_cost_usd=0.01,
+        total_wallclock_seconds=0.1,
     )
 
 
@@ -108,7 +144,7 @@ def make_seed(topic_id: str = "s001") -> SeedCandidate:
         identification=IdentificationStrategy(
             primary=IdentificationPrimary.FE,
             key_threats=["confounding"],
-            mitigations=["fe_control"],
+            mitigations={"confounding": "fixed effects controls"},
         ),
         contribution=Contribution(
             primary=ContributionPrimary.CAUSAL_REFINEMENT,
