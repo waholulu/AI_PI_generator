@@ -2,7 +2,7 @@ import json
 import os
 
 from agents import settings
-from agents.hitl_helpers import apply_idea_selection
+from agents.hitl_helpers import apply_idea_selection, load_validated_topics
 
 
 def test_apply_idea_selection_updates_screening_and_plan(tmp_path, monkeypatch) -> None:
@@ -43,5 +43,101 @@ def test_apply_idea_selection_updates_screening_and_plan(tmp_path, monkeypatch) 
         with open(plan_path, "r", encoding="utf-8") as f:
             updated_plan = json.load(f)
         assert updated_plan["project_title"] == "Topic B"
+    finally:
+        settings.deactivate_run_scope(token)
+
+
+def _write_validation(report: dict) -> None:
+    path = settings.idea_validation_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(report, f)
+
+
+def _write_screening_titles(titles: list) -> None:
+    path = settings.topic_screening_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(
+            {"run_id": "r", "candidates": [{"title": t, "rank": i + 1} for i, t in enumerate(titles)]},
+            f,
+        )
+
+
+def test_load_validated_topics_aligns_with_screening_after_substitution(tmp_path, monkeypatch):
+    """Pre-substitution failed originals must be dropped, substitutes preserved."""
+    monkeypatch.setenv("AUTOPI_DATA_ROOT", str(tmp_path))
+    token = settings.activate_run_scope("r1")
+    try:
+        # After substitution: candidates list now has Sub-A in slot 0
+        _write_screening_titles(["Sub-A", "B"])
+        _write_validation({
+            "validated_ideas": [
+                {"title": "A", "overall_verdict": "failed"},
+                {"title": "Sub-A", "overall_verdict": "warning"},
+                {"title": "B", "overall_verdict": "passed"},
+            ],
+        })
+        ideas = load_validated_topics()
+        assert [i["title"] for i in ideas] == ["Sub-A", "B"]
+    finally:
+        settings.deactivate_run_scope(token)
+
+
+def test_load_validated_topics_returns_failed_when_all_failed(tmp_path, monkeypatch):
+    """When every candidate failed validation (no substitution possible), the
+    picker still returns all ideas so the user can choose or regenerate."""
+    monkeypatch.setenv("AUTOPI_DATA_ROOT", str(tmp_path))
+    token = settings.activate_run_scope("r2")
+    try:
+        _write_screening_titles(["A", "B", "C"])
+        _write_validation({
+            "validated_ideas": [
+                {"title": "A", "overall_verdict": "failed"},
+                {"title": "B", "overall_verdict": "failed"},
+                {"title": "C", "overall_verdict": "failed"},
+            ],
+        })
+        ideas = load_validated_topics()
+        assert [i["title"] for i in ideas] == ["A", "B", "C"]
+    finally:
+        settings.deactivate_run_scope(token)
+
+
+def test_load_validated_topics_aligns_with_failed_substitutes(tmp_path, monkeypatch):
+    """When substitution happened but substitutes also failed, the picker
+    should list the substitutes (matching topic_screening) — not the originals."""
+    monkeypatch.setenv("AUTOPI_DATA_ROOT", str(tmp_path))
+    token = settings.activate_run_scope("r3")
+    try:
+        _write_screening_titles(["Sub-A", "Sub-B", "C"])
+        _write_validation({
+            "validated_ideas": [
+                {"title": "A", "overall_verdict": "failed"},
+                {"title": "Sub-A", "overall_verdict": "failed"},
+                {"title": "B", "overall_verdict": "failed"},
+                {"title": "Sub-B", "overall_verdict": "failed"},
+                {"title": "C", "overall_verdict": "failed"},
+            ],
+        })
+        ideas = load_validated_topics()
+        assert [i["title"] for i in ideas] == ["Sub-A", "Sub-B", "C"]
+    finally:
+        settings.deactivate_run_scope(token)
+
+
+def test_load_validated_topics_falls_back_when_screening_missing(tmp_path, monkeypatch):
+    """No topic_screening.json → fall back to non-failed-only filter."""
+    monkeypatch.setenv("AUTOPI_DATA_ROOT", str(tmp_path))
+    token = settings.activate_run_scope("r4")
+    try:
+        _write_validation({
+            "validated_ideas": [
+                {"title": "A", "overall_verdict": "failed"},
+                {"title": "B", "overall_verdict": "passed"},
+            ],
+        })
+        ideas = load_validated_topics()
+        assert [i["title"] for i in ideas] == ["B"]
     finally:
         settings.deactivate_run_scope(token)

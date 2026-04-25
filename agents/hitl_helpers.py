@@ -82,10 +82,19 @@ def apply_idea_selection(idea_index: int) -> str | None:
 
 
 def load_validated_topics(validation_path: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Load validated ideas from idea_validation.json.
+    """Load validated ideas aligned with topic_screening.json candidate order.
 
     Returns list of dicts with title, brief_rationale, rank, overall_verdict, etc.
-    Returns empty list if file is missing or unreadable.
+    Indices match topic_screening.json candidates so apply_idea_selection(i)
+    operates on the entry shown at position i.
+
+    The validator appends both pre-substitution originals (verdict="failed") and
+    their substitutes to validated_ideas. We dedupe by title against the current
+    topic_screening.candidates list, preferring the substitute when both exist.
+
+    Falls back to non-failed-only filtering when screening data is unavailable,
+    and finally to all ideas — never returns empty when validation_ideas exist,
+    so the HITL picker can always offer a choice (even if all are flagged).
     """
     path = validation_path or settings.idea_validation_path()
     if not os.path.exists(path):
@@ -93,15 +102,50 @@ def load_validated_topics(validation_path: Optional[str] = None) -> List[Dict[st
     try:
         with open(path, "r", encoding="utf-8") as f:
             report = json.load(f)
-        ideas = report.get("validated_ideas", [])
-        # Exclude entries that failed validation (pre-substitution originals).
-        # The validator appends both the failed idea and its substitute, so
-        # keeping only non-failed entries aligns indices with the updated
-        # topic_screening.json candidates list.
-        return [i for i in ideas if i.get("overall_verdict") != "failed"]
     except (json.JSONDecodeError, OSError) as exc:
         logger.warning("Failed to load validation report from %s: %s", path, exc)
         return []
+
+    ideas = report.get("validated_ideas", []) or []
+    if not ideas:
+        return []
+
+    screening_titles = _load_screening_titles()
+    if screening_titles:
+        by_title: Dict[str, Dict[str, Any]] = {}
+        for idea in ideas:
+            title = str(idea.get("title", ""))
+            if not title:
+                continue
+            prev = by_title.get(title)
+            if prev is None:
+                by_title[title] = idea
+            elif (
+                prev.get("overall_verdict") == "failed"
+                and idea.get("overall_verdict") != "failed"
+            ):
+                by_title[title] = idea
+        aligned = [by_title[t] for t in screening_titles if t in by_title]
+        if aligned:
+            return aligned
+
+    non_failed = [i for i in ideas if i.get("overall_verdict") != "failed"]
+    if non_failed:
+        return non_failed
+    return ideas
+
+
+def _load_screening_titles() -> List[str]:
+    """Return the ordered list of titles from topic_screening.json (or [])."""
+    screening_path = settings.topic_screening_path()
+    if not os.path.exists(screening_path):
+        return []
+    try:
+        with open(screening_path, "r", encoding="utf-8") as f:
+            screening = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return []
+    return [str(c.get("title", "")) for c in screening.get("candidates", [])]
 
 
 def record_rejected_topics(
