@@ -1,0 +1,124 @@
+# Skill registry — used by G6 (automation_feasibility)
+# status: available | planned | unavailable
+# Each skill maps to automated pipeline capabilities
+
+skills:
+  - id: census_extract
+    description: Extract and reshape US Census / IPUMS tabular data
+    status: available
+
+  - id: spatial_join
+    description: Spatial join of point/polygon datasets using geopandas
+    status: available
+
+  - id: osm_extract
+    description: Download and parse OpenStreetMap PBF/GeoJSON data
+    status: available
+
+  - id: spatial_analysis
+    description: Buffer, overlay, and network analysis via geopandas/networkx
+    status: available
+
+  - id: gtfs_parse
+    description: Parse GTFS feeds and compute transit access metrics
+    status: available
+
+  - id: api_fetch
+    description: HTTP API data retrieval with pagination and rate limiting
+    status: available
+
+  - id: csv_load
+    description: Load and clean CSV/TSV tabular data via pandas
+    status: available
+
+  - id: spatial_interpolation
+    description: IDW or kriging interpolation of point measurements to area
+    status: available
+
+  - id: raster_analysis
+    description: Raster zonal statistics via rasterio/xarray
+    status: available
+
+  - id: db_query
+    description: Query relational databases (PostgreSQL/SQLite)
+    status: available
+
+  - id: survey_weight
+    description: Apply survey sample weights for nationally representative estimates
+    status: available
+
+  - id: text_analysis
+    description: NLP text classification and embedding extraction
+    status: available
+
+  - id: nlp
+    description: Natural language processing (tokenization, sentiment, NER)
+    status: available
+
+  - id: diff_in_diff
+    description: Difference-in-differences regression (two-way FE, staggered)
+    status: available
+
+  - id: regression_discontinuity
+    description: RDD estimation (sharp/fuzzy) with bandwidth selection
+    status: available
+
+  - id: instrumental_variable
+    description: 2SLS / IV estimation with first-stage diagnostics
+    status: available
+
+  - id: propensity_score_matching
+    description: PSM with caliper matching and balance diagnostics
+    status: available
+
+  - id: fixed_effects
+    description: Panel fixed-effects regression via linearmodels/statsmodels
+    status: available
+
+  - id: synthetic_control
+    description: Synthetic control method implementation
+    status: planned
+
+  - id: event_study
+    description: Event-study plots and dynamic treatment effect estimation
+    status: available
+
+  - id: causal_forest
+    description: Generalized random forest / causal forest (via econml/grf)
+    status: planned
+
+  - id: ols_regression
+    description: OLS / WLS regression with robust standard errors
+    status: available
+
+  - id: spatial_regression
+    description: Spatial lag / error models via pysal/spreg
+    status: available
+
+  - id: survival_analysis
+    description: Cox proportional hazards and accelerated failure time models
+    status: available
+
+  - id: machine_learning
+    description: Supervised ML pipeline (sklearn, XGBoost, LightGBM)
+    status: available
+
+  - id: descriptive
+    description: Descriptive statistics, tabulation, and visualization
+    status: available
+
+# Mapping: IdentificationPrimary enum value → required skill id
+identification_skill_map:
+  diff_in_diff: diff_in_diff
+  regression_discontinuity: regression_discontinuity
+  instrumental_variable: instrumental_variable
+  propensity_score_matching: propensity_score_matching
+  fixed_effects: fixed_effects
+  synthetic_control: synthetic_control
+  event_study: event_study
+  causal_forest: causal_forest
+  ols_regression: ols_regression
+  spatial_regression: spatial_regression
+  survival_analysis: survival_analysis
+  machine_learning: machine_learning
+  descriptive: descriptive

@@ -51,10 +51,31 @@ def _fake_download(url: str, dest: str) -> Dict[str, Any]:
     return {"status": "pdf_downloaded", "path": dest, "reason": ""}
 
 
-def _setup_dirs_and_plan(plan_content: str = '{"keywords": ["artificial intelligence", "urban"]}') -> None:
+def _setup_dirs_and_plan(plan_content: str | None = None) -> None:
     os.makedirs("config", exist_ok=True)
     os.makedirs("data/literature", exist_ok=True)
     os.makedirs("output", exist_ok=True)
+    if plan_content is None:
+        plan_content = json.dumps(
+            {
+                "run_id": "r1",
+                "project_title": "AI and urban outcomes",
+                "research_question": "How does AI adoption affect urban outcomes?",
+                "short_rationale": "Practical policy relevance with public data.",
+                "geography": "US",
+                "time_window": "2010-2020",
+                "exposure": {"name": "AI adoption", "measurement_proxy": "ai index"},
+                "outcome": {"name": "Urban outcomes", "measurement_proxy": "outcome index"},
+                "identification": {"primary_method": "fixed_effects", "key_threats": ["confounding"]},
+                "data_sources": [{"name": "Source", "access_url": "https://example.org/source.csv", "expected_format": "csv"}],
+                "literature_queries": [
+                    "ai adoption urban outcomes fixed effects",
+                    "urban ai policy outcomes",
+                    "ai urban panel data",
+                ],
+                "feasibility": {"overall_verdict": "warning"},
+            }
+        )
     with open("config/research_plan.json", "w", encoding="utf-8") as f:
         f.write(plan_content)
 
@@ -69,7 +90,7 @@ def test_literature_node_offline(monkeypatch: pytest.MonkeyPatch) -> None:
 
     paper = _fake_paper()
 
-    def _fake_search(query: str, limit: int = 20, from_year: int | None = None) -> List[Dict[str, Any]]:
+    def _fake_search(query: str, limit: int = 20, from_year: int | None = None, **kwargs) -> List[Dict[str, Any]]:
         assert query  # ensure query was built
         return [paper]
 
@@ -100,7 +121,7 @@ def test_literature_multi_query_deduplication(monkeypatch: pytest.MonkeyPatch) -
     call_count = {"n": 0}
     shared_paper = _fake_paper(paper_id="W_SHARED", title="Shared Paper")
 
-    def _fake_search(query: str, limit: int = 20, from_year: int | None = None) -> List[Dict[str, Any]]:
+    def _fake_search(query: str, limit: int = 20, from_year: int | None = None, **kwargs) -> List[Dict[str, Any]]:
         call_count["n"] += 1
         return [shared_paper]
 
@@ -122,7 +143,7 @@ def test_literature_multi_query_collects_distinct_papers(monkeypatch: pytest.Mon
     """Distinct papers from different queries should all be collected."""
     _setup_dirs_and_plan()
 
-    def _fake_search(query: str, limit: int = 20, from_year: int | None = None) -> List[Dict[str, Any]]:
+    def _fake_search(query: str, limit: int = 20, from_year: int | None = None, **kwargs) -> List[Dict[str, Any]]:
         return [_fake_paper(paper_id=f"W_{query.replace(' ', '_')}", title=f"Paper for {query}")]
 
     monkeypatch.setattr(openalex_utils, "search_openalex", _fake_search)
@@ -151,7 +172,7 @@ def test_literature_queries_used_written_to_context(monkeypatch: pytest.MonkeyPa
 
     paper = _fake_paper()
 
-    def _fake_search(query: str, limit: int = 20, from_year: int | None = None) -> List[Dict[str, Any]]:
+    def _fake_search(query: str, limit: int = 20, from_year: int | None = None, **kwargs) -> List[Dict[str, Any]]:
         return [paper]
 
     monkeypatch.setattr(openalex_utils, "search_openalex", _fake_search)
@@ -182,7 +203,7 @@ def test_literature_fallback_when_planner_disabled(monkeypatch: pytest.MonkeyPat
 
     paper = _fake_paper()
 
-    def _fake_search(query: str, limit: int = 20, from_year: int | None = None) -> List[Dict[str, Any]]:
+    def _fake_search(query: str, limit: int = 20, from_year: int | None = None, **kwargs) -> List[Dict[str, Any]]:
         return [paper]
 
     monkeypatch.setattr(openalex_utils, "search_openalex", _fake_search)
@@ -198,3 +219,25 @@ def test_literature_fallback_when_planner_disabled(monkeypatch: pytest.MonkeyPat
     with open("data/literature/index.json", "r", encoding="utf-8") as f:
         inventory = json.load(f)
     assert len(inventory) >= 1
+
+
+def test_literature_cards_include_matched_query(monkeypatch: pytest.MonkeyPatch) -> None:
+    _setup_dirs_and_plan()
+    paper = _fake_paper()
+
+    def _fake_search(query: str, limit: int = 20, from_year: int | None = None, **kwargs) -> List[Dict[str, Any]]:
+        return [paper]
+
+    monkeypatch.setattr(openalex_utils, "search_openalex", _fake_search)
+    monkeypatch.setattr(literature_agent, "download_pdf", _fake_download)
+
+    state = ResearchState(current_plan_path="config/research_plan.json", execution_status="harvesting")
+    literature_agent.literature_node(state)
+
+    with open("data/literature/index.json", "r", encoding="utf-8") as f:
+        inventory = json.load(f)
+    assert inventory
+    assert "matched_query" in inventory[0]
+    assert inventory[0]["matched_query"]
+    assert "relevance_to_plan" in inventory[0]
+    assert "source_database" in inventory[0]

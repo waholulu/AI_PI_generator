@@ -1,0 +1,38 @@
+# Reflection loop configuration for Module 1 upgrade
+reflection:
+  max_rounds: 3
+  max_num_seeds: 30
+  max_parallel: 5
+  min_rounds_before_stop: 2
+  early_stop_delta_threshold: 0.5
+  oscillation_window: 3          # consecutive rounds with same 4-tuple → force TENTATIVE
+
+models:
+  seed_generation: "gemini-2.0-flash-lite"
+  critique: "gemini-2.0-flash-lite"
+  refine: "gemini-1.5-pro-latest"
+
+openalex:
+  top_k: 50
+  rate_limit_rps: 8
+  email_env: OPENALEX_EMAIL
+
+cost_guardrails:
+  per_run_budget_usd: 1.50
+  per_topic_budget_usd: 0.10
+  emit_warning_at_ratio: 0.70
+  disable_new_at_ratio: 0.90
+  kill_switch_at_ratio: 1.00
+  per_round_max_tokens_in: 8000
+
+anti_oscillation:
+  max_signature_repeats: 3
+  max_op_reversals: 2
+
+feature_flags:
+  use_slot_schema: true
+  use_seven_gates: true
+  use_reflection_loop: true
+  use_budget_tracker: true
+  enable_tentative_pool: true
+  legacy_fallback_on_error: true

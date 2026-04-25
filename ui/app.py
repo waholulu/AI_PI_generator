@@ -8,7 +8,12 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from agents.orchestrator import build_orchestrator, ResearchState
 from agents.hitl_helpers import (
+    apply_idea_selection,
     load_validated_topics,
+    load_tentative_topics,
+    promote_tentative,
+    kill_tentative,
+    rerun_tentative_reflection,
     record_rejected_topics,
     regenerate_topics,
     MAX_REGENERATION_ROUNDS,
@@ -19,7 +24,7 @@ st.set_page_config(page_title="Auto-PI Monitoring UI", layout="wide")
 st.title("Auto-PI: Multi-Agent Research Scaffold UI")
 st.markdown("Automating ideation, literature gathering, drafting, and data collection.")
 
-# Initialize session state for the graph thread
+# Initialize session state
 if "thread_id" not in st.session_state:
     st.session_state.thread_id = "demo_thread_1"
 if "app_graph" not in st.session_state:
@@ -30,37 +35,41 @@ if "regeneration_round" not in st.session_state:
 graph = st.session_state.app_graph
 config = {"configurable": {"thread_id": st.session_state.thread_id}}
 
-col1, col2 = st.columns([1, 2])
+# ── Three-tab layout ──────────────────────────────────────────────────────────
+tab_control, tab_monitor, tab_tentative = st.tabs([
+    "Control Panel",
+    "Pipeline State Monitor",
+    "TENTATIVE Review",
+])
 
-with col1:
+# ── Tab 1: Control Panel ──────────────────────────────────────────────────────
+with tab_control:
     st.header("Control Panel")
     domain = st.text_input("Research Domain:", "GeoAI and Urban Planning")
-    
+
     if st.button("Start / Resume Pipeline"):
         with st.spinner("Running Agent Workflow..."):
             initial_state = ResearchState(domain_input=domain, execution_status="starting")
-            
-            # Stream the events
+
             for event in graph.stream(initial_state, config, stream_mode="values"):
                 st.session_state.current_event = event
-            
+
             st.success("Pipeline Step Complete or Needs Intervention!")
 
-with col2:
+# ── Tab 2: Pipeline State Monitor ────────────────────────────────────────────
+with tab_monitor:
     st.header("Pipeline State Monitor")
-    
-    # Retrieve current state from checkpointer
+
     try:
         current_state = graph.get_state(config)
         state_values = current_state.values
         next_nodes = current_state.next
-        
+
         st.subheader("Current Execution Status")
         st.info(state_values.get("execution_status", "Not Started"))
-        
+
         if next_nodes:
             st.warning(f"Workflow paused. Next executing node: **{next_nodes[0]}**")
-            # If paused before literature, show the topic screening results
             if "literature" in next_nodes:
                 ideas = load_validated_topics()
                 regen_round = st.session_state.regeneration_round
@@ -123,63 +132,21 @@ with col2:
                                     except (OSError, json.JSONDecodeError):
                                         screening_topics = []
 
-                                domain = state_values.get("domain_input", "")
+                                domain_val = state_values.get("domain_input", "")
                                 new_round = regen_round + 1
                                 record_rejected_topics(
-                                    screening_topics or ideas, domain, new_round,
+                                    screening_topics or ideas, domain_val, new_round,
                                 )
                                 regenerate_topics(dict(state_values))
                                 st.session_state.regeneration_round = new_round
                             st.success("选题已重新生成，请再次审阅。")
                             st.rerun()
                         else:
-                            # User picked a topic — apply selection + resume
                             with st.spinner("应用选题并恢复工作流..."):
-                                if selected_index != 0:
-                                    # Rotate selected idea to rank-1 in topic_screening.json
-                                    from agents import settings as _settings
-                                    screening_path = _settings.topic_screening_path()
-                                    context_path = _settings.research_context_path()
-                                    plan_path = _settings.research_plan_path()
-                                    try:
-                                        with open(screening_path, "r", encoding="utf-8") as f:
-                                            screening = json.load(f)
-                                        cands = screening.get("candidates", [])
-                                        if selected_index < len(cands):
-                                            picked = cands.pop(selected_index)
-                                            cands.insert(0, picked)
-                                            for j, c in enumerate(cands):
-                                                c["rank"] = j + 1
-                                            screening["candidates"] = cands
-                                            with open(screening_path, "w", encoding="utf-8") as f:
-                                                json.dump(screening, f, indent=2, ensure_ascii=False)
-                                            selected_title = picked.get("title", "")
-                                            if os.path.exists(context_path):
-                                                with open(context_path, "r", encoding="utf-8") as f:
-                                                    ctx = json.load(f)
-                                                if isinstance(ctx, dict):
-                                                    ctx["selected_topic"] = {
-                                                        "title": selected_title,
-                                                        "score": picked.get("final_score", picked.get("initial_score")),
-                                                        "quantitative_specs": picked.get("quantitative_specs", {}),
-                                                        "data_sources": picked.get("data_sources", []),
-                                                        "publishability": picked.get("publishability", ""),
-                                                        "selection_overridden": True,
-                                                    }
-                                                    with open(context_path, "w", encoding="utf-8") as f:
-                                                        json.dump(ctx, f, indent=2, ensure_ascii=False)
-                                            if os.path.exists(plan_path):
-                                                with open(plan_path, "r", encoding="utf-8") as f:
-                                                    plan = json.load(f)
-                                                plan["project_title"] = selected_title
-                                                plan["topic_screening"] = {
-                                                    "top_candidate_title": selected_title,
-                                                    "manually_selected": True,
-                                                }
-                                                with open(plan_path, "w", encoding="utf-8") as f:
-                                                    json.dump(plan, f, indent=2, ensure_ascii=False)
-                                    except Exception as exc:
-                                        st.error(f"应用选题失败: {exc}")
+                                selected_title = apply_idea_selection(selected_index)
+                                if not selected_title:
+                                    st.error("应用选题失败")
+                                    st.stop()
 
                                 for event in graph.stream(None, config, stream_mode="values"):
                                     pass
@@ -189,7 +156,84 @@ with col2:
 
         st.subheader("Files Generated (Pointers)")
         st.json(state_values)
-        
+
     except Exception as e:
         st.write("No active pipeline data available or checkpointer error.")
         st.write(str(e))
+
+# ── Tab 3: TENTATIVE Review ───────────────────────────────────────────────────
+with tab_tentative:
+    st.header("TENTATIVE Review")
+    st.markdown(
+        "Topics that failed ≥ 1 refinable gate but did not hit a hard-blocker are "
+        "held here for human review. You can **Promote** (push to rank-1 candidate), "
+        "**Kill** (send to graveyard), or **Re-run** (trigger one more reflection round)."
+    )
+
+    pool = load_tentative_topics()
+
+    if st.button("Refresh", key="refresh_tentative"):
+        st.rerun()
+
+    if not pool:
+        st.info("No TENTATIVE topics pending review.")
+    else:
+        st.write(f"**{len(pool)} topic(s) pending review:**")
+
+        tentative_domain = st.text_input(
+            "Domain (required for Kill → graveyard):", "Urban Planning", key="tent_domain"
+        )
+
+        for i, entry in enumerate(pool):
+            title = entry.get("title") or entry.get("topic_id", f"Topic {i+1}")
+            failed = entry.get("failed_gates", [])
+            score = entry.get("legacy_six_gates", {})
+            rerun_status = entry.get("last_rerun_status", "")
+
+            with st.expander(f"[{i+1}] {title}", expanded=True):
+                col_info, col_actions = st.columns([2, 1])
+
+                with col_info:
+                    st.markdown(f"**Topic ID:** `{entry.get('topic_id', '?')}`")
+                    if failed:
+                        st.markdown(f"**Failed gates:** {', '.join(failed)}")
+                    if rerun_status:
+                        st.markdown(f"**Last rerun status:** `{rerun_status}`")
+
+                    seven_gates = score.get("full_seven_gates", {})
+                    if seven_gates:
+                        gate_rows = []
+                        for gid, gdata in seven_gates.items():
+                            gate_name = gdata.get("gate", gid)
+                            gate_pass = "✅" if gdata.get("passed") else "❌"
+                            gate_score = gdata.get("score")
+                            score_str = f" (score={gate_score}/5)" if gate_score is not None else ""
+                            gate_rows.append(f"- {gate_pass} **{gate_name}**{score_str}")
+                        st.markdown("\n".join(gate_rows))
+
+                with col_actions:
+                    if st.button("Promote", key=f"promote_{i}"):
+                        ok = promote_tentative(i)
+                        if ok:
+                            st.success(f"'{title}' promoted to rank-1 candidate.")
+                        else:
+                            st.error("Promote failed — index may have changed.")
+                        st.rerun()
+
+                    if st.button("Kill", key=f"kill_{i}"):
+                        ok = kill_tentative(i, domain=tentative_domain or "unknown")
+                        if ok:
+                            st.success(f"'{title}' sent to graveyard.")
+                        else:
+                            st.error("Kill failed — index may have changed.")
+                        st.rerun()
+
+                    if st.button("Re-run Reflection", key=f"rerun_{i}"):
+                        with st.spinner("Running one reflection round..."):
+                            updated = rerun_tentative_reflection(i)
+                        if updated:
+                            new_status = updated.get("last_rerun_status", "unknown")
+                            st.success(f"Rerun complete. New status: **{new_status}**")
+                        else:
+                            st.error("Rerun failed.")
+                        st.rerun()

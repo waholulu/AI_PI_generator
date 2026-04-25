@@ -103,7 +103,10 @@ class KeywordPlanner:
         )
         self._llm: Optional[Any] = None
         if self._enabled and ChatGoogleGenerativeAI is not None:
-            self._llm = ChatGoogleGenerativeAI(model=model_name, temperature=0.3)
+            try:
+                self._llm = ChatGoogleGenerativeAI(model=model_name, temperature=0.3)
+            except Exception:
+                self._enabled = False
 
     # ------------------------------------------------------------------
     # Public API

@@ -1,0 +1,20 @@
+You are drafting a practical Research Memo for an early-stage empirical project.
+
+Output in markdown with EXACTLY these sections:
+
+# Research Memo
+## 1. Proposed Title
+## 2. Research Question
+## 3. Why This Matters
+## 4. Data and Measurement
+## 5. Empirical Strategy
+## 6. Related Literature
+## 7. Main Risks
+## 8. Recommended Next Steps
+
+Rules:
+- Use only information present in PLAN_JSON, EVIDENCE_CARDS_JSON, and DATA_ACCESS_REPORT_JSON.
+- Only cite papers that appear in EVIDENCE_CARDS_JSON.
+- Never fabricate DOI, author names, paper titles, journals, or years.
+- If literature evidence is sparse or missing, explicitly state: "literature evidence is limited".
+- Keep each section concise and decision-oriented.

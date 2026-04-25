@@ -773,6 +773,46 @@ function renderStatusTab(el, run) {
 // ── HITL actions ─────────────────────────────────────────────────────────────
 const MAX_REGEN_ROUNDS = 3;
 
+// Align validated ideas with topic_screening.candidates so the picker index
+// matches what apply_idea_selection() will operate on. Mirrors the backend
+// helper in agents/hitl_helpers.py: dedupe by title (substitute beats failed
+// original), fall back to non-failed only, last-resort to all entries — never
+// returns empty when the validation report has any ideas.
+async function alignIdeasWithScreening(runId, allIdeas) {
+  if (!Array.isArray(allIdeas) || allIdeas.length === 0) return [];
+  let screeningTitles = [];
+  try {
+    const url = `/runs/${runId}/outputs/${encodePath('output/topic_screening.json')}`;
+    const res = await fetch(url);
+    if (res.ok) {
+      const data = await res.json();
+      const candidates = Array.isArray(data.candidates) ? data.candidates : [];
+      screeningTitles = candidates.map(c => String(c.title || ''));
+    }
+  } catch (_) { /* fall through */ }
+
+  if (screeningTitles.length) {
+    const byTitle = new Map();
+    for (const idea of allIdeas) {
+      const title = String(idea.title || '');
+      if (!title) continue;
+      const prev = byTitle.get(title);
+      if (!prev) {
+        byTitle.set(title, idea);
+      } else if (prev.overall_verdict === 'failed' && idea.overall_verdict !== 'failed') {
+        byTitle.set(title, idea);
+      }
+    }
+    const aligned = screeningTitles
+      .filter(t => byTitle.has(t))
+      .map(t => byTitle.get(t));
+    if (aligned.length) return aligned;
+  }
+
+  const nonFailed = allIdeas.filter(idea => idea.overall_verdict !== 'failed');
+  return nonFailed.length ? nonFailed : allIdeas;
+}
+
 async function renderHitlPicker(run) {
   const container = document.getElementById('hitlPicker');
   if (!container) return;
@@ -788,8 +828,8 @@ async function renderHitlPicker(run) {
     const res = await fetch(url);
     if (!res.ok) throw new Error(res.statusText);
     const data = await res.json();
-    ideas = (Array.isArray(data.validated_ideas) ? data.validated_ideas : [])
-      .filter(idea => idea.overall_verdict !== 'failed');
+    const allIdeas = Array.isArray(data.validated_ideas) ? data.validated_ideas : [];
+    ideas = await alignIdeasWithScreening(run.run_id, allIdeas);
   } catch (e) {
     container.innerHTML = `
       <div style="color:#f87171">加载候选选题失败：${escHtml(e.message)}</div>
