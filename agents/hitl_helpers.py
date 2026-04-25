@@ -99,9 +99,19 @@ def apply_idea_selection_by_candidate_id(candidate_id: str) -> str | None:
             idx
             for idx, candidate in enumerate(candidates)
             if str(candidate.get("candidate_id", "")).strip() == candidate_id
+            or str(candidate.get("topic_id", "")).strip() == candidate_id
         ),
         None,
     )
+    if selected_index is None and candidate_id.startswith("legacy_"):
+        # API list endpoint may synthesize legacy IDs when screening candidates
+        # do not carry a canonical candidate_id.
+        suffix = candidate_id.removeprefix("legacy_")
+        if suffix.isdigit():
+            legacy_index = int(suffix) - 1
+            if 0 <= legacy_index < len(candidates):
+                selected_index = legacy_index
+
     if selected_index is None:
         return None
 

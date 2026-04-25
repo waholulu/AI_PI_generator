@@ -85,3 +85,31 @@ def test_select_candidate_by_id_endpoint(monkeypatch, tmp_path) -> None:
     response = asyncio.run(server.select_candidate_by_id(run_id, "cand_b"))
     assert response.status == "running"
     assert response.selected_idea == "B"
+
+
+def test_select_candidate_by_id_endpoint_supports_legacy_candidate_id(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("AUTOPI_DATA_ROOT", str(tmp_path))
+    run_id = "run-api-select-legacy"
+    run_root = settings.run_root(run_id, create=True)
+    output_file = run_root / "output" / "topic_screening.json"
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    output_file.write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "candidates": [
+                    {"title": "A", "topic_id": "topic_a", "rank": 1},
+                    {"title": "B", "topic_id": "topic_b", "rank": 2},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(server.run_manager, "get_run", lambda _: _Run(run_id))
+    monkeypatch.setattr(server.run_manager, "record_milestone", lambda *args, **kwargs: None)
+    monkeypatch.setattr(server, "_resume_pipeline", lambda *args, **kwargs: asyncio.sleep(0))
+
+    response = asyncio.run(server.select_candidate_by_id(run_id, "legacy_002"))
+    assert response.status == "running"
+    assert response.selected_idea == "B"

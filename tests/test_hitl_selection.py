@@ -79,6 +79,32 @@ def test_apply_idea_selection_by_candidate_id(tmp_path, monkeypatch) -> None:
         settings.deactivate_run_scope(token)
 
 
+def test_apply_idea_selection_by_candidate_id_supports_legacy_and_topic_id(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AUTOPI_DATA_ROOT", str(tmp_path))
+    run_id = "run-id-legacy"
+    token = settings.activate_run_scope(run_id)
+    try:
+        screening_path = settings.topic_screening_path()
+        os.makedirs(os.path.dirname(screening_path), exist_ok=True)
+        with open(screening_path, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "run_id": run_id,
+                    "candidates": [
+                        {"title": "Topic A", "topic_id": "topic_a", "rank": 1},
+                        {"title": "Topic B", "topic_id": "topic_b", "rank": 2},
+                    ],
+                },
+                f,
+            )
+
+        assert apply_idea_selection_by_candidate_id("topic_b") == "Topic B"
+        # Works with synthetic IDs used by list_candidates fallback.
+        assert apply_idea_selection_by_candidate_id("legacy_001") == "Topic A"
+    finally:
+        settings.deactivate_run_scope(token)
+
+
 def _write_validation(report: dict) -> None:
     path = settings.idea_validation_path()
     os.makedirs(os.path.dirname(path), exist_ok=True)
