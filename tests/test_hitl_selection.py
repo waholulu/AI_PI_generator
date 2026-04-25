@@ -86,20 +86,28 @@ def test_apply_idea_selection_by_candidate_id_supports_legacy_and_topic_id(tmp_p
     try:
         screening_path = settings.topic_screening_path()
         os.makedirs(os.path.dirname(screening_path), exist_ok=True)
-        with open(screening_path, "w", encoding="utf-8") as f:
-            json.dump(
-                {
-                    "run_id": run_id,
-                    "candidates": [
-                        {"title": "Topic A", "topic_id": "topic_a", "rank": 1},
-                        {"title": "Topic B", "topic_id": "topic_b", "rank": 2},
-                    ],
-                },
-                f,
-            )
 
+        def _reset_screening() -> None:
+            with open(screening_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "run_id": run_id,
+                        "candidates": [
+                            {"title": "Topic A", "topic_id": "topic_a", "rank": 1},
+                            {"title": "Topic B", "topic_id": "topic_b", "rank": 2},
+                        ],
+                    },
+                    f,
+                )
+
+        # topic_id resolution
+        _reset_screening()
         assert apply_idea_selection_by_candidate_id("topic_b") == "Topic B"
-        # Works with synthetic IDs used by list_candidates fallback.
+
+        # Synthetic legacy_NNN resolution (mirrors list_candidates fallback).
+        # legacy_NNN is positional, so reset state before asserting against the
+        # original ordering to avoid drift from the previous selection.
+        _reset_screening()
         assert apply_idea_selection_by_candidate_id("legacy_001") == "Topic A"
     finally:
         settings.deactivate_run_scope(token)
