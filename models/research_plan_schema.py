@@ -16,12 +16,28 @@ class VariableSpec(BaseModel):
 
 class DataSourceSpec(BaseModel):
     name: str
+    role: Literal[
+        "exposure",
+        "outcome",
+        "control",
+        "boundary",
+        "literature",
+        "image_provider",
+        "feature_provider",
+    ] = "control"
     source_type: Literal["api", "download", "registry", "manual", "unknown"] = "unknown"
     access_url: str = ""
     documentation_url: str = ""
     license: str = ""
     expected_format: str = ""
     access_notes: str = ""
+    machine_readable: bool = False
+    auth_required: bool = False
+    cost_required: bool = False
+    covers_variable_families: list[str] = Field(default_factory=list)
+    spatial_units: list[str] = Field(default_factory=list)
+    join_keys: list[str] = Field(default_factory=list)
+    technology_tags: list[str] = Field(default_factory=list)
 
 
 class IdentificationSpec(BaseModel):

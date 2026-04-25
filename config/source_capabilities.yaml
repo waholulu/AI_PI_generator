@@ -1,0 +1,147 @@
+sources:
+  EPA_National_Walkability_Index:
+    canonical_name: EPA National Walkability Index
+    aliases:
+      - EPA Walkability Index
+      - National Walkability Index
+    source_type: download
+    access_url: https://www.epa.gov/smartgrowth/smart-location-mapping
+    documentation_url: https://www.epa.gov/smartgrowth/national-walkability-index-user-guide-and-methodology
+    expected_format: zip_csv_gis
+    machine_readable: true
+    auth_required: false
+    cost_required: false
+    roles: [exposure]
+    spatial_units: [block_group]
+    coverage_year_min: 2021
+    coverage_year_max: 2021
+    variable_families:
+      walkability:
+        variables: [NatWalkInd, D2A_EPHHM]
+        aggregation_allowed_to: [tract, county, city]
+
+  EPA_Smart_Location_Database:
+    canonical_name: EPA Smart Location Database
+    aliases:
+      - SLD
+      - EPA SLD
+    source_type: download
+    access_url: https://www.epa.gov/smartgrowth/smart-location-mapping
+    expected_format: zip_csv
+    machine_readable: true
+    auth_required: false
+    cost_required: false
+    roles: [exposure, control]
+    spatial_units: [block_group]
+    coverage_year_min: 2021
+    coverage_year_max: 2021
+    variable_families:
+      density: {}
+      land_use_mix: {}
+      destination_accessibility: {}
+      transit_access: {}
+      street_design: {}
+
+  CDC_PLACES:
+    canonical_name: CDC PLACES
+    aliases:
+      - CDC Places
+      - PLACES
+    source_type: api_download
+    access_url: https://www.cdc.gov/places/tools/data-portal.html
+    expected_format: csv_api_gis
+    machine_readable: true
+    auth_required: false
+    cost_required: false
+    roles: [outcome]
+    spatial_units: [county, place, tract, zcta]
+    coverage_year_min: 2016
+    coverage_year_max: 2024
+    variable_families:
+      obesity: {}
+      diabetes: {}
+      physical_inactivity: {}
+      asthma: {}
+      poor_mental_health: {}
+
+  OSMnx_OpenStreetMap:
+    canonical_name: OpenStreetMap via OSMnx
+    aliases:
+      - OSMnx
+      - OpenStreetMap via OSMnx
+    source_type: api
+    expected_format: graph_geojson
+    machine_readable: true
+    auth_required: false
+    cost_required: false
+    roles: [exposure]
+    spatial_units: [point, street_segment, polygon, city, tract_buffer]
+    variable_families:
+      street_connectivity: {}
+      intersection_density: {}
+      circuity: {}
+      amenity_access: {}
+      park_access: {}
+      transit_stop_access: {}
+
+  TIGER_Lines:
+    canonical_name: TIGER/Line
+    aliases:
+      - TIGER/Line
+      - TIGER
+    source_type: download
+    expected_format: shapefile
+    machine_readable: true
+    auth_required: false
+    cost_required: false
+    roles: [boundary, control]
+    spatial_units: [tract, county, place, zcta]
+    variable_families:
+      boundaries: {}
+
+  ACS:
+    canonical_name: American Community Survey
+    aliases:
+      - ACS 5-year
+      - US Census ACS
+    source_type: api_download
+    expected_format: csv_api
+    machine_readable: true
+    auth_required: false
+    cost_required: false
+    roles: [control]
+    spatial_units: [tract, county, place, zcta]
+    variable_families:
+      socioeconomic_controls: {}
+
+  Mapillary_Street_Images:
+    canonical_name: Mapillary street level imagery
+    aliases:
+      - Mapillary
+    source_type: api
+    expected_format: image_api
+    machine_readable: true
+    auth_required: true
+    cost_required: false
+    roles: [exposure, image_provider]
+    tier: experimental
+    spatial_units: [point, street_segment]
+    variable_families:
+      greenery_visibility: {}
+      sidewalk_presence: {}
+
+  Google_Street_View_Static_API:
+    canonical_name: Google Street View Static API
+    aliases:
+      - Google Street View
+    source_type: api
+    expected_format: image_api
+    machine_readable: true
+    auth_required: true
+    cost_required: true
+    raw_image_caching_allowed: false
+    roles: [exposure, image_provider]
+    tier: experimental
+    spatial_units: [point, street_segment]
+    variable_families:
+      streetview_built_form: {}

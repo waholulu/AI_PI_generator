@@ -38,6 +38,8 @@ def _is_url_reachable(url: str) -> bool:
 
 
 def _is_machine_readable(source: DataSourceSpec) -> bool:
+    if source.machine_readable:
+        return True
     fmt = (source.expected_format or "").strip().lower()
     if fmt in _MACHINE_READABLE_FORMATS:
         return True
@@ -64,8 +66,24 @@ def evaluate_data_sources(plan: ResearchPlan) -> list[DataAccessCheck]:
         reachable = _is_url_reachable(source.access_url) or _is_url_reachable(source.documentation_url)
         machine_readable = _is_machine_readable(source)
         license_found = bool(source.license.strip())
-        covers_exposure = _safe_contains(source_blob, [exposure_name, plan.exposure.measurement_proxy])
-        covers_outcome = _safe_contains(source_blob, [outcome_name, plan.outcome.measurement_proxy])
+        if source.covers_variable_families:
+            covers_exposure = (
+                source.role == "exposure"
+                and plan.exposure.name.lower() in [f.lower() for f in source.covers_variable_families]
+            )
+            covers_outcome = (
+                source.role == "outcome"
+                and plan.outcome.name.lower() in [f.lower() for f in source.covers_variable_families]
+            )
+        else:
+            covers_exposure = (
+                source.role == "exposure"
+                or _safe_contains(source_blob, [exposure_name, plan.exposure.measurement_proxy])
+            )
+            covers_outcome = (
+                source.role == "outcome"
+                or _safe_contains(source_blob, [outcome_name, plan.outcome.measurement_proxy])
+            )
         geography_compatible = not geography_hint or _safe_contains(
             source_blob, [geography_hint, plan.exposure.spatial_unit, plan.outcome.spatial_unit]
         )
@@ -77,11 +95,17 @@ def evaluate_data_sources(plan: ResearchPlan) -> list[DataAccessCheck]:
         elif not reachable:
             reasons.append("url_not_reachable")
         if not machine_readable:
-            reasons.append("format_unclear")
+            reasons.append("missing_machine_readable_source")
         if not covers_exposure:
-            reasons.append("exposure_coverage_uncertain")
+            reasons.append("missing_exposure_role_source")
         if not covers_outcome:
-            reasons.append("outcome_coverage_uncertain")
+            reasons.append("missing_outcome_role_source")
+        if source.role == "boundary" and not source.join_keys:
+            reasons.append("missing_join_path")
+        if source.auth_required:
+            reasons.append("experimental_source_requires_key")
+        if "streetview" in source.name.lower() and "no_raw_image_storage" not in source.access_notes.lower():
+            reasons.append("streetview_policy_not_satisfied")
         if not geography_compatible:
             reasons.append("geography_mismatch")
         if not time_compatible:
@@ -91,7 +115,7 @@ def evaluate_data_sources(plan: ResearchPlan) -> list[DataAccessCheck]:
             verdict = "warning"
         elif not reachable:
             verdict = "fail"
-        elif (covers_exposure or covers_outcome) and machine_readable:
+        elif (covers_exposure or covers_outcome or source.role in {"control", "boundary"}) and machine_readable:
             verdict = "pass"
         else:
             verdict = "warning"
@@ -123,16 +147,19 @@ def summarize_data_access(checks: list[DataAccessCheck]) -> tuple[str, list[str]
     exposure_reachable = any(c.reachable and c.covers_exposure for c in checks)
     outcome_reachable = any(c.reachable and c.covers_outcome for c in checks)
     machine_readable = any(c.machine_readable for c in checks)
+    join_ok = any("missing_join_path" not in c.reasons for c in checks)
     geo_ok = any(c.geography_compatible for c in checks)
     time_ok = any(c.time_compatible for c in checks)
 
     reasons: list[str] = []
     if not exposure_reachable:
-        reasons.append("no_reachable_exposure_source")
+        reasons.append("missing_exposure_role_source")
     if not outcome_reachable:
-        reasons.append("no_reachable_outcome_source")
+        reasons.append("missing_outcome_role_source")
     if not machine_readable:
-        reasons.append("no_machine_readable_source")
+        reasons.append("missing_machine_readable_source")
+    if not join_ok:
+        reasons.append("missing_join_path")
     if not geo_ok:
         reasons.append("geography_incompatible")
     if not time_ok:
@@ -141,9 +168,9 @@ def summarize_data_access(checks: list[DataAccessCheck]) -> tuple[str, list[str]
     if not reasons:
         return "pass", []
 
-    if all(r in {"no_reachable_exposure_source", "no_reachable_outcome_source"} for r in reasons):
+    if all(r in {"missing_exposure_role_source", "missing_outcome_role_source"} for r in reasons):
         if any(c.verdict == "warning" for c in checks):
             return "warning", reasons
-    if any(c.verdict == "warning" for c in checks) and "no_machine_readable_source" not in reasons:
+    if any(c.verdict == "warning" for c in checks) and "missing_machine_readable_source" not in reasons:
         return "warning", reasons
     return "fail", reasons

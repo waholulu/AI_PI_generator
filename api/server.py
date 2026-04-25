@@ -23,6 +23,7 @@ Endpoints:
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -38,6 +39,8 @@ from agents.logging_config import setup_logging, get_logger
 
 from api import log_store, run_manager
 from agents.hitl_helpers import apply_idea_selection
+from agents.development_pack_writer import write_development_pack
+from agents.research_template_loader import load_research_template, validate_template_sources
 from api.models import (
     ApproveRequest,
     ApproveResponse,
@@ -233,6 +236,45 @@ async def health():
     return HealthResponse(status="ok")
 
 
+@app.get("/templates")
+async def list_templates():
+    template_dir = Path("config/research_templates")
+    if not template_dir.exists():
+        return {"templates": []}
+    templates = []
+    for path in sorted(template_dir.glob("*.yaml")):
+        tid = path.stem
+        try:
+            tpl = load_research_template(tid)
+            templates.append(
+                {
+                    "template_id": tpl.get("template_id", tid),
+                    "file_id": tid,
+                    "description": tpl.get("description", ""),
+                    "default_geography": tpl.get("default_geography", ""),
+                }
+            )
+        except Exception:
+            templates.append({"template_id": tid, "file_id": tid, "description": "invalid template"})
+    return {"templates": templates}
+
+
+@app.get("/templates/{template_id}")
+async def get_template(template_id: str):
+    try:
+        template = load_research_template(template_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    missing_sources = validate_template_sources(template)
+    return {
+        "template": template,
+        "validation": {
+            "sources_ok": len(missing_sources) == 0,
+            "missing_sources": missing_sources,
+        },
+    }
+
+
 @app.post("/runs", response_model=RunStatus, status_code=202)
 async def start_run(req: StartRunRequest, background_tasks: BackgroundTasks):
     """Start a new pipeline run. Returns immediately with run_id."""
@@ -323,6 +365,54 @@ def _load_current_topics(run_id: str) -> list:
             return []
     finally:
         settings.deactivate_run_scope(scope_token)
+
+
+def _load_candidate_cards(run_id: str) -> list[dict]:
+    """Load candidate cards from run-scoped outputs (or fallback screening candidates)."""
+    token = settings.activate_run_scope(run_id)
+    try:
+        output_path = settings.output_dir() / "candidate_cards.json"
+        if output_path.exists():
+            try:
+                payload = json.loads(output_path.read_text(encoding="utf-8"))
+                if isinstance(payload, list):
+                    return payload
+                if isinstance(payload, dict):
+                    return payload.get("candidates", [])
+            except json.JSONDecodeError:
+                pass
+        screening = Path(settings.topic_screening_path())
+        if screening.exists():
+            payload = json.loads(screening.read_text(encoding="utf-8"))
+            candidates = payload.get("candidates", [])
+            normalized = []
+            for idx, c in enumerate(candidates, start=1):
+                normalized.append(
+                    {
+                        "candidate_id": c.get("candidate_id") or f"legacy_{idx:03d}",
+                        "title": c.get("title", ""),
+                        "research_question": c.get("research_question", ""),
+                        "exposure_label": c.get("exposure", {}).get("specific_variable", ""),
+                        "exposure_source": ", ".join(c.get("data_sources", [])[:1]) if c.get("data_sources") else "",
+                        "outcome_label": c.get("outcome", {}).get("specific_variable", ""),
+                        "outcome_source": ", ".join(c.get("data_sources", [])[1:2]) if len(c.get("data_sources", [])) > 1 else "",
+                        "unit_of_analysis": c.get("spatial_scope", {}).get("spatial_unit", ""),
+                        "method": c.get("identification", {}).get("primary", ""),
+                        "claim_strength": "associational",
+                        "technology_tags": c.get("technology_tags", []),
+                        "required_secrets": c.get("required_secrets", []),
+                        "automation_risk": c.get("automation_risk", "unknown"),
+                        "scores": c.get("scores", {}),
+                        "gate_status": c.get("gate_status", {}),
+                        "repair_history": c.get("repair_history", []),
+                        "development_pack_status": c.get("development_pack_status", "not_generated"),
+                        "_raw": c,
+                    }
+                )
+            return normalized
+        return []
+    finally:
+        settings.deactivate_run_scope(token)
 
 
 @app.post("/runs/{run_id}/approve", response_model=ApproveResponse)
@@ -441,6 +531,102 @@ async def reject_hitl(run_id: str):
     run_manager.update_status(run_id, "aborted")
     logger.info("HITL rejected for run %s. Run aborted.", run_id)
     return ApproveResponse(run_id=run_id, status="aborted", message="Run aborted by user.")
+
+
+@app.get("/runs/{run_id}/candidates")
+async def list_candidates(run_id: str):
+    run = run_manager.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found.")
+    return {"run_id": run_id, "candidates": _load_candidate_cards(run_id)}
+
+
+@app.get("/runs/{run_id}/candidates/{candidate_id}")
+async def get_candidate(run_id: str, candidate_id: str):
+    run = run_manager.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found.")
+    candidates = _load_candidate_cards(run_id)
+    for candidate in candidates:
+        if candidate.get("candidate_id") == candidate_id:
+            return {"run_id": run_id, "candidate": candidate}
+    raise HTTPException(status_code=404, detail=f"Candidate {candidate_id!r} not found.")
+
+
+@app.post("/runs/{run_id}/candidates/{candidate_id}/development-pack")
+async def generate_development_pack(run_id: str, candidate_id: str):
+    run = run_manager.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found.")
+    candidates = _load_candidate_cards(run_id)
+    candidate = next((c for c in candidates if c.get("candidate_id") == candidate_id), None)
+    if not candidate:
+        raise HTTPException(status_code=404, detail=f"Candidate {candidate_id!r} not found.")
+
+    payload = candidate.get("_raw") or candidate
+    try:
+        pack_dir = write_development_pack(run_id, payload)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to generate development pack: {exc}")
+    return {
+        "run_id": run_id,
+        "candidate_id": candidate_id,
+        "pack_dir": str(pack_dir),
+        "files": sorted(p.name for p in pack_dir.glob("*") if p.is_file()),
+    }
+
+
+@app.get("/runs/{run_id}/development-packs")
+async def list_development_packs(run_id: str):
+    run = run_manager.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found.")
+    token = settings.activate_run_scope(run_id)
+    try:
+        base = settings.development_packs_dir()
+        packs = []
+        for d in sorted(base.glob("*")):
+            if d.is_dir():
+                packs.append({"candidate_id": d.name, "files": sorted(p.name for p in d.glob('*') if p.is_file())})
+        return {"run_id": run_id, "development_packs": packs}
+    finally:
+        settings.deactivate_run_scope(token)
+
+
+@app.get("/runs/{run_id}/development-packs/{candidate_id}/files")
+async def list_development_pack_files(run_id: str, candidate_id: str):
+    run = run_manager.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found.")
+    token = settings.activate_run_scope(run_id)
+    try:
+        pack_dir = settings.development_packs_dir() / candidate_id
+        if not pack_dir.exists():
+            raise HTTPException(status_code=404, detail=f"Development pack for {candidate_id!r} not found.")
+        files = [{"filename": p.name, "size_bytes": p.stat().st_size} for p in sorted(pack_dir.glob("*")) if p.is_file()]
+        return {"run_id": run_id, "candidate_id": candidate_id, "files": files}
+    finally:
+        settings.deactivate_run_scope(token)
+
+
+@app.get("/runs/{run_id}/development-packs/{candidate_id}/files/{filename:path}")
+async def download_development_pack_file(run_id: str, candidate_id: str, filename: str):
+    run = run_manager.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found.")
+    token = settings.activate_run_scope(run_id)
+    try:
+        pack_dir = settings.development_packs_dir() / candidate_id
+        if not pack_dir.exists():
+            raise HTTPException(status_code=404, detail=f"Development pack for {candidate_id!r} not found.")
+        file_path = (pack_dir / filename).resolve()
+        if not file_path.is_relative_to(pack_dir.resolve()):
+            raise HTTPException(status_code=403, detail="Access denied.")
+        if not file_path.exists() or not file_path.is_file():
+            raise HTTPException(status_code=404, detail=f"File {filename!r} not found.")
+        return FileResponse(path=str(file_path), filename=file_path.name)
+    finally:
+        settings.deactivate_run_scope(token)
 
 
 _BINARY_EXTENSIONS = {".sqlite", ".parquet", ".pdf", ".db"}

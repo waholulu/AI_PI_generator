@@ -244,3 +244,82 @@ data_sources:
     skills_required: [api_fetch, csv_load, spatial_join]
     auth_required: false
     format: csv/geojson
+
+  - name: EPA_Smart_Location_Database
+    alias: [epa sld, smart location database]
+    description: EPA Smart Location Database with built environment and location efficiency indicators
+    spatial_units: [block_group, tract, county]
+    coverage_year_min: 2021
+    coverage_year_max: 2021
+    skills_required: [csv_load, spatial_join]
+    auth_required: false
+    format: zip/csv
+    url: https://www.epa.gov/smartgrowth/smart-location-mapping
+
+  - name: EPA_National_Walkability_Index
+    alias: [epa walkability, national walkability index]
+    description: EPA walkability indicators for US census block groups
+    spatial_units: [block_group, tract, county]
+    coverage_year_min: 2021
+    coverage_year_max: 2021
+    skills_required: [csv_load, spatial_join]
+    auth_required: false
+    format: zip/csv/gis
+    url: https://www.epa.gov/smartgrowth/smart-location-mapping
+
+  - name: EPA_EnviroAtlas
+    alias: [enviroatlas, epa enviroatlas]
+    description: EPA EnviroAtlas multi-layer environmental and ecosystem services data
+    spatial_units: [tract, county, raster_30m, raster_1km]
+    coverage_year_min: 2010
+    coverage_year_max: 2024
+    skills_required: [raster_analysis, spatial_join]
+    auth_required: false
+    format: web_service/geotiff
+    url: https://www.epa.gov/enviroatlas
+
+  - name: NaNDA
+    alias: [nanda, nda database]
+    description: National Neighborhood Data Archive built environment and socioeconomic indicators
+    spatial_units: [tract, county]
+    coverage_year_min: 2010
+    coverage_year_max: 2024
+    skills_required: [csv_load, spatial_join]
+    auth_required: true
+    format: csv
+
+  - name: Mapillary
+    alias: [mapillary, mapillary street images]
+    description: Crowdsourced street-level imagery and extracted map features
+    spatial_units: [point, street_segment]
+    coverage_year_min: 2013
+    coverage_year_max: 2024
+    skills_required: [api_fetch, cv_feature_extract]
+    auth_required: true
+    format: api/image
+    url: https://www.mapillary.com
+
+  - name: Google_Street_View_Static_API
+    alias: [google street view, gsv static api]
+    description: Google Street View Static API imagery endpoint
+    spatial_units: [point, street_segment]
+    coverage_year_min: 2007
+    coverage_year_max: 2024
+    skills_required: [api_fetch, cv_feature_extract]
+    auth_required: true
+    cost_required: true
+    raw_image_caching_allowed: false
+    tier: experimental
+    format: api/image
+    url: https://developers.google.com/maps/documentation/streetview
+
+  - name: OSMnx_OpenStreetMap
+    alias: [osmnx, openstreetmap via osmnx]
+    description: OpenStreetMap network and POI retrieval/analysis through OSMnx
+    spatial_units: [street_segment, point, tract, city]
+    coverage_year_min: 2005
+    coverage_year_max: 2024
+    skills_required: [osm_extract, graph_analysis, spatial_join]
+    auth_required: false
+    format: graph/geojson
+    url: https://osmnx.readthedocs.io

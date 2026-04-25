@@ -253,6 +253,18 @@ def data_access_report_path() -> str:
     return str(output_dir() / "data_access_report.json")
 
 
+def candidates_dir() -> Path:
+    d = output_dir() / "candidates"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def development_packs_dir() -> Path:
+    d = output_dir() / "development_packs"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 # Memory files
 def idea_memory_csv_path() -> str:
     return str(memory_dir() / "idea_memory.csv")

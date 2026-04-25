@@ -57,3 +57,19 @@ python3 -m pytest tests/test_topic_schema.py \
 
 bash scripts/qa_module1_v0_2.sh
 ```
+
+## Cloud runtime notes
+
+- Base runtime is now Python `3.11` (required for the geospatial stack including OSMnx).
+- Default cloud install path is geospatial-first:
+
+```bash
+pip install ".[geospatial]"
+```
+
+- `vision` and `deepvision` extras are intentionally optional so default Railway/CPU deployments stay lightweight:
+
+```bash
+pip install ".[vision]"
+pip install ".[deepvision]"
+```

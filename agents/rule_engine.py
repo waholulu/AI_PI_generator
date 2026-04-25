@@ -15,6 +15,7 @@ from typing import Optional
 import yaml
 
 from agents.logging_config import get_logger
+from agents.source_registry import SourceRegistry
 from agents.settings import (
     data_sources_yaml_path,
     skill_registry_path,
@@ -247,6 +248,68 @@ class RuleEngine:
             reason=reason,
             details={"coverage_issues": coverage_issues, "not_in_catalog": not_in_catalog,
                      "auth_warnings": auth_warnings, "declared_sources": declared_sources},
+        )
+
+    def check_G3_role_based_data_availability(
+        self,
+        exposure_family: str,
+        outcome_family: str,
+        declared_sources: list[str],
+    ) -> GateResult:
+        """Role-based G3 variant for candidate-composer era checks.
+
+        Subchecks:
+        - source_exists
+        - role_coverage
+        - machine_readable
+        - spatial_join_path
+        - time_overlap (warning-friendly in this deterministic stage)
+        - cloud_automation_feasibility
+        """
+        registry = SourceRegistry.load()
+        resolved = [registry.resolve(src) for src in declared_sources]
+        source_exists = all(s is not None for s in resolved)
+        specs = [registry.sources[sid] for sid in resolved if sid is not None]
+
+        role_coverage = any("exposure" in s.get("roles", []) for s in specs) and any(
+            "outcome" in s.get("roles", []) for s in specs
+        )
+        machine_readable = all(bool(s.get("machine_readable", False)) for s in specs) if specs else False
+        spatial_join_path = any("boundary" in s.get("roles", []) for s in specs) or any(
+            sid in {"TIGER_Lines", "ACS", "CDC_PLACES"} for sid in resolved if sid
+        )
+
+        exposure_ok = any(exposure_family in (s.get("variable_families") or {}) for s in specs)
+        outcome_ok = any(outcome_family in (s.get("variable_families") or {}) for s in specs)
+        role_coverage = role_coverage and exposure_ok and outcome_ok
+
+        cloud_automation_feasibility = not any(
+            s.get("tier") == "experimental" and (s.get("auth_required") or s.get("cost_required"))
+            for s in specs
+        )
+
+        subchecks = {
+            "source_exists": "pass" if source_exists else "fail",
+            "role_coverage": "pass" if role_coverage else "fail",
+            "machine_readable": "pass" if machine_readable else "fail",
+            "spatial_join_path": "pass" if spatial_join_path else "fail",
+            "time_overlap": "warning",
+            "cloud_automation_feasibility": "pass" if cloud_automation_feasibility else "warning",
+        }
+        passed = all(subchecks[k] == "pass" for k in ("source_exists", "role_coverage", "machine_readable", "spatial_join_path"))
+        repair_suggestions: list[str] = []
+        if subchecks["role_coverage"] != "pass":
+            repair_suggestions.append("replace_source_from_template_role_defaults")
+        if subchecks["spatial_join_path"] != "pass":
+            repair_suggestions.append("add_boundary_source_tiger_lines")
+
+        return GateResult(
+            gate_id="G3",
+            name="data_availability_role_based",
+            passed=passed,
+            refinable=True,
+            reason="ok" if passed else "role_based_subcheck_failed",
+            details={"subchecks": subchecks, "repair_suggestions": repair_suggestions},
         )
 
     # ── G6: automation_feasibility ────────────────────────────────────────────
