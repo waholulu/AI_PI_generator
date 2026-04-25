@@ -47,9 +47,6 @@ def test_drafter_node_offline(monkeypatch: pytest.MonkeyPatch) -> None:
     with open(index_path, "w", encoding="utf-8") as f:
         json.dump([], f)
 
-    # Patch DrafterAgent to use fake LLM instead of real Gemini
-    monkeypatch.setattr(drafter_agent.DrafterAgent, "_init_llm", lambda self: _FakeLLM())  # type: ignore[arg-type]
-
     state = ResearchState(
         current_plan_path=plan_path,
         literature_inventory_path=index_path,
@@ -97,8 +94,6 @@ def test_drafter_node_fallback_on_llm_failure(monkeypatch: pytest.MonkeyPatch) -
         def invoke(self, _: Dict[str, Any]) -> Any:
             raise RuntimeError("Simulated LLM failure")
 
-    monkeypatch.setattr(drafter_agent.DrafterAgent, "_init_llm", lambda self: _BrokenLLM())  # type: ignore[arg-type]
-
     state = ResearchState(
         current_plan_path=plan_path,
         literature_inventory_path=index_path,
@@ -134,11 +129,6 @@ def test_drafter_fallback_has_eight_sections(monkeypatch: pytest.MonkeyPatch) ->
     with open(plan_path, "w", encoding="utf-8") as f:
         json.dump(plan, f)
 
-    class _BrokenLLM:
-        def invoke(self, _: Dict[str, Any]) -> Any:
-            raise RuntimeError("boom")
-
-    monkeypatch.setattr(drafter_agent.DrafterAgent, "_init_llm", lambda self: _BrokenLLM())  # type: ignore[arg-type]
     out = drafter_agent.drafter_node(ResearchState(current_plan_path=plan_path, execution_status="drafting"))
     assert out["execution_status"] == "fetching"
 

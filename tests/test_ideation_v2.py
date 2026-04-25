@@ -305,7 +305,7 @@ def test_level2_writes_tentative_pool(tmp_path, monkeypatch):
 
 # ── Test 7: Level 2 — no ACCEPTED reruns once then lists near-pass topics ──
 
-def test_level2_rerun_then_lists_near_pass_topics(tmp_path, monkeypatch):
+def test_level2_lists_tentative_when_no_accepted(tmp_path, monkeypatch):
     monkeypatch.setenv("AUTOPI_DATA_ROOT", str(tmp_path))
     monkeypatch.setenv("AUTOPI_IDEATION_MODE", "reflection")
     topic = make_topic("seed_002")
@@ -317,20 +317,17 @@ def test_level2_rerun_then_lists_near_pass_topics(tmp_path, monkeypatch):
     agent._llm = None
     agent._generate_seeds = lambda *a, **kw: [seed]
 
-    # First attempt has no ACCEPTED -> triggers auto-rerun.
+    # No ACCEPTED candidates → falls back to listing TENTATIVE topics.
     with patch.object(
         agent,
         "_run_reflection_batch",
-        side_effect=[
-            ([], [(seed, tentative_trace)], []),
-            ([], [(seed, tentative_trace)], []),
-        ],
+        return_value=([], [(seed, tentative_trace)], []),
     ) as mocked_batch:
         result = agent.run_level2({"domain_input": "Urban Planning"})
 
     screening = json.loads(Path(result["candidate_topics_path"]).read_text())
     assert len(screening["candidates"]) == 1
-    assert mocked_batch.call_count == 2
+    assert mocked_batch.call_count == 1
     assert screening["candidates"][0]["final_status"] == "TENTATIVE"
     assert "evaluation" in screening["candidates"][0]
 

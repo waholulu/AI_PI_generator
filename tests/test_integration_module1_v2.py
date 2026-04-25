@@ -160,6 +160,7 @@ def make_seed(topic_id: str = "s001") -> SeedCandidate:
 
 def test_level2_produces_all_required_output_files(tmp_path, monkeypatch):
     monkeypatch.setenv("AUTOPI_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("AUTOPI_IDEATION_MODE", "reflection")
 
     seed_accepted = make_seed("s_acc")
     seed_tentative = make_seed("s_tent")
@@ -210,6 +211,7 @@ def test_screening_candidates_have_legacy_six_gates(tmp_path, monkeypatch):
 
 def test_ideation_run_summary_has_required_fields(tmp_path, monkeypatch):
     monkeypatch.setenv("AUTOPI_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("AUTOPI_IDEATION_MODE", "reflection")
 
     seed = make_seed("s002")
     trace = make_accepted_trace("s002")
@@ -260,6 +262,7 @@ def test_legacy_ideation_env_routes_to_v0(monkeypatch, tmp_path):
 
 def test_tentative_pool_contains_failed_gates(tmp_path, monkeypatch):
     monkeypatch.setenv("AUTOPI_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("AUTOPI_IDEATION_MODE", "reflection")
 
     seed = make_seed("tent_001")
     trace = make_tentative_trace("tent_001")

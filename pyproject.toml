@@ -51,6 +51,9 @@ postgres = [
     "psycopg2-binary>=2.9.10",
 ]
 
+[tool.setuptools.packages.find]
+include = ["agents*", "api*", "models*", "ui*", "config*"]
+
 [tool.pytest.ini_options]
 markers = [
     "live_openalex: marks tests that call the real OpenAlex API (require OPENALEX_API_KEY, OPENALEX_EMAIL, pyalex)",

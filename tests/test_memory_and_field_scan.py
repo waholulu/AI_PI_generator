@@ -70,7 +70,7 @@ def test_memory_and_field_scan_with_history(tmp_path, monkeypatch: pytest.Monkey
     assert history, "Expected to retrieve at least one history row from CSV memory"
 
     # Patch OpenAlex search to return fake data
-    def _fake_search(query: str, limit: int = 20, from_year: int | None = None) -> List[Dict[str, Any]]:
+    def _fake_search(query: str, limit: int = 20, from_year: int | None = None, **kwargs) -> List[Dict[str, Any]]:
         return [
             _make_fake_metadata("https://openalex.org/W1", "Paper A", ["GeoAI", "Urban Planning"]),
             _make_fake_metadata("https://openalex.org/W2", "Paper B", ["GeoAI"]),
@@ -113,7 +113,7 @@ def test_memory_and_field_scan_empty_graceful(tmp_path, monkeypatch: pytest.Monk
     """
     降级路径：没有历史 CSV 记忆，field_scan 返回空结果也不应报错。
     """
-    def _fake_search(query: str, limit: int = 20, from_year: int | None = None) -> List[Dict[str, Any]]:
+    def _fake_search(query: str, limit: int = 20, from_year: int | None = None, **kwargs) -> List[Dict[str, Any]]:
         return []
 
     monkeypatch.setattr(openalex_utils, "search_openalex", _fake_search)

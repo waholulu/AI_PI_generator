@@ -1,3 +1,4 @@
+import os
 import re
 
 from models.topic_schema import (
@@ -8,6 +9,8 @@ from models.topic_schema import (
     OutcomeFamily,
     SamplingMode,
 )
+
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def _load(path: str) -> str:
@@ -29,7 +32,7 @@ def _extract_required_values(prompt_text: str, section_name: str) -> set[str]:
 
 
 def test_ideation_seed_prompt_enum_alignment():
-    text = _load("/workspace/prompts/ideation_seed.txt")
+    text = _load(os.path.join(_PROJECT_ROOT, "prompts", "ideation_seed.txt"))
     assert _extract_required_values(text, "ExposureFamily") <= _enum_values(ExposureFamily)
     assert _extract_required_values(text, "OutcomeFamily") <= _enum_values(OutcomeFamily)
     assert _extract_required_values(text, "SamplingMode") <= _enum_values(SamplingMode)
@@ -39,7 +42,7 @@ def test_ideation_seed_prompt_enum_alignment():
 
 
 def test_reflection_refine_prompt_enum_alignment():
-    text = _load("/workspace/prompts/reflection_refine.txt")
+    text = _load(os.path.join(_PROJECT_ROOT, "prompts", "reflection_refine.txt"))
     assert _extract_required_values(text, "ExposureFamily") <= _enum_values(ExposureFamily)
     assert _extract_required_values(text, "OutcomeFamily") <= _enum_values(OutcomeFamily)
     assert _extract_required_values(text, "SamplingMode") <= _enum_values(SamplingMode)
@@ -49,5 +52,5 @@ def test_reflection_refine_prompt_enum_alignment():
 
 
 def test_reflection_critique_includes_openalex_top_papers_placeholder():
-    text = _load("/workspace/prompts/reflection_critique.txt")
+    text = _load(os.path.join(_PROJECT_ROOT, "prompts", "reflection_critique.txt"))
     assert "{oa_top_papers_formatted}" in text

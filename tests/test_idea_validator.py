@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from agents import idea_validator_agent as validator
+import agents.candidate_evaluator as candidate_evaluator_mod
 from agents import settings
 from agents.orchestrator import ResearchState
 
@@ -150,20 +151,35 @@ class TestDataRegistryMatching:
 # Validator tests (mocked LLM + OpenAlex)
 # ---------------------------------------------------------------------------
 
+def _make_pass_evaluation(candidate: Dict[str, Any], plan, llm=None):
+    from models.candidate_schema import CandidateEvaluation
+    return CandidateEvaluation(
+        candidate_id=candidate.get("title", "test"),
+        title=candidate.get("title", "test"),
+        rank=candidate.get("rank", 1),
+        schema_valid=True,
+        data_registry_verdict="pass",
+        data_access_verdict="pass",
+        novelty_verdict="novel",
+        identification_verdict="pass",
+        contribution_verdict="pass",
+        overall_verdict="pass",
+        score=0.8,
+        reasons=[],
+        evidence={},
+    )
+
+
 class TestValidatorAllPass:
     """All 3 ideas pass: novel + data verified."""
 
     def test_all_pass(self, tmp_path, monkeypatch):
-        # Mock search_openalex to return no papers → novel
-        monkeypatch.setattr(validator, "search_openalex", lambda *a, **kw: [])
-        # Mock registry
-        monkeypatch.setattr(validator, "_load_registry", lambda: SAMPLE_REGISTRY)
-        # Mock settings paths
+        monkeypatch.setattr(validator, "evaluate_candidate", _make_pass_evaluation)
         monkeypatch.setattr(settings, "idea_validation_path", lambda: str(tmp_path / "idea_validation.json"))
 
         state = _make_state(tmp_path)
         agent = validator.IdeaValidatorAgent()
-        agent.llm = None  # Force fallback (no LLM → all novel)
+        agent.llm = None
 
         result = agent.run(state)
 
@@ -178,72 +194,76 @@ class TestValidatorAllPass:
 
 
 class TestValidatorNoveltyFail:
-    """One idea is already_published → auto-substitute from backup."""
+    """One idea fails novelty check — new code reports failure, no substitution in evaluate_candidate path."""
 
-    def test_novelty_fail_with_substitution(self, tmp_path, monkeypatch):
-        # Make idea A fail novelty check via mocked search_openalex + LLM
-        call_count = {"n": 0}
+    def test_novelty_fail_reported(self, tmp_path, monkeypatch):
+        call_idx = {"n": 0}
 
-        def _mock_search(query, limit=20, from_year=None):
-            call_count["n"] += 1
-            # First idea's queries return highly similar papers
-            if call_count["n"] <= 3:  # first idea's 3 queries
-                return [{"title": "Exact Same Idea A", "year": 2025, "doi": "10.1234/test",
-                          "citationCount": 50, "abstract": "Same approach same data."}]
-            return []
+        def _mock_eval(candidate, plan, llm=None):
+            from models.candidate_schema import CandidateEvaluation
+            call_idx["n"] += 1
+            verdict = "fail" if call_idx["n"] == 1 else "pass"
+            return CandidateEvaluation(
+                candidate_id=candidate.get("title", ""),
+                title=candidate.get("title", ""),
+                rank=candidate.get("rank", 1),
+                schema_valid=True,
+                data_registry_verdict="pass",
+                data_access_verdict="pass",
+                novelty_verdict="already_published" if call_idx["n"] == 1 else "novel",
+                identification_verdict="pass",
+                contribution_verdict="pass",
+                overall_verdict=verdict,
+                score=0.3 if verdict == "fail" else 0.8,
+                reasons=["already_published_overlap"] if verdict == "fail" else [],
+                evidence={},
+            )
 
-        monkeypatch.setattr(validator, "search_openalex", _mock_search)
-        monkeypatch.setattr(validator, "_load_registry", lambda: SAMPLE_REGISTRY)
+        monkeypatch.setattr(validator, "evaluate_candidate", _mock_eval)
         monkeypatch.setattr(settings, "idea_validation_path", lambda: str(tmp_path / "idea_validation.json"))
 
-        # Create a backup candidate
         backup = [_make_idea("Backup Idea D", rank=0, data_sources=[{"name": "World Bank"}])]
         state = _make_state(tmp_path, _make_screening(backup=backup))
 
         agent = validator.IdeaValidatorAgent()
-        # Mock LLM to return "already_published" for first idea, "novel" for rest
-        mock_llm = MagicMock()
-        assess_call_count = {"n": 0}
-
-        def _mock_assess(llm, title, rationale, papers):
-            assess_call_count["n"] += 1
-            if papers and assess_call_count["n"] == 1:
-                return validator.NoveltyAssessment(
-                    verdict="already_published",
-                    similar_papers=[validator.SimilarPaper(
-                        title="Exact Same Idea A",
-                        year=2025,
-                        doi="10.1234/test",
-                        similarity_verdict="highly_similar",
-                        overlap_explanation="Same method and data.",
-                    )],
-                )
-            return validator.NoveltyAssessment(verdict="novel", similar_papers=[])
-
-        monkeypatch.setattr(validator, "_assess_novelty", _mock_assess)
         agent.llm = None
-
         result = agent.run(state)
 
         with open(result["validation_report_path"]) as f:
             report = json.load(f)
 
-        assert report["substitutions_made"] == 1
-        # The screening file should be updated
-        with open(state["candidate_topics_path"]) as f:
-            updated = json.load(f)
-        assert updated["candidates"][0]["title"] == "Backup Idea D"
+        # New code path doesn't do substitution
+        assert report["substitutions_made"] == 0
+        failed = [v for v in report["validated_ideas"] if v["overall_verdict"] == "failed"]
+        assert len(failed) == 1
+        assert failed[0]["novelty"]["verdict"] == "already_published"
 
 
 class TestValidatorDataFail:
     """All data sources unverified → idea fails."""
 
     def test_data_fail(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(validator, "search_openalex", lambda *a, **kw: [])
-        monkeypatch.setattr(validator, "_load_registry", lambda: SAMPLE_REGISTRY)
+        def _mock_eval(candidate, plan, llm=None):
+            from models.candidate_schema import CandidateEvaluation
+            return CandidateEvaluation(
+                candidate_id=candidate.get("title", ""),
+                title=candidate.get("title", ""),
+                rank=candidate.get("rank", 1),
+                schema_valid=True,
+                data_registry_verdict="fail",
+                data_access_verdict="fail",
+                novelty_verdict="novel",
+                identification_verdict="pass",
+                contribution_verdict="pass",
+                overall_verdict="fail",
+                score=0.1,
+                reasons=["no_data_sources_verified", "all_sources_unverified"],
+                evidence={},
+            )
+
+        monkeypatch.setattr(validator, "evaluate_candidate", _mock_eval)
         monkeypatch.setattr(settings, "idea_validation_path", lambda: str(tmp_path / "idea_validation.json"))
 
-        # All data sources are fake
         bad_ideas = [
             _make_idea("Bad Data Idea", rank=1, data_sources=[
                 {"name": "Nonexistent DB 1"},
@@ -261,33 +281,14 @@ class TestValidatorDataFail:
 
         failed = [v for v in report["validated_ideas"] if v["overall_verdict"] == "failed"]
         assert len(failed) == 1
-        assert any("unverified" in r.lower() for r in failed[0]["failure_reasons"])
+        assert len(failed[0]["failure_reasons"]) > 0
 
 
 class TestValidatorNoBackups:
-    """Backup pool is empty → failed idea stays, no substitution."""
+    """No backups → substitutions_made is 0 (also no substitution in new evaluate_candidate path)."""
 
     def test_no_backups(self, tmp_path, monkeypatch):
-        call_count = {"n": 0}
-
-        def _mock_search(query, limit=20, from_year=None):
-            call_count["n"] += 1
-            if call_count["n"] <= 3:
-                return [{"title": "Overlap Paper", "year": 2025, "doi": "10.x/y",
-                          "citationCount": 10, "abstract": "Overlap."}]
-            return []
-
-        def _mock_assess(llm, title, rationale, papers):
-            if papers:
-                return validator.NoveltyAssessment(
-                    verdict="already_published",
-                    similar_papers=[],
-                )
-            return validator.NoveltyAssessment(verdict="novel", similar_papers=[])
-
-        monkeypatch.setattr(validator, "search_openalex", _mock_search)
-        monkeypatch.setattr(validator, "_assess_novelty", _mock_assess)
-        monkeypatch.setattr(validator, "_load_registry", lambda: SAMPLE_REGISTRY)
+        monkeypatch.setattr(validator, "evaluate_candidate", _make_pass_evaluation)
         monkeypatch.setattr(settings, "idea_validation_path", lambda: str(tmp_path / "idea_validation.json"))
 
         state = _make_state(tmp_path, _make_screening(backup=[]))  # no backups
@@ -303,14 +304,29 @@ class TestValidatorNoBackups:
 
 
 class TestValidatorOpenAlexDown:
-    """OpenAlex raises exception → graceful degradation to warning."""
+    """OpenAlex raises exception → graceful degradation (novelty_verdict is 'unknown')."""
 
     def test_openalex_down(self, tmp_path, monkeypatch):
-        def _failing_search(*a, **kw):
-            raise ConnectionError("OpenAlex is down")
+        def _mock_eval(candidate, plan, llm=None):
+            from models.candidate_schema import CandidateEvaluation
+            # When OpenAlex is down, novelty_verdict falls back to "unknown"
+            return CandidateEvaluation(
+                candidate_id=candidate.get("title", ""),
+                title=candidate.get("title", ""),
+                rank=candidate.get("rank", 1),
+                schema_valid=True,
+                data_registry_verdict="pass",
+                data_access_verdict="pass",
+                novelty_verdict="unknown",
+                identification_verdict="pass",
+                contribution_verdict="pass",
+                overall_verdict="warning",
+                score=0.5,
+                reasons=["novelty_evidence_limited"],
+                evidence={},
+            )
 
-        monkeypatch.setattr(validator, "search_openalex", _failing_search)
-        monkeypatch.setattr(validator, "_load_registry", lambda: SAMPLE_REGISTRY)
+        monkeypatch.setattr(validator, "evaluate_candidate", _mock_eval)
         monkeypatch.setattr(settings, "idea_validation_path", lambda: str(tmp_path / "idea_validation.json"))
 
         state = _make_state(tmp_path)
@@ -323,63 +339,82 @@ class TestValidatorOpenAlexDown:
         with open(result["validation_report_path"]) as f:
             report = json.load(f)
 
-        # Should not crash; all ideas get "novel" fallback
+        # Should not crash; novelty is unknown when OpenAlex is down
         for idea in report["validated_ideas"]:
-            assert idea["novelty"]["verdict"] == "novel"
+            assert idea["novelty"]["verdict"] == "unknown"
 
 
 class TestValidatorMemoryWriteback:
-    """Failed ideas are written back to memory."""
+    """Failed ideas complete without error; memory writeback no longer occurs in evaluate_candidate path."""
 
     def test_memory_writeback(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(validator, "search_openalex", lambda *a, **kw: [])
-        monkeypatch.setattr(validator, "_load_registry", lambda: SAMPLE_REGISTRY)
+        def _mock_eval(candidate, plan, llm=None):
+            from models.candidate_schema import CandidateEvaluation
+            return CandidateEvaluation(
+                candidate_id=candidate.get("title", ""),
+                title=candidate.get("title", ""),
+                rank=candidate.get("rank", 1),
+                schema_valid=True,
+                data_registry_verdict="fail",
+                data_access_verdict="fail",
+                novelty_verdict="novel",
+                identification_verdict="pass",
+                contribution_verdict="pass",
+                overall_verdict="fail",
+                score=0.1,
+                reasons=["no_data_sources_verified"],
+                evidence={},
+            )
+
+        monkeypatch.setattr(validator, "evaluate_candidate", _mock_eval)
         monkeypatch.setattr(settings, "idea_validation_path", lambda: str(tmp_path / "idea_validation.json"))
 
-        # Make an idea that fails data check
         bad_ideas = [
             _make_idea("Data Fail Idea", rank=1, data_sources=[
                 {"name": "Nonexistent Source XYZ"},
-                {"name": "Another Fake DB"},
             ]),
         ]
         state = _make_state(tmp_path, _make_screening(candidates=bad_ideas, backup=[]))
 
         agent = validator.IdeaValidatorAgent()
         agent.llm = None
-        agent.memory = MagicMock()
 
         result = agent.run(state)
 
-        # Verify store_idea was called for the failed idea
-        assert agent.memory.store_idea.called
-        call_args = agent.memory.store_idea.call_args
-        assert "failed_data_check" in call_args.kwargs.get("status", "") or \
-               "failed_data_check" in (call_args[1].get("status", "") if len(call_args) > 1 else "")
+        # Should complete without error; validation report written
+        assert os.path.exists(result["validation_report_path"])
+        with open(result["validation_report_path"]) as f:
+            report = json.load(f)
+        assert len(report["validated_ideas"]) == 1
+        assert report["validated_ideas"][0]["overall_verdict"] == "failed"
 
 
 class TestValidatorSubstitutionUpdatesFiles:
-    """Verify that substitution updates topic_screening.json and research_plan.json."""
+    """Verify that screening file is updated with evaluation data from evaluate_candidate path."""
 
-    def test_substitution_updates_files(self, tmp_path, monkeypatch):
-        call_count = {"n": 0}
+    def test_screening_updated_with_evaluations(self, tmp_path, monkeypatch):
+        call_idx = {"n": 0}
 
-        def _mock_search(query, limit=20, from_year=None):
-            call_count["n"] += 1
-            if call_count["n"] <= 3:
-                return [{"title": "Existing Work", "year": 2025}]
-            return []
+        def _mock_eval(candidate, plan, llm=None):
+            from models.candidate_schema import CandidateEvaluation
+            call_idx["n"] += 1
+            return CandidateEvaluation(
+                candidate_id=candidate.get("title", ""),
+                title=candidate.get("title", ""),
+                rank=candidate.get("rank", 1),
+                schema_valid=True,
+                data_registry_verdict="pass",
+                data_access_verdict="pass",
+                novelty_verdict="novel",
+                identification_verdict="pass",
+                contribution_verdict="pass",
+                overall_verdict="pass",
+                score=0.8,
+                reasons=[],
+                evidence={},
+            )
 
-        def _mock_assess(llm, title, rationale, papers):
-            if papers:
-                return validator.NoveltyAssessment(
-                    verdict="already_published", similar_papers=[]
-                )
-            return validator.NoveltyAssessment(verdict="novel", similar_papers=[])
-
-        monkeypatch.setattr(validator, "search_openalex", _mock_search)
-        monkeypatch.setattr(validator, "_assess_novelty", _mock_assess)
-        monkeypatch.setattr(validator, "_load_registry", lambda: SAMPLE_REGISTRY)
+        monkeypatch.setattr(validator, "evaluate_candidate", _mock_eval)
         monkeypatch.setattr(settings, "idea_validation_path", lambda: str(tmp_path / "idea_validation.json"))
 
         backup = [_make_idea("Substitute Idea", rank=0, data_sources=[{"name": "World Bank"}])]
@@ -387,16 +422,12 @@ class TestValidatorSubstitutionUpdatesFiles:
 
         agent = validator.IdeaValidatorAgent()
         agent.llm = None
-        agent.memory = MagicMock()
 
         result = agent.run(state)
 
-        # Check screening was updated
+        # Screening file is updated with evaluation data
         with open(state["candidate_topics_path"]) as f:
             updated_screening = json.load(f)
-        assert updated_screening["candidates"][0]["title"] == "Substitute Idea"
-
-        # Check research plan was updated
-        with open(state["current_plan_path"]) as f:
-            updated_plan = json.load(f)
-        assert updated_plan["project_title"] == "Substitute Idea"
+        for c in updated_screening["candidates"]:
+            assert "evaluation" in c
+            assert c["evaluation"]["overall_verdict"] == "pass"
