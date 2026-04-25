@@ -103,13 +103,31 @@ async def serve_ui():
 
 # ── Background pipeline execution ────────────────────────────────────
 
-async def _run_pipeline(run_id: str, thread_id: str, domain_input: str) -> None:
+async def _run_pipeline(
+    run_id: str,
+    thread_id: str,
+    domain_input: str,
+    template_id: str | None = None,
+    technology_options: dict | None = None,
+    automation_risk_tolerance: str = "low_medium",
+    cloud_constraints: dict | None = None,
+    enable_experimental: bool = False,
+) -> None:
     """Run the pipeline phases in the background, handling HITL interrupt."""
     log_store.set_current_run(run_id)
     scope_token = settings.activate_run_scope(run_id)
     graph = _get_graph()
     config = {"configurable": {"thread_id": thread_id}}
-    initial_state = {"domain_input": domain_input, "execution_status": "starting"}
+    initial_state = {
+        "domain_input": domain_input,
+        "execution_status": "starting",
+        "template_id": template_id,
+        "technology_options": technology_options or {},
+        "automation_risk_tolerance": automation_risk_tolerance,
+        "cloud_constraints": cloud_constraints or {},
+        "enable_experimental": enable_experimental,
+        "candidate_factory_enabled": bool(template_id),
+    }
 
     def _stream_phase1() -> Optional[str]:
         """Synchronous streaming phase; returns first pending node if HITL, else None."""
@@ -281,7 +299,16 @@ async def start_run(req: StartRunRequest, background_tasks: BackgroundTasks):
     run = run_manager.create_run(req.domain_input, thread_id=req.thread_id)
     logger.info("Starting run %s for domain: %s", run.run_id, req.domain_input)
     task = asyncio.create_task(
-        _run_pipeline(run.run_id, run.thread_id, req.domain_input)
+        _run_pipeline(
+            run.run_id,
+            run.thread_id,
+            req.domain_input,
+            template_id=req.template_id,
+            technology_options=req.technology_options,
+            automation_risk_tolerance=req.automation_risk_tolerance,
+            cloud_constraints=req.cloud_constraints,
+            enable_experimental=req.enable_experimental,
+        )
     )
     _tasks[run.run_id] = task
     return run

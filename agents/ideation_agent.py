@@ -96,6 +96,11 @@ def _emit_emergency_fallback_outputs(state: ResearchState) -> dict:
 
 def ideation_node(state: ResearchState) -> dict:
     """LangGraph node: route to legacy V0 or new V2 ideation agent."""
+    if state.get("candidate_factory_enabled") and state.get("template_id"):
+        logger.info("Routing to candidate factory ideation (template: %s)", state.get("template_id"))
+        from agents.candidate_factory_ideation import run_candidate_factory_ideation
+        return run_candidate_factory_ideation(state)
+
     use_legacy = (
         state.get("legacy_ideation", False)
         or os.getenv("LEGACY_IDEATION", "0").strip() not in ("", "0", "false", "False")

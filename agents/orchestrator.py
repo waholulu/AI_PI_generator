@@ -41,6 +41,14 @@ class _Module1State(ResearchState, total=False):
     budget_override_usd: Optional[float]
     skip_reflection: bool
     hitl_interruption: dict
+    template_id: Optional[str]
+    technology_options: dict
+    automation_risk_tolerance: str
+    cloud_constraints: dict
+    enable_experimental: bool
+    candidate_factory_enabled: bool
+    candidate_cards_path: str
+    selected_candidate_id: str
 
 
 def _build_checkpointer():
