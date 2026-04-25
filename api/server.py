@@ -38,7 +38,7 @@ from agents import settings
 from agents.logging_config import setup_logging, get_logger
 
 from api import log_store, run_manager
-from agents.hitl_helpers import apply_idea_selection
+from agents.hitl_helpers import apply_idea_selection, apply_idea_selection_by_candidate_id
 from agents.development_pack_writer import write_development_pack
 from agents.research_template_loader import load_research_template, validate_template_sources
 from api.models import (
@@ -551,6 +551,44 @@ async def get_candidate(run_id: str, candidate_id: str):
         if candidate.get("candidate_id") == candidate_id:
             return {"run_id": run_id, "candidate": candidate}
     raise HTTPException(status_code=404, detail=f"Candidate {candidate_id!r} not found.")
+
+
+@app.post("/runs/{run_id}/candidates/{candidate_id}/select", response_model=ApproveResponse)
+async def select_candidate_by_id(run_id: str, candidate_id: str):
+    """Select a candidate by candidate_id and resume the paused pipeline."""
+    run = run_manager.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found.")
+    if run.status != "awaiting_approval":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Run is in status '{run.status}', not 'awaiting_approval'.",
+        )
+
+    token = settings.activate_run_scope(run_id)
+    try:
+        selected_title = await asyncio.to_thread(apply_idea_selection_by_candidate_id, candidate_id)
+    finally:
+        settings.deactivate_run_scope(token)
+
+    if selected_title is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"candidate_id {candidate_id!r} not found in current screening candidates.",
+        )
+
+    run_manager.record_milestone(run_id, "approved", f"candidate_id selected: {candidate_id}")
+    logger.info("HITL: candidate_id selected for run %s: %s", run_id, candidate_id)
+
+    task = asyncio.create_task(_resume_pipeline(run_id, run.thread_id))
+    _tasks[run_id] = task
+
+    return ApproveResponse(
+        run_id=run_id,
+        status="running",
+        message=f"Pipeline resumed with selected candidate_id: {candidate_id!r}",
+        selected_idea=selected_title,
+    )
 
 
 @app.post("/runs/{run_id}/candidates/{candidate_id}/development-pack")

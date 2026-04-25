@@ -81,6 +81,33 @@ def apply_idea_selection(idea_index: int) -> str | None:
     return selected_title
 
 
+def apply_idea_selection_by_candidate_id(candidate_id: str) -> str | None:
+    """Promote candidate with *candidate_id* to rank-1 and sync plan/context."""
+    screening_path = settings.topic_screening_path()
+    if not os.path.exists(screening_path):
+        return None
+
+    try:
+        with open(screening_path, "r", encoding="utf-8") as f:
+            screening = json.load(f)
+    except Exception:
+        return None
+
+    candidates: list = screening.get("candidates", [])
+    selected_index = next(
+        (
+            idx
+            for idx, candidate in enumerate(candidates)
+            if str(candidate.get("candidate_id", "")).strip() == candidate_id
+        ),
+        None,
+    )
+    if selected_index is None:
+        return None
+
+    return apply_idea_selection(selected_index)
+
+
 def load_validated_topics(validation_path: Optional[str] = None) -> List[Dict[str, Any]]:
     """Load validated ideas aligned with topic_screening.json candidate order.
 

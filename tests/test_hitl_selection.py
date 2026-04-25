@@ -2,7 +2,11 @@ import json
 import os
 
 from agents import settings
-from agents.hitl_helpers import apply_idea_selection, load_validated_topics
+from agents.hitl_helpers import (
+    apply_idea_selection,
+    apply_idea_selection_by_candidate_id,
+    load_validated_topics,
+)
 
 
 def test_apply_idea_selection_updates_screening_and_plan(tmp_path, monkeypatch) -> None:
@@ -43,6 +47,34 @@ def test_apply_idea_selection_updates_screening_and_plan(tmp_path, monkeypatch) 
         with open(plan_path, "r", encoding="utf-8") as f:
             updated_plan = json.load(f)
         assert updated_plan["project_title"] == "Topic B"
+    finally:
+        settings.deactivate_run_scope(token)
+
+
+def test_apply_idea_selection_by_candidate_id(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AUTOPI_DATA_ROOT", str(tmp_path))
+    run_id = "run-id-select"
+    token = settings.activate_run_scope(run_id)
+    try:
+        screening_path = settings.topic_screening_path()
+        os.makedirs(os.path.dirname(screening_path), exist_ok=True)
+        with open(screening_path, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "run_id": run_id,
+                    "candidates": [
+                        {"title": "Topic A", "candidate_id": "c_a", "rank": 1},
+                        {"title": "Topic B", "candidate_id": "c_b", "rank": 2},
+                    ],
+                },
+                f,
+            )
+
+        assert apply_idea_selection_by_candidate_id("c_b") == "Topic B"
+        with open(screening_path, "r", encoding="utf-8") as f:
+            updated = json.load(f)
+        assert updated["candidates"][0]["candidate_id"] == "c_b"
+        assert apply_idea_selection_by_candidate_id("missing_id") is None
     finally:
         settings.deactivate_run_scope(token)
 
