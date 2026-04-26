@@ -10,6 +10,7 @@ import json
 
 from agents import settings
 from agents.candidate_composer import compose_candidates
+from agents.candidate_feasibility import precheck_candidate
 from agents.logging_config import get_logger
 from models.candidate_composer_schema import ComposeRequest
 
@@ -28,7 +29,7 @@ def _make_research_question(c) -> str:
     return f"How does {exp} affect {out} at the {c.unit_of_analysis} level?"
 
 
-def _to_card(c, title: str, rq: str) -> dict:
+def _to_card(c, title: str, rq: str, gate_status: dict | None = None) -> dict:
     return {
         "candidate_id": c.candidate_id,
         "title": title,
@@ -44,21 +45,25 @@ def _to_card(c, title: str, rq: str) -> dict:
         "required_secrets": [],
         "automation_risk": c.automation_risk,
         "scores": {},
-        "gate_status": {},
+        "gate_status": gate_status or {},
         "repair_history": [],
         "development_pack_status": "not_generated",
         "_raw": c.model_dump(),
     }
 
 
-def _to_screening_candidate(c, title: str, rq: str, rank: int) -> dict:
+def _to_screening_candidate(
+    c, title: str, rq: str, rank: int, gate_status: dict | None = None
+) -> dict:
     """Format a candidate for topic_screening.json.
 
     Includes all fields that apply_idea_selection_by_candidate_id() and
-    build_research_plan_from_candidate() expect.
+    build_research_plan_from_candidate() expect, plus gate_status from
+    the feasibility precheck so the HITL UI and API can surface it.
     """
     exp = c.exposure_family.replace("_", " ")
     out = c.outcome_family.replace("_", " ")
+    gs = gate_status or {}
     return {
         "candidate_id": c.candidate_id,
         "topic_id": c.candidate_id,
@@ -79,6 +84,12 @@ def _to_screening_candidate(c, title: str, rq: str, rank: int) -> dict:
         ),
         "technology_tags": c.technology_tags,
         "automation_risk": c.automation_risk,
+        "gate_status": gs,
+        "shortlist_status": gs.get("shortlist_status", "review"),
+        "evaluation": {
+            "overall_verdict": gs.get("overall", "pending"),
+            "reasons": gs.get("reasons", []),
+        },
     }
 
 
@@ -112,8 +123,9 @@ def run_candidate_factory_ideation(state: dict) -> dict:
     for rank, c in enumerate(candidates, start=1):
         title = _make_title(c)
         rq = _make_research_question(c)
-        cards.append(_to_card(c, title, rq))
-        screening_candidates.append(_to_screening_candidate(c, title, rq, rank))
+        gate_status = precheck_candidate(c)
+        cards.append(_to_card(c, title, rq, gate_status))
+        screening_candidates.append(_to_screening_candidate(c, title, rq, rank, gate_status))
 
     cards_path = settings.output_dir() / "candidate_cards.json"
     cards_path.write_text(json.dumps(cards, indent=2, ensure_ascii=False))
