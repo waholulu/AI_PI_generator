@@ -3,6 +3,11 @@
 Called by ideation_node() when candidate_factory_enabled=True (i.e. a
 template_id was provided in the run request). Replaces LLM seed generation
 with a deterministic Cartesian-product expansion via compose_candidates().
+
+Step 3 upgrade: after precheck, each candidate is passed through
+repair_candidate() to apply deterministic fixes. Repair history is embedded
+in both candidate_cards.json and topic_screening.json, and the full
+per-candidate history is written to output/repair_history.json.
 """
 from __future__ import annotations
 
@@ -11,6 +16,7 @@ import json
 from agents import settings
 from agents.candidate_composer import compose_candidates
 from agents.candidate_feasibility import precheck_candidate
+from agents.candidate_repair import repair_candidate
 from agents.logging_config import get_logger
 from models.candidate_composer_schema import ComposeRequest
 
@@ -29,7 +35,14 @@ def _make_research_question(c) -> str:
     return f"How does {exp} affect {out} at the {c.unit_of_analysis} level?"
 
 
-def _to_card(c, title: str, rq: str, gate_status: dict | None = None) -> dict:
+def _to_card(
+    c,
+    title: str,
+    rq: str,
+    gate_status: dict | None = None,
+    repair_history: list[dict] | None = None,
+) -> dict:
+    gs = gate_status or {}
     return {
         "candidate_id": c.candidate_id,
         "title": title,
@@ -42,24 +55,30 @@ def _to_card(c, title: str, rq: str, gate_status: dict | None = None) -> dict:
         "method": c.method_template,
         "claim_strength": "associational",
         "technology_tags": c.technology_tags,
-        "required_secrets": [],
+        "required_secrets": gs.get("required_secrets", []),
         "automation_risk": c.automation_risk,
         "scores": {},
-        "gate_status": gate_status or {},
-        "repair_history": [],
+        "gate_status": gs,
+        "repair_history": repair_history or [],
+        "shortlist_status": gs.get("shortlist_status", "review"),
         "development_pack_status": "not_generated",
         "_raw": c.model_dump(),
     }
 
 
 def _to_screening_candidate(
-    c, title: str, rq: str, rank: int, gate_status: dict | None = None
+    c,
+    title: str,
+    rq: str,
+    rank: int,
+    gate_status: dict | None = None,
+    repair_history: list[dict] | None = None,
 ) -> dict:
     """Format a candidate for topic_screening.json.
 
     Includes all fields that apply_idea_selection_by_candidate_id() and
-    build_research_plan_from_candidate() expect, plus gate_status from
-    the feasibility precheck so the HITL UI and API can surface it.
+    build_research_plan_from_candidate() expect, plus gate_status / repair_history
+    from the precheck + repair pipeline.
     """
     exp = c.exposure_family.replace("_", " ")
     out = c.outcome_family.replace("_", " ")
@@ -84,7 +103,9 @@ def _to_screening_candidate(
         ),
         "technology_tags": c.technology_tags,
         "automation_risk": c.automation_risk,
+        "required_secrets": gs.get("required_secrets", []),
         "gate_status": gs,
+        "repair_history": repair_history or [],
         "shortlist_status": gs.get("shortlist_status", "review"),
         "evaluation": {
             "overall_verdict": gs.get("overall", "pending"),
@@ -94,7 +115,10 @@ def _to_screening_candidate(
 
 
 def run_candidate_factory_ideation(state: dict) -> dict:
-    """Write candidate_cards.json and topic_screening.json from compose_candidates().
+    """Write candidate_cards.json, topic_screening.json, and repair_history.json.
+
+    Pipeline:
+      compose_candidates → precheck_candidate → repair_candidate → write outputs
 
     Returns file-path references for downstream pipeline nodes.
     """
@@ -112,7 +136,9 @@ def run_candidate_factory_ideation(state: dict) -> dict:
     candidates = compose_candidates(req)
 
     if not candidates:
-        logger.error("compose_candidates() returned no candidates for template %s", template_id)
+        logger.error(
+            "compose_candidates() returned no candidates for template %s", template_id
+        )
         return {
             "execution_status": "failed",
             "degraded_nodes": ["ideation:no_candidates_from_factory"],
@@ -120,12 +146,20 @@ def run_candidate_factory_ideation(state: dict) -> dict:
 
     cards: list[dict] = []
     screening_candidates: list[dict] = []
+    all_repair_histories: list[dict] = []
+
     for rank, c in enumerate(candidates, start=1):
         title = _make_title(c)
         rq = _make_research_question(c)
+
         gate_status = precheck_candidate(c)
-        cards.append(_to_card(c, title, rq, gate_status))
-        screening_candidates.append(_to_screening_candidate(c, title, rq, rank, gate_status))
+        repaired_c, gate_status, repair_history = repair_candidate(c, gate_status)
+        all_repair_histories.extend(repair_history)
+
+        cards.append(_to_card(repaired_c, title, rq, gate_status, repair_history))
+        screening_candidates.append(
+            _to_screening_candidate(repaired_c, title, rq, rank, gate_status, repair_history)
+        )
 
     cards_path = settings.output_dir() / "candidate_cards.json"
     cards_path.write_text(json.dumps(cards, indent=2, ensure_ascii=False))
@@ -144,6 +178,13 @@ def run_candidate_factory_ideation(state: dict) -> dict:
         json.dump(screening, fh, indent=2, ensure_ascii=False)
     logger.info("Wrote topic_screening.json — %d candidates", len(screening_candidates))
 
+    repair_history_path = settings.repair_history_path()
+    with open(repair_history_path, "w", encoding="utf-8") as fh:
+        json.dump(all_repair_histories, fh, indent=2, ensure_ascii=False)
+    logger.info(
+        "Wrote repair_history.json — %d entries", len(all_repair_histories)
+    )
+
     first = screening_candidates[0]
     minimal_plan = {
         "run_id": run_id,
@@ -160,5 +201,6 @@ def run_candidate_factory_ideation(state: dict) -> dict:
         "candidate_topics_path": str(screening_path),
         "current_plan_path": str(plan_path),
         "candidate_cards_path": str(cards_path),
+        "repair_history_path": str(repair_history_path),
         "execution_status": "ideation_complete",
     }

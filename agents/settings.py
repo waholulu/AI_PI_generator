@@ -253,6 +253,10 @@ def data_access_report_path() -> str:
     return str(output_dir() / "data_access_report.json")
 
 
+def repair_history_path() -> str:
+    return str(output_dir() / "repair_history.json")
+
+
 def candidates_dir() -> Path:
     d = output_dir() / "candidates"
     d.mkdir(parents=True, exist_ok=True)
