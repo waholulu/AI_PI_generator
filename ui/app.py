@@ -21,7 +21,7 @@ from agents.hitl_helpers import (
 
 st.set_page_config(page_title="Auto-PI Monitoring UI", layout="wide")
 
-st.title("Auto-PI: Multi-Agent Research Scaffold UI")
+st.title("Auto-PI: Multi-Agent Research Scaffold UI  v0.3.0")
 st.markdown("Automating ideation, literature gathering, drafting, and data collection.")
 
 # Initialize session state
