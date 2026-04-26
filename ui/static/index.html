@@ -45,6 +45,19 @@
       border-bottom: 1px solid #2d3148;
     }
     .new-run-form h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: .08em; color: #64748b; margin-bottom: 12px; }
+    .form-grid { display: grid; gap: 8px; }
+    .field-label { font-size: .75rem; color: #94a3b8; margin-top: 6px; display:block; }
+    .input, select {
+      width: 100%;
+      background: #0f1117;
+      border: 1px solid #2d3148;
+      border-radius: 8px;
+      color: #e2e8f0;
+      padding: 8px 10px;
+      font-size: .82rem;
+    }
+    .checkbox-row { display:flex; align-items:center; gap:8px; font-size:.8rem; color:#cbd5e1; }
+    .expect-box { margin-top:8px; padding:8px; border:1px solid #2d3148; border-radius:8px; font-size:.75rem; color:#94a3b8; }
 
     textarea {
       width: 100%;
@@ -272,6 +285,12 @@
       text-decoration: none;
     }
     .output-card a:hover { text-decoration: underline; }
+    .candidate-grid { display:grid; grid-template-columns: repeat(auto-fill,minmax(300px,1fr)); gap: 12px; }
+    .candidate-card { background:#1a1d27; border:1px solid #2d3148; border-radius:10px; padding:12px; display:flex; flex-direction:column; gap:6px; }
+    .candidate-title { font-weight:600; font-size:.9rem; }
+    .badge-low { background:#1a3a2a; color:#4ade80; }
+    .badge-medium { background:#3b2700; color:#fbbf24; }
+    .badge-high { background:#3b1111; color:#f87171; }
 
     /* Modal */
     .modal-overlay {
@@ -489,7 +508,30 @@
   <aside class="sidebar">
     <div class="new-run-form">
       <h2>新建研究任务</h2>
-      <textarea id="domainInput" placeholder="输入研究方向，例如：GeoAI and Urban Planning">GeoAI and Urban Planning</textarea>
+      <div class="form-grid">
+        <textarea id="domainInput" placeholder="输入研究方向，例如：Built environment exposure and health outcomes">Built environment exposure and health outcomes</textarea>
+        <label class="field-label">Research template</label>
+        <select id="templateSelect" class="input"></select>
+        <label class="field-label">Automation risk tolerance</label>
+        <select id="riskTolerance" class="input">
+          <option value="low_medium">Low + medium</option>
+          <option value="low_only">Low only</option>
+          <option value="experimental">Experimental</option>
+        </select>
+        <label class="checkbox-row"><input type="checkbox" id="optOsmnx" checked> OSMnx</label>
+        <label class="checkbox-row"><input type="checkbox" id="optRemoteSensing" checked> Remote sensing</label>
+        <label class="checkbox-row"><input type="checkbox" id="optMsBuilding" checked> Microsoft building footprints</label>
+        <label class="checkbox-row"><input type="checkbox" id="optStreetView"> Street view CV</label>
+        <label class="checkbox-row"><input type="checkbox" id="optDL"> Deep learning</label>
+        <label class="checkbox-row"><input type="checkbox" id="ccNoPaidApi" checked> No paid API</label>
+        <label class="checkbox-row"><input type="checkbox" id="ccNoRawImage" checked> No raw image storage</label>
+        <label class="checkbox-row"><input type="checkbox" id="ccNoManual" checked> No manual download</label>
+        <label class="checkbox-row"><input type="checkbox" id="ccNoGpu" checked> No GPU</label>
+        <label class="checkbox-row"><input type="checkbox" id="enableExperimental"> Enable experimental</label>
+      </div>
+      <div class="expect-box">
+        Expected output: 20-40 candidates · Sources: OSMnx/CDC PLACES/ACS/TIGER/EPA/NLCD · Development pack enabled
+      </div>
       <button class="btn btn-primary" id="startBtn" onclick="startRun()">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
         启动研究
@@ -533,10 +575,13 @@ const PIPELINE_NODES = ['field_scanner','ideation','literature','drafter','data_
 
 let state = {
   runs: [],
+  templates: [],
   activeRunId: null,
   pollTimer: null,
   logTimer: null,
   activeTab: 'status',
+  selectedCandidateId: null,
+  candidates: [],
   logAutoScroll: true,
   logLevel: '',
 };
@@ -569,6 +614,21 @@ async function loadRuns() {
     state.runs = await api('GET', '/runs');
     renderRunList();
   } catch(e) { /* silent */ }
+}
+
+async function loadTemplates() {
+  try {
+    const data = await api('GET', '/templates');
+    state.templates = data.templates || [];
+    const sel = document.getElementById('templateSelect');
+    if (!sel) return;
+    sel.innerHTML = state.templates.map(t => `<option value="${escAttr(t.file_id || t.template_id)}">${escHtml(t.template_id || t.file_id)}</option>`).join('');
+    const built = state.templates.find(t => (t.file_id || t.template_id) === 'built_environment_health');
+    if (built) sel.value = 'built_environment_health';
+  } catch(e) {
+    const sel = document.getElementById('templateSelect');
+    if (sel) sel.innerHTML = '<option value="built_environment_health">built_environment_health</option>';
+  }
 }
 
 function renderRunList() {
@@ -610,7 +670,25 @@ async function startRun() {
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> 提交中...';
   try {
-    const run = await api('POST', '/runs', {domain_input: domain});
+    const run = await api('POST', '/runs', {
+      domain_input: domain,
+      template_id: document.getElementById('templateSelect').value || 'built_environment_health',
+      technology_options: {
+        osmnx: document.getElementById('optOsmnx').checked,
+        remote_sensing: document.getElementById('optRemoteSensing').checked,
+        microsoft_building_footprints: document.getElementById('optMsBuilding').checked,
+        streetview_cv: document.getElementById('optStreetView').checked,
+        deep_learning: document.getElementById('optDL').checked,
+      },
+      automation_risk_tolerance: document.getElementById('riskTolerance').value,
+      cloud_constraints: {
+        no_paid_api: document.getElementById('ccNoPaidApi').checked,
+        no_raw_image_storage: document.getElementById('ccNoRawImage').checked,
+        no_manual_download: document.getElementById('ccNoManual').checked,
+        no_gpu: document.getElementById('ccNoGpu').checked,
+      },
+      enable_experimental: document.getElementById('enableExperimental').checked,
+    });
     // Push placeholder into local list so sidebar updates immediately
     state.runs.unshift(run);
     renderRunList();
@@ -675,6 +753,9 @@ function renderDetail(run) {
     </div>
 
     <div class="tabs">
+      <div class="tab ${state.activeTab==='candidate_review'?'active':''}" onclick="switchTab('candidate_review')">Candidate Review</div>
+      <div class="tab ${state.activeTab==='candidate_detail'?'active':''}" onclick="switchTab('candidate_detail')">Candidate Detail</div>
+      <div class="tab ${state.activeTab==='development_pack'?'active':''}" onclick="switchTab('development_pack')">Development Pack</div>
       <div class="tab ${state.activeTab==='status'?'active':''}" onclick="switchTab('status')">状态</div>
       <div class="tab ${state.activeTab==='logs'?'active':''}" onclick="switchTab('logs')">日志</div>
       <div class="tab ${state.activeTab==='outputs'?'active':''}" onclick="switchTab('outputs')">输出文件</div>
@@ -696,9 +777,186 @@ function switchTab(tab) {
 function renderTab(run) {
   const el = document.getElementById('tabContent');
   if (!el) return;
-  if (state.activeTab === 'status')   renderStatusTab(el, run);
+  if (state.activeTab === 'candidate_review') renderCandidateReviewTab(el, run);
+  else if (state.activeTab === 'candidate_detail') renderCandidateDetailTab(el, run);
+  else if (state.activeTab === 'development_pack') renderDevelopmentPackTab(el, run);
+  else if (state.activeTab === 'status')   renderStatusTab(el, run);
   else if (state.activeTab === 'logs')    renderLogsTab(el, run);
   else if (state.activeTab === 'outputs') renderOutputsTab(el, run);
+}
+
+async function fetchCandidates(runId) {
+  const data = await api('GET', `/runs/${runId}/candidates`);
+  state.candidates = data.candidates || [];
+  if (!state.selectedCandidateId && state.candidates.length) {
+    state.selectedCandidateId = state.candidates[0].candidate_id;
+  }
+  return state.candidates;
+}
+
+function riskBadge(risk) {
+  if (risk === 'low') return '<span class="badge badge-low">Low risk</span>';
+  if (risk === 'medium') return '<span class="badge badge-medium">Medium risk</span>';
+  return '<span class="badge badge-high">High risk</span>';
+}
+
+function renderCandidateReviewTab(el, run) {
+  el.innerHTML = `
+    <div class="log-toolbar">
+      <select class="log-filter" id="candidateFilter">
+        <option value="">All</option>
+        <option value="ready">Ready only</option>
+        <option value="low">Low risk only</option>
+        <option value="no_secret">No API key required</option>
+        <option value="osmnx">OSMnx</option>
+        <option value="remote_sensing">Remote sensing</option>
+      </select>
+      <select class="log-filter" id="candidateSort">
+        <option value="overall">Overall score</option>
+        <option value="data_feasibility">Data feasibility</option>
+        <option value="automation_feasibility">Automation feasibility</option>
+        <option value="id">Candidate ID</option>
+      </select>
+      <button class="btn btn-ghost" onclick="renderCandidateReviewTab(document.getElementById('tabContent'), {run_id:'${run.run_id}'})">刷新</button>
+    </div>
+    <div id="candidateGrid">加载中...</div>
+  `;
+  fetchCandidates(run.run_id).then(() => {
+    const filter = document.getElementById('candidateFilter');
+    const sort = document.getElementById('candidateSort');
+    const renderCards = () => {
+      let candidates = [...state.candidates];
+      const fv = filter.value;
+      if (fv === 'ready') candidates = candidates.filter(c => c.shortlist_status === 'ready');
+      if (fv === 'low') candidates = candidates.filter(c => c.automation_risk === 'low');
+      if (fv === 'no_secret') candidates = candidates.filter(c => (c.required_secrets || []).length === 0);
+      if (fv === 'osmnx') candidates = candidates.filter(c => (c.technology_tags || []).includes('osmnx'));
+      if (fv === 'remote_sensing') candidates = candidates.filter(c => (c.technology_tags || []).includes('remote_sensing'));
+      const sv = sort.value;
+      if (sv === 'id') candidates.sort((a,b) => (a.candidate_id||'').localeCompare(b.candidate_id||''));
+      else candidates.sort((a,b) => (b.scores?.[sv]||0) - (a.scores?.[sv]||0));
+      document.getElementById('candidateGrid').innerHTML = `<div class="candidate-grid">${
+        candidates.map(c => `
+          <div class="candidate-card">
+            <div>${statusBadge(c.shortlist_status)} ${riskBadge(c.automation_risk)}</div>
+            <div class="candidate-title">${escHtml(c.title)}</div>
+            <div style="font-size:.8rem;color:#94a3b8">${escHtml(c.research_question)}</div>
+            <div style="font-size:.8rem">X: ${escHtml(c.exposure_label)} (${escHtml(c.exposure_source)})</div>
+            <div style="font-size:.8rem">Y: ${escHtml(c.outcome_label)} (${escHtml(c.outcome_source)})</div>
+            <div style="font-size:.8rem">Overall: ${Math.round((c.scores?.overall||0)*100)}</div>
+            ${(c.required_secrets||[]).length ? `<div style="font-size:.78rem;color:#fbbf24">Required secrets: ${(c.required_secrets||[]).join(', ')}</div>` : '<div style="font-size:.78rem;color:#86efac">Required secrets: none</div>'}
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
+              <button class="btn btn-ghost" onclick="openCandidateDetail('${escAttr(c.candidate_id)}')">View details</button>
+              <button class="btn btn-ghost" onclick="generatePack('${run.run_id}','${escAttr(c.candidate_id)}')">Generate development pack</button>
+              <button class="btn btn-success" onclick="selectCandidate('${run.run_id}','${escAttr(c.candidate_id)}')">Select for memo</button>
+            </div>
+          </div>
+      `).join('')}</div>`;
+    };
+    filter.onchange = renderCards;
+    sort.onchange = renderCards;
+    renderCards();
+  }).catch(e => {
+    document.getElementById('candidateGrid').innerHTML = `<div style="color:#f87171">${escHtml(e.message)}</div>`;
+  });
+}
+
+function statusBadge(status) {
+  if (status === 'ready') return '<span class="badge badge-completed">Ready</span>';
+  if (status === 'blocked') return '<span class="badge badge-failed">Blocked</span>';
+  return '<span class="badge badge-awaiting">Review</span>';
+}
+
+function openCandidateDetail(candidateId) {
+  state.selectedCandidateId = candidateId;
+  switchTab('candidate_detail');
+}
+
+function renderCandidateDetailTab(el, run) {
+  if (!state.selectedCandidateId) {
+    el.innerHTML = '<div style="color:#64748b">请先在 Candidate Review 选择一个 candidate。</div>';
+    return;
+  }
+  el.innerHTML = '<div style="color:#64748b">加载中...</div>';
+  api('GET', `/runs/${run.run_id}/candidates/${state.selectedCandidateId}`).then(data => {
+    const c = data.candidate;
+    const rows = (c.x_y_structure||[]).map(x => `<tr><td>${escHtml(x.role)}</td><td>${escHtml(x.variable)}</td><td>${escHtml(x.source)}</td><td>${escHtml(x.unit)}</td><td>${escHtml(x.status)}</td></tr>`).join('');
+    el.innerHTML = `
+      <h3 style="margin-bottom:8px">${escHtml(c.title)}</h3>
+      <div style="font-size:.85rem;color:#94a3b8;margin-bottom:12px">${escHtml(c.research_question)}</div>
+      <table><thead><tr><th>Role</th><th>Variable</th><th>Source</th><th>Unit</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>
+      <div class="status-card" style="margin-top:12px"><h3>Join plan</h3>${(c.join_plan?.steps||[]).map((s,i)=>`<div>${i+1}. ${escHtml(s)}</div>`).join('')}</div>
+      <div class="status-card"><h3>Identification</h3><div>Method: ${escHtml(c.identification?.primary_method||'')}</div><div>Claim strength: ${escHtml(c.identification?.claim_strength||'')}</div><div>Threats: ${(c.identification?.key_threats||[]).map(escHtml).join(', ') || 'none'}</div></div>
+      <div class="status-card"><h3>Technology & Policy</h3><div>Cloud safe: ${(c.technology?.cloud_safe ? 'yes' : 'no')}</div><div>Required secrets: ${(c.technology?.required_secrets||[]).join(', ') || 'none'}</div><div>Policy constraints: ${(c.technology?.policy_constraints||[]).join(', ') || 'none'}</div></div>
+    `;
+  }).catch(e => el.innerHTML = `<div style="color:#f87171">${escHtml(e.message)}</div>`);
+}
+
+function renderDevelopmentPackTab(el, run) {
+  if (!state.selectedCandidateId) {
+    el.innerHTML = '<div style="color:#64748b">请先选择 candidate。</div>';
+    return;
+  }
+  el.innerHTML = '<div style="color:#64748b">加载中...</div>';
+  api('GET', `/runs/${run.run_id}/development-packs/${state.selectedCandidateId}`).then(data => {
+    const checklist = data.checklist || {};
+    const items = Object.entries(checklist).map(([k,v]) => `<div>${v ? '✅' : '⚠️'} ${escHtml(k)}</div>`).join('');
+    const files = (data.files||[]).map(f => `
+      <div class="output-card">
+        <div class="output-card-name">${escHtml(f.filename)}</div>
+        <div style="display:flex;gap:10px">
+          <a href="#" onclick="openPackPreview('${run.run_id}','${state.selectedCandidateId}','${escAttr(f.filename)}');return false">Preview</a>
+          <a href="#" onclick="copyPackFile('${run.run_id}','${state.selectedCandidateId}','${escAttr(f.filename)}');return false">Copy</a>
+          <a href="${f.download_url}" download>Download</a>
+        </div>
+      </div>`).join('');
+    el.innerHTML = `
+      <div class="status-card"><h3>Claude Code Ready</h3><div>${data.claude_code_ready ? '✅ Ready' : '⚠️ Not Ready'}</div>${items}</div>
+      <div class="output-grid">${files}</div>
+      <button class="btn btn-primary" onclick="copyClaudePrompt('${run.run_id}','${state.selectedCandidateId}')">Copy Claude Code Task Prompt</button>
+    `;
+  }).catch(e => el.innerHTML = `<div style="color:#f87171">${escHtml(e.message)}</div>`);
+}
+
+async function generatePack(runId, candidateId) {
+  try {
+    await api('POST', `/runs/${runId}/candidates/${candidateId}/development-pack`);
+    toast('development pack 已生成', 'success');
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function selectCandidate(runId, candidateId) {
+  if (!confirm('确认选择该 candidate 并继续流程？')) return;
+  try {
+    await api('POST', `/runs/${runId}/candidates/${candidateId}/select`);
+    toast('已选择 candidate，继续执行', 'success');
+    await refreshDetail();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function openPackPreview(runId, candidateId, filename) {
+  const data = await api('GET', `/runs/${runId}/development-packs/${candidateId}`);
+  const file = (data.files||[]).find(f => f.filename === filename);
+  if (!file) return toast('文件不存在', 'error');
+  document.getElementById('modalTitle').textContent = filename;
+  document.getElementById('modalBody').innerHTML = renderPlainContent(file.preview_text || '');
+  document.getElementById('modalDownload').href = file.download_url;
+  document.getElementById('fileModal').style.display = 'flex';
+}
+
+async function copyPackFile(runId, candidateId, filename) {
+  const data = await api('GET', `/runs/${runId}/development-packs/${candidateId}`);
+  const file = (data.files||[]).find(f => f.filename === filename);
+  await navigator.clipboard.writeText(file?.preview_text || '');
+  toast('已复制预览内容', 'success');
+}
+
+async function copyClaudePrompt(runId, candidateId) {
+  const data = await api('GET', `/runs/${runId}/development-packs/${candidateId}`);
+  const file = (data.files||[]).find(f => f.filename === 'claude_task_prompt.md');
+  if (!file) return toast('缺少 claude_task_prompt.md', 'error');
+  await navigator.clipboard.writeText(file.preview_text || '');
+  toast('Claude task prompt 已复制', 'success');
 }
 
 // ── Status tab ──────────────────────────────────────────────────────────────
@@ -1240,6 +1498,7 @@ function renderPlainContent(text) {
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 (async () => {
+  await loadTemplates();
   await loadRuns();
   // Refresh run list every 10s
   setInterval(loadRuns, 10000);

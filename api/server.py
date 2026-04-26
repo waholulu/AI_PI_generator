@@ -28,7 +28,7 @@ import os
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, HTTPException
@@ -394,6 +394,142 @@ def _load_current_topics(run_id: str) -> list:
         settings.deactivate_run_scope(scope_token)
 
 
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _source_at(candidate: dict[str, Any], index: int) -> str:
+    sources = candidate.get("declared_sources") or []
+    if not isinstance(sources, list):
+        return ""
+    if index >= len(sources):
+        return ""
+    value = sources[index]
+    return str(value) if value is not None else ""
+
+
+def _normalize_candidate_card(candidate: dict[str, Any], fallback_idx: int) -> dict[str, Any]:
+    gate_status = candidate.get("gate_status") or {}
+    scores = candidate.get("scores") or {}
+    overall_gate = gate_status.get("overall", "pending")
+    gate_summary = {
+        "overall": overall_gate,
+        "failed_count": len(gate_status.get("failed_gates") or []),
+        "warning_count": len(gate_status.get("warnings") or []),
+    }
+    if candidate.get("shortlist_status"):
+        shortlist_status = candidate.get("shortlist_status")
+    else:
+        shortlist_status = (
+            "ready" if overall_gate == "pass" else "blocked" if overall_gate == "fail" else "review"
+        )
+
+    return {
+        "candidate_id": candidate.get("candidate_id") or candidate.get("topic_id") or f"legacy_{fallback_idx:03d}",
+        "title": candidate.get("title", ""),
+        "research_question": candidate.get("research_question", ""),
+        "exposure_label": candidate.get("exposure_label") or candidate.get("exposure_variable") or candidate.get("exposure_family", ""),
+        "exposure_source": candidate.get("exposure_source")
+        or _source_at(candidate, 0),
+        "outcome_label": candidate.get("outcome_label") or candidate.get("outcome_variable") or candidate.get("outcome_family", ""),
+        "outcome_source": candidate.get("outcome_source")
+        or _source_at(candidate, 1),
+        "unit_of_analysis": candidate.get("unit_of_analysis", ""),
+        "method": candidate.get("method") or candidate.get("method_template", ""),
+        "claim_strength": candidate.get("claim_strength", "associational"),
+        "technology_tags": candidate.get("technology_tags", []),
+        "required_secrets": gate_status.get("required_secrets", candidate.get("required_secrets", [])),
+        "automation_risk": candidate.get("automation_risk", "unknown"),
+        "shortlist_status": shortlist_status,
+        "scores": {
+            "data_feasibility": _safe_float(scores.get("data_feasibility")),
+            "automation_feasibility": _safe_float(scores.get("automation_feasibility")),
+            "identification_quality": _safe_float(scores.get("identification_quality")),
+            "novelty": _safe_float(scores.get("novelty")),
+            "technology_innovation": _safe_float(scores.get("technology_innovation")),
+            "overall": _safe_float(scores.get("overall")),
+        },
+        "gate_summary": gate_summary,
+        "development_pack_status": candidate.get("development_pack_status", "not_generated"),
+        "_raw": candidate.get("_raw") or candidate,
+    }
+
+
+def _build_candidate_detail(candidate: dict[str, Any], fallback_idx: int) -> dict[str, Any]:
+    card = _normalize_candidate_card(candidate, fallback_idx)
+    raw = card["_raw"]
+    join_plan = raw.get("join_plan") or {}
+    join_steps = join_plan.get("steps")
+    if not join_steps:
+        join_steps = [
+            f"Prepare exposure features from {card['exposure_source'] or 'exposure source'}",
+            f"Load outcome data from {card['outcome_source'] or 'outcome source'}",
+            f"Join datasets at {card['unit_of_analysis'] or 'target'} level by GEOID",
+        ]
+    x_y_structure = [
+        {
+            "role": "exposure",
+            "variable": card["exposure_label"],
+            "source": card["exposure_source"],
+            "unit": card["unit_of_analysis"],
+            "format": "derived_features",
+            "status": "pass",
+        },
+        {
+            "role": "outcome",
+            "variable": card["outcome_label"],
+            "source": card["outcome_source"],
+            "unit": card["unit_of_analysis"],
+            "format": "tabular",
+            "status": "pass",
+        },
+    ]
+    if raw.get("key_threats") or raw.get("mitigations"):
+        identification = {
+            "primary_method": card["method"],
+            "claim_strength": card["claim_strength"],
+            "key_threats": raw.get("key_threats", []),
+            "mitigations": raw.get("mitigations", {}),
+        }
+    else:
+        identification = {
+            "primary_method": card["method"],
+            "claim_strength": card["claim_strength"],
+            "key_threats": [],
+            "mitigations": {},
+        }
+    policy_constraints = []
+    cloud_constraints = raw.get("cloud_constraints") or {}
+    if cloud_constraints.get("no_paid_api"):
+        policy_constraints.append("no_paid_api")
+    if cloud_constraints.get("no_raw_image_storage"):
+        policy_constraints.append("no_raw_image_storage")
+
+    return {
+        "candidate_id": card["candidate_id"],
+        "title": card["title"],
+        "research_question": card["research_question"],
+        "x_y_structure": x_y_structure,
+        "join_plan": {
+            "steps": join_steps,
+            "join_key": join_plan.get("join_key", "GEOID"),
+        },
+        "identification": identification,
+        "technology": {
+            "cloud_safe": bool(raw.get("cloud_safe", True)),
+            "automation_risk": card["automation_risk"],
+            "required_extras": raw.get("required_extras", card["technology_tags"]),
+            "required_secrets": card["required_secrets"],
+            "policy_constraints": policy_constraints,
+        },
+        "gate_status": raw.get("gate_status", {}),
+        "repair_history": raw.get("repair_history", []),
+    }
+
+
 def _load_candidate_cards(run_id: str) -> list[dict]:
     """Load candidate cards from run-scoped outputs (or fallback screening candidates)."""
     token = settings.activate_run_scope(run_id)
@@ -403,40 +539,17 @@ def _load_candidate_cards(run_id: str) -> list[dict]:
             try:
                 payload = json.loads(output_path.read_text(encoding="utf-8"))
                 if isinstance(payload, list):
-                    return payload
+                    return [_normalize_candidate_card(c, i) for i, c in enumerate(payload, start=1)]
                 if isinstance(payload, dict):
-                    return payload.get("candidates", [])
+                    candidates = payload.get("candidates", [])
+                    return [_normalize_candidate_card(c, i) for i, c in enumerate(candidates, start=1)]
             except json.JSONDecodeError:
                 pass
         screening = Path(settings.topic_screening_path())
         if screening.exists():
             payload = json.loads(screening.read_text(encoding="utf-8"))
             candidates = payload.get("candidates", [])
-            normalized = []
-            for idx, c in enumerate(candidates, start=1):
-                normalized.append(
-                    {
-                        "candidate_id": c.get("candidate_id") or f"legacy_{idx:03d}",
-                        "title": c.get("title", ""),
-                        "research_question": c.get("research_question", ""),
-                        "exposure_label": c.get("exposure", {}).get("specific_variable", ""),
-                        "exposure_source": ", ".join(c.get("data_sources", [])[:1]) if c.get("data_sources") else "",
-                        "outcome_label": c.get("outcome", {}).get("specific_variable", ""),
-                        "outcome_source": ", ".join(c.get("data_sources", [])[1:2]) if len(c.get("data_sources", [])) > 1 else "",
-                        "unit_of_analysis": c.get("spatial_scope", {}).get("spatial_unit", ""),
-                        "method": c.get("identification", {}).get("primary", ""),
-                        "claim_strength": "associational",
-                        "technology_tags": c.get("technology_tags", []),
-                        "required_secrets": c.get("required_secrets", []),
-                        "automation_risk": c.get("automation_risk", "unknown"),
-                        "scores": c.get("scores", {}),
-                        "gate_status": c.get("gate_status", {}),
-                        "repair_history": c.get("repair_history", []),
-                        "development_pack_status": c.get("development_pack_status", "not_generated"),
-                        "_raw": c,
-                    }
-                )
-            return normalized
+            return [_normalize_candidate_card(c, i) for i, c in enumerate(candidates, start=1)]
         return []
     finally:
         settings.deactivate_run_scope(token)
@@ -565,7 +678,9 @@ async def list_candidates(run_id: str):
     run = run_manager.get_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found.")
-    return {"run_id": run_id, "candidates": _load_candidate_cards(run_id)}
+    cards = _load_candidate_cards(run_id)
+    public_cards = [{k: v for k, v in c.items() if k != "_raw"} for c in cards]
+    return {"run_id": run_id, "count": len(public_cards), "candidates": public_cards}
 
 
 @app.get("/runs/{run_id}/candidates/{candidate_id}")
@@ -574,9 +689,9 @@ async def get_candidate(run_id: str, candidate_id: str):
     if run is None:
         raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found.")
     candidates = _load_candidate_cards(run_id)
-    for candidate in candidates:
+    for i, candidate in enumerate(candidates, start=1):
         if candidate.get("candidate_id") == candidate_id:
-            return {"run_id": run_id, "candidate": candidate}
+            return {"run_id": run_id, "candidate": _build_candidate_detail(candidate, i)}
     raise HTTPException(status_code=404, detail=f"Candidate {candidate_id!r} not found.")
 
 
@@ -670,6 +785,82 @@ async def list_development_pack_files(run_id: str, candidate_id: str):
             raise HTTPException(status_code=404, detail=f"Development pack for {candidate_id!r} not found.")
         files = [{"filename": p.name, "size_bytes": p.stat().st_size} for p in sorted(pack_dir.glob("*")) if p.is_file()]
         return {"run_id": run_id, "candidate_id": candidate_id, "files": files}
+    finally:
+        settings.deactivate_run_scope(token)
+
+
+@app.get("/runs/{run_id}/development-packs/{candidate_id}")
+async def get_development_pack(run_id: str, candidate_id: str):
+    run = run_manager.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found.")
+    token = settings.activate_run_scope(run_id)
+    try:
+        pack_dir = settings.development_packs_dir() / candidate_id
+        if not pack_dir.exists():
+            raise HTTPException(status_code=404, detail=f"Development pack for {candidate_id!r} not found.")
+
+        required = [
+            "implementation_spec.json",
+            "claude_task_prompt.md",
+            "data_contract.yaml",
+            "feature_plan.yaml",
+            "analysis_plan.yaml",
+            "acceptance_tests.md",
+        ]
+        found = {p.name for p in pack_dir.glob("*") if p.is_file()}
+        has_required = {name: name in found for name in required}
+
+        preview_limit = 8000
+        files = []
+        for file_path in sorted(pack_dir.glob("*")):
+            if not file_path.is_file():
+                continue
+            text = file_path.read_text(encoding="utf-8", errors="ignore")
+            files.append(
+                {
+                    "filename": file_path.name,
+                    "file_type": file_path.suffix.lstrip(".") or "text",
+                    "preview_text": text[:preview_limit],
+                    "truncated": len(text) > preview_limit,
+                    "download_url": f"/runs/{run_id}/development-packs/{candidate_id}/files/{file_path.name}",
+                }
+            )
+
+        candidates = _load_candidate_cards(run_id)
+        candidate_card = next((c for c in candidates if c.get("candidate_id") == candidate_id), {})
+        required_secrets = candidate_card.get("required_secrets", [])
+        risk = candidate_card.get("automation_risk", "unknown")
+        checklist = {
+            "has_implementation_spec": has_required["implementation_spec.json"],
+            "has_claude_task_prompt": has_required["claude_task_prompt.md"],
+            "has_data_contract": has_required["data_contract.yaml"],
+            "has_feature_plan": has_required["feature_plan.yaml"],
+            "has_analysis_plan": has_required["analysis_plan.yaml"],
+            "has_acceptance_tests": has_required["acceptance_tests.md"],
+            "has_smoke_test": has_required["acceptance_tests.md"],
+            "has_required_secrets": bool(required_secrets),
+            "automation_risk_allowed": risk in ("low", "medium"),
+        }
+        ready = all(
+            [
+                checklist["has_implementation_spec"],
+                checklist["has_claude_task_prompt"],
+                checklist["has_data_contract"],
+                checklist["has_feature_plan"],
+                checklist["has_analysis_plan"],
+                checklist["has_acceptance_tests"],
+            ]
+        )
+        claude_code_ready = ready and not checklist["has_required_secrets"] and checklist["automation_risk_allowed"]
+        return {
+            "run_id": run_id,
+            "candidate_id": candidate_id,
+            "status": "ready" if ready else "incomplete",
+            "claude_code_ready": claude_code_ready,
+            "checklist": checklist,
+            "files": files,
+        }
     finally:
         settings.deactivate_run_scope(token)
 
