@@ -292,6 +292,26 @@
     .badge-medium { background:#3b2700; color:#fbbf24; }
     .badge-high { background:#3b1111; color:#f87171; }
 
+    /* Candidate card extras */
+    .tag { display:inline-block; font-size:.68rem; padding:1px 6px; border-radius:4px; background:#1e2d4a; color:#60a5fa; margin:1px 2px 1px 0; }
+    .dev-pack-ready { color:#34d399; font-size:.75rem; }
+    .dev-pack-none  { color:#475569; font-size:.75rem; }
+    .gate-ok   { color:#4ade80; font-size:.75rem; }
+    .gate-warn { color:#fbbf24; font-size:.75rem; }
+    .gate-fail { color:#f87171; font-size:.75rem; }
+    .warn-box        { background:#3b1111; border:1px solid #7f1d1d; border-radius:6px; padding:8px 12px; font-size:.8rem; color:#f87171; margin:6px 0; }
+    .warn-box-orange { background:#2a1f00; border:1px solid #92400e; border-radius:6px; padding:8px 12px; font-size:.8rem; color:#fbbf24; margin:6px 0; }
+
+    /* Confirmation modal */
+    .confirm-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.65); z-index:1100; display:flex; align-items:center; justify-content:center; }
+    .confirm-box { background:#1a1d27; border:1px solid #334155; border-radius:12px; padding:24px; max-width:440px; width:90%; }
+    .confirm-box h3 { font-size:.95rem; margin-bottom:8px; color:#e2e8f0; }
+    .confirm-box p  { font-size:.85rem; color:#94a3b8; margin-bottom:16px; line-height:1.55; }
+    .confirm-actions { display:flex; gap:10px; justify-content:flex-end; }
+
+    /* Outputs semantic groups */
+    .output-group-label { font-size:.8rem; text-transform:uppercase; letter-spacing:.06em; color:#64748b; margin:16px 0 10px; }
+
     /* Modal */
     .modal-overlay {
       position: fixed;
@@ -557,6 +577,18 @@
 
 <div id="toast"></div>
 
+<!-- High-risk / paid-API confirmation modal -->
+<div class="confirm-overlay" id="confirmModal" style="display:none" onclick="if(event.target===this)closeConfirmModal()">
+  <div class="confirm-box">
+    <h3 id="confirmTitle">Confirm Selection</h3>
+    <p id="confirmMsg"></p>
+    <div class="confirm-actions">
+      <button class="btn btn-ghost" onclick="closeConfirmModal()">Cancel</button>
+      <button class="btn btn-danger" id="confirmOkBtn">Confirm</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="fileModal" style="display:none" onclick="if(event.target===this)closeFileModal()">
   <div class="modal">
     <div class="modal-header">
@@ -584,6 +616,7 @@ let state = {
   candidates: [],
   logAutoScroll: true,
   logLevel: '',
+  cloudConstraints: {},
 };
 
 // ── API helpers ─────────────────────────────────────────────────────────────
@@ -689,6 +722,12 @@ async function startRun() {
       },
       enable_experimental: document.getElementById('enableExperimental').checked,
     });
+    state.cloudConstraints = {
+      no_paid_api: document.getElementById('ccNoPaidApi').checked,
+      no_raw_image_storage: document.getElementById('ccNoRawImage').checked,
+      no_manual_download: document.getElementById('ccNoManual').checked,
+      no_gpu: document.getElementById('ccNoGpu').checked,
+    };
     // Push placeholder into local list so sidebar updates immediately
     state.runs.unshift(run);
     renderRunList();
@@ -802,19 +841,28 @@ function riskBadge(risk) {
 
 function renderCandidateReviewTab(el, run) {
   el.innerHTML = `
-    <div class="log-toolbar">
+    <div class="log-toolbar" style="flex-wrap:wrap;gap:6px">
       <select class="log-filter" id="candidateFilter">
         <option value="">All</option>
         <option value="ready">Ready only</option>
         <option value="low">Low risk only</option>
         <option value="no_secret">No API key required</option>
+        <option value="no_paid_api">No paid API</option>
         <option value="osmnx">OSMnx</option>
         <option value="remote_sensing">Remote sensing</option>
+        <option value="epa">EPA sources</option>
+        <option value="cdc_places">CDC PLACES outcomes</option>
+        <option value="has_dev_pack">Has development pack</option>
+        <option value="has_warnings">Has repairable warnings</option>
+        <option value="blocked">Blocked</option>
       </select>
       <select class="log-filter" id="candidateSort">
         <option value="overall">Overall score</option>
         <option value="data_feasibility">Data feasibility</option>
         <option value="automation_feasibility">Automation feasibility</option>
+        <option value="identification_quality">Identification quality</option>
+        <option value="technology_innovation">Technology innovation</option>
+        <option value="lowest_risk">Lowest risk</option>
         <option value="id">Candidate ID</option>
       </select>
       <button class="btn btn-ghost" onclick="renderCandidateReviewTab(document.getElementById('tabContent'), {run_id:'${run.run_id}'})">刷新</button>
@@ -824,34 +872,68 @@ function renderCandidateReviewTab(el, run) {
   fetchCandidates(run.run_id).then(() => {
     const filter = document.getElementById('candidateFilter');
     const sort = document.getElementById('candidateSort');
+    const riskOrder = {low: 0, medium: 1, high: 2, unknown: 3};
     const renderCards = () => {
       let candidates = [...state.candidates];
       const fv = filter.value;
-      if (fv === 'ready') candidates = candidates.filter(c => c.shortlist_status === 'ready');
-      if (fv === 'low') candidates = candidates.filter(c => c.automation_risk === 'low');
-      if (fv === 'no_secret') candidates = candidates.filter(c => (c.required_secrets || []).length === 0);
-      if (fv === 'osmnx') candidates = candidates.filter(c => (c.technology_tags || []).includes('osmnx'));
-      if (fv === 'remote_sensing') candidates = candidates.filter(c => (c.technology_tags || []).includes('remote_sensing'));
+      if (fv === 'ready')      candidates = candidates.filter(c => c.shortlist_status === 'ready');
+      if (fv === 'low')        candidates = candidates.filter(c => c.automation_risk === 'low');
+      if (fv === 'no_secret')  candidates = candidates.filter(c => (c.required_secrets||[]).length === 0);
+      if (fv === 'no_paid_api') candidates = candidates.filter(c => (c.required_secrets||[]).length === 0);
+      if (fv === 'osmnx')      candidates = candidates.filter(c => (c.technology_tags||[]).includes('osmnx'));
+      if (fv === 'remote_sensing') candidates = candidates.filter(c => (c.technology_tags||[]).some(t => t.includes('remote_sensing') || t.includes('remote')));
+      if (fv === 'epa')        candidates = candidates.filter(c => (c.exposure_source||'').toLowerCase().includes('epa') || (c.outcome_source||'').toLowerCase().includes('epa') || (c.technology_tags||[]).some(t => t.toLowerCase().includes('epa')));
+      if (fv === 'cdc_places') candidates = candidates.filter(c => (c.outcome_source||'').toLowerCase().includes('cdc') || (c.outcome_source||'').toLowerCase().includes('places'));
+      if (fv === 'has_dev_pack')  candidates = candidates.filter(c => c.development_pack_status === 'ready');
+      if (fv === 'has_warnings')  candidates = candidates.filter(c => (c.gate_summary?.warning_count||0) > 0 && c.shortlist_status !== 'blocked');
+      if (fv === 'blocked')    candidates = candidates.filter(c => c.shortlist_status === 'blocked');
       const sv = sort.value;
-      if (sv === 'id') candidates.sort((a,b) => (a.candidate_id||'').localeCompare(b.candidate_id||''));
-      else candidates.sort((a,b) => (b.scores?.[sv]||0) - (a.scores?.[sv]||0));
+      if (sv === 'id')         candidates.sort((a,b) => (a.candidate_id||'').localeCompare(b.candidate_id||''));
+      else if (sv === 'lowest_risk') candidates.sort((a,b) => (riskOrder[a.automation_risk]||3) - (riskOrder[b.automation_risk]||3));
+      else                     candidates.sort((a,b) => (b.scores?.[sv]||0) - (a.scores?.[sv]||0));
       document.getElementById('candidateGrid').innerHTML = `<div class="candidate-grid">${
-        candidates.map(c => `
+        candidates.map(c => {
+          const gs = c.gate_summary || {};
+          const gateHtml = gs.failed_count > 0
+            ? `<span class="gate-fail">✗ ${gs.failed_count} gate failed</span>`
+            : gs.warning_count > 0
+              ? `<span class="gate-warn">⚠ ${gs.warning_count} warning${gs.warning_count > 1 ? 's' : ''}</span>`
+              : '<span class="gate-ok">✓ All gates pass</span>';
+          const tagsHtml = (c.technology_tags||[]).map(t => `<span class="tag">${escHtml(t)}</span>`).join('');
+          const dpHtml = c.development_pack_status === 'ready'
+            ? '<span class="dev-pack-ready">📦 dev pack ready</span>'
+            : '<span class="dev-pack-none">dev pack: not generated</span>';
+          const hasSecrets = (c.required_secrets||[]).length > 0;
+          const secretsHtml = hasSecrets
+            ? `<div style="font-size:.78rem;color:#fbbf24">⚠ Required secrets: ${escHtml((c.required_secrets||[]).join(', '))}</div>`
+            : '<div style="font-size:.78rem;color:#86efac">Required secrets: none</div>';
+          const noPaidApi = state.cloudConstraints.no_paid_api;
+          const selectDisabled = (noPaidApi && hasSecrets) ? 'disabled title="Paid API required — blocked by no_paid_api constraint"' : '';
+          return `
           <div class="candidate-card">
-            <div>${statusBadge(c.shortlist_status)} ${riskBadge(c.automation_risk)}</div>
+            <div style="display:flex;gap:4px;flex-wrap:wrap">${statusBadge(c.shortlist_status)} ${riskBadge(c.automation_risk)} ${gateHtml}</div>
             <div class="candidate-title">${escHtml(c.title)}</div>
             <div style="font-size:.8rem;color:#94a3b8">${escHtml(c.research_question)}</div>
-            <div style="font-size:.8rem">X: ${escHtml(c.exposure_label)} (${escHtml(c.exposure_source)})</div>
-            <div style="font-size:.8rem">Y: ${escHtml(c.outcome_label)} (${escHtml(c.outcome_source)})</div>
-            <div style="font-size:.8rem">Overall: ${Math.round((c.scores?.overall||0)*100)}</div>
-            ${(c.required_secrets||[]).length ? `<div style="font-size:.78rem;color:#fbbf24">Required secrets: ${(c.required_secrets||[]).join(', ')}</div>` : '<div style="font-size:.78rem;color:#86efac">Required secrets: none</div>'}
+            <div style="font-size:.8rem">X: ${escHtml(c.exposure_label||'')} · <em>${escHtml(c.exposure_source||'')}</em></div>
+            <div style="font-size:.8rem">Y: ${escHtml(c.outcome_label||'')} · <em>${escHtml(c.outcome_source||'')}</em></div>
+            <div style="font-size:.8rem">Unit: ${escHtml(c.unit_of_analysis||'')} · Method: ${escHtml(c.method||'')}</div>
+            <div style="font-size:.8rem;display:flex;gap:10px;flex-wrap:wrap">
+              <span>Overall: <strong>${Math.round((c.scores?.overall||0)*100)}</strong></span>
+              <span>Data: ${Math.round((c.scores?.data_feasibility||0)*100)}</span>
+              <span>Auto: ${Math.round((c.scores?.automation_feasibility||0)*100)}</span>
+              <span>ID: ${Math.round((c.scores?.identification_quality||0)*100)}</span>
+            </div>
+            ${secretsHtml}
+            ${tagsHtml ? `<div style="margin-top:2px">${tagsHtml}</div>` : ''}
+            <div style="display:flex;gap:4px;align-items:center;margin-top:2px">${dpHtml}</div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
               <button class="btn btn-ghost" onclick="openCandidateDetail('${escAttr(c.candidate_id)}')">View details</button>
-              <button class="btn btn-ghost" onclick="generatePack('${run.run_id}','${escAttr(c.candidate_id)}')">Generate development pack</button>
-              <button class="btn btn-success" onclick="selectCandidate('${run.run_id}','${escAttr(c.candidate_id)}')">Select for memo</button>
+              <button class="btn btn-ghost" onclick="generatePack('${run.run_id}','${escAttr(c.candidate_id)}')">Generate pack</button>
+              <button class="btn btn-success" ${selectDisabled} onclick="selectCandidate('${run.run_id}','${escAttr(c.candidate_id)}')">Select for memo</button>
             </div>
-          </div>
-      `).join('')}</div>`;
+          </div>`;
+        }).join('')
+      }</div>`;
     };
     filter.onchange = renderCards;
     sort.onchange = renderCards;
@@ -881,13 +963,50 @@ function renderCandidateDetailTab(el, run) {
   api('GET', `/runs/${run.run_id}/candidates/${state.selectedCandidateId}`).then(data => {
     const c = data.candidate;
     const rows = (c.x_y_structure||[]).map(x => `<tr><td>${escHtml(x.role)}</td><td>${escHtml(x.variable)}</td><td>${escHtml(x.source)}</td><td>${escHtml(x.unit)}</td><td>${escHtml(x.status)}</td></tr>`).join('');
+    const mitigations = c.identification?.mitigations || {};
+    const mitEntries = Object.entries(mitigations).filter(([,v]) => v);
+    const mitHtml = mitEntries.length
+      ? `<div style="margin-top:8px"><strong style="font-size:.8rem;color:#94a3b8">Mitigations:</strong><ul style="margin:4px 0 0 16px;font-size:.82rem;color:#cbd5e1">${mitEntries.map(([k,v]) => `<li><em>${escHtml(k)}:</em> ${escHtml(String(v))}</li>`).join('')}</ul></div>`
+      : '';
+    const hasSecrets = (c.technology?.required_secrets||[]).length > 0;
+    const hasRawImage = (c.technology?.policy_constraints||[]).includes('no_raw_image_storage');
+    const secretsWarnHtml = hasSecrets
+      ? `<div class="warn-box">⚠ Required secrets: <strong>${escHtml((c.technology.required_secrets).join(', '))}</strong>. This candidate requires paid API access.</div>`
+      : '';
+    const rawImageWarnHtml = hasRawImage
+      ? `<div class="warn-box-orange">⚠ Raw image storage is disabled. Only extracted numeric features may be stored.</div>`
+      : '';
+    const policyText = (c.technology?.policy_constraints||[]).filter(p => p !== 'no_raw_image_storage').join(', ') || 'none';
     el.innerHTML = `
       <h3 style="margin-bottom:8px">${escHtml(c.title)}</h3>
       <div style="font-size:.85rem;color:#94a3b8;margin-bottom:12px">${escHtml(c.research_question)}</div>
       <table><thead><tr><th>Role</th><th>Variable</th><th>Source</th><th>Unit</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>
-      <div class="status-card" style="margin-top:12px"><h3>Join plan</h3>${(c.join_plan?.steps||[]).map((s,i)=>`<div>${i+1}. ${escHtml(s)}</div>`).join('')}</div>
-      <div class="status-card"><h3>Identification</h3><div>Method: ${escHtml(c.identification?.primary_method||'')}</div><div>Claim strength: ${escHtml(c.identification?.claim_strength||'')}</div><div>Threats: ${(c.identification?.key_threats||[]).map(escHtml).join(', ') || 'none'}</div></div>
-      <div class="status-card"><h3>Technology & Policy</h3><div>Cloud safe: ${(c.technology?.cloud_safe ? 'yes' : 'no')}</div><div>Required secrets: ${(c.technology?.required_secrets||[]).join(', ') || 'none'}</div><div>Policy constraints: ${(c.technology?.policy_constraints||[]).join(', ') || 'none'}</div></div>
+      <div class="status-card" style="margin-top:12px">
+        <h3>Join plan</h3>
+        ${(c.join_plan?.steps||[]).map((s,i)=>`<div style="font-size:.85rem;margin-bottom:4px">${i+1}. ${escHtml(s)}</div>`).join('')}
+        ${c.join_plan?.join_key ? `<div style="font-size:.78rem;color:#64748b;margin-top:6px">Join key: <code>${escHtml(c.join_plan.join_key)}</code></div>` : ''}
+      </div>
+      <div class="status-card">
+        <h3>Identification</h3>
+        <div style="font-size:.85rem"><strong>Primary method:</strong> ${escHtml(c.identification?.primary_method||'—')}</div>
+        <div style="font-size:.85rem"><strong>Claim strength:</strong> ${escHtml(c.identification?.claim_strength||'—')}</div>
+        ${(c.identification?.key_threats||[]).length ? `
+          <div style="margin-top:6px"><strong style="font-size:.8rem;color:#94a3b8">Key threats:</strong>
+            <ul style="margin:4px 0 0 16px;font-size:.82rem;color:#cbd5e1">${(c.identification.key_threats).map((t,i) => `<li>${i+1}. ${escHtml(t)}</li>`).join('')}</ul>
+          </div>` : ''}
+        ${mitHtml}
+      </div>
+      <div class="status-card">
+        <h3>Technology & Policy</h3>
+        ${secretsWarnHtml}${rawImageWarnHtml}
+        <div class="kv-grid" style="margin-top:${(secretsWarnHtml||rawImageWarnHtml)?'8px':'0'}">
+          <span class="kv-label">Cloud safe</span><span class="kv-value">${c.technology?.cloud_safe ? '✓ yes' : '✗ no'}</span>
+          <span class="kv-label">Automation risk</span><span class="kv-value">${escHtml(c.technology?.automation_risk||'unknown')}</span>
+          <span class="kv-label">Required extras</span><span class="kv-value">${(c.technology?.required_extras||[]).join(', ') || 'none'}</span>
+          <span class="kv-label">Required secrets</span><span class="kv-value">${hasSecrets ? escHtml((c.technology.required_secrets).join(', ')) : 'none'}</span>
+          <span class="kv-label">Other policy</span><span class="kv-value">${escHtml(policyText)}</span>
+        </div>
+      </div>
     `;
   }).catch(e => el.innerHTML = `<div style="color:#f87171">${escHtml(e.message)}</div>`);
 }
@@ -925,13 +1044,55 @@ async function generatePack(runId, candidateId) {
   } catch (e) { toast(e.message, 'error'); }
 }
 
-async function selectCandidate(runId, candidateId) {
-  if (!confirm('确认选择该 candidate 并继续流程？')) return;
+function showConfirmModal(title, msg, btnLabel, btnClass, onConfirm) {
+  document.getElementById('confirmTitle').textContent = title;
+  document.getElementById('confirmMsg').textContent = msg;
+  const btn = document.getElementById('confirmOkBtn');
+  btn.className = `btn ${btnClass}`;
+  btn.textContent = btnLabel;
+  btn.onclick = () => { closeConfirmModal(); onConfirm(); };
+  document.getElementById('confirmModal').style.display = 'flex';
+}
+
+function closeConfirmModal() {
+  document.getElementById('confirmModal').style.display = 'none';
+}
+
+async function _doSelect(runId, candidateId) {
   try {
     await api('POST', `/runs/${runId}/candidates/${candidateId}/select`);
     toast('已选择 candidate，继续执行', 'success');
     await refreshDetail();
   } catch (e) { toast(e.message, 'error'); }
+}
+
+async function selectCandidate(runId, candidateId) {
+  const candidate = state.candidates.find(c => c.candidate_id === candidateId);
+  const isHighRisk = candidate && candidate.automation_risk === 'high';
+  const hasSecrets = candidate && (candidate.required_secrets || []).length > 0;
+  const noPaidApi = state.cloudConstraints.no_paid_api;
+
+  if (noPaidApi && hasSecrets) {
+    showConfirmModal(
+      'Paid API Required',
+      `This candidate requires secrets: ${(candidate.required_secrets || []).join(', ')}. Your run has "No paid API" enabled. Selecting it may fail or incur costs. Proceed anyway?`,
+      'Proceed anyway',
+      'btn-danger',
+      () => _doSelect(runId, candidateId)
+    );
+    return;
+  }
+  if (isHighRisk) {
+    showConfirmModal(
+      'High-Risk Candidate',
+      'This candidate may require API keys, paid access, or non-default compute resources. I understand the implications and want to proceed.',
+      'I understand, proceed',
+      'btn-danger',
+      () => _doSelect(runId, candidateId)
+    );
+    return;
+  }
+  await _doSelect(runId, candidateId);
 }
 
 async function openPackPreview(runId, candidateId, filename) {
@@ -1237,6 +1398,32 @@ async function fetchLogs() {
 }
 
 // ── Outputs tab ──────────────────────────────────────────────────────────────
+const CANDIDATE_OUTPUT_NAMES = new Set([
+  'candidate_cards.json','feasibility_report.json','repair_history.json',
+  'topic_screening.json','idea_validation.json','ideation_run_summary.json',
+  'field_scan.json',
+]);
+const SELECTED_OUTPUT_NAMES = new Set([
+  'research_plan.json','research_memo.md','literature_index.json',
+  'data_access_report.json','academic_draft.md','Draft_v1.md',
+  'references.bib','research_context.json',
+]);
+const DEV_OUTPUT_SUFFIXES = [
+  'implementation_spec.json','claude_task_prompt.md','data_contract.yaml',
+  'feature_plan.yaml','analysis_plan.yaml','acceptance_tests.md',
+];
+
+function _semanticGroup(filename) {
+  const base = filename.split('/').pop();
+  if (filename.includes('development_packs') || DEV_OUTPUT_SUFFIXES.some(s => base === s))
+    return 'Development Outputs';
+  if (CANDIDATE_OUTPUT_NAMES.has(base)) return 'Candidate Outputs';
+  if (SELECTED_OUTPUT_NAMES.has(base))  return 'Selected Research Outputs';
+  if (filename.includes('ideation_traces') || base.includes('diagnostic') || base.includes('gate_trace'))
+    return 'Diagnostics';
+  return 'Other';
+}
+
 function renderOutputsTab(el, run) {
   el.innerHTML = '<div style="color:#64748b;font-size:.875rem">加载中...</div>';
   api('GET', `/runs/${run.run_id}/outputs`).then(data => {
@@ -1245,33 +1432,34 @@ function renderOutputsTab(el, run) {
       return;
     }
 
-    // Group files by top-level directory
+    // Semantic grouping
+    const groupOrder = ['Candidate Outputs','Selected Research Outputs','Development Outputs','Diagnostics','Other'];
     const groups = {};
-    const groupLabels = {output:'输出文件', config:'配置文件', data:'数据文件'};
+    groupOrder.forEach(g => { groups[g] = []; });
     data.files.forEach(f => {
-      const dir = f.filename.includes('/') ? f.filename.split('/')[0] : 'output';
-      if (!groups[dir]) groups[dir] = [];
-      groups[dir].push(f);
+      const g = _semanticGroup(f.filename);
+      groups[g].push(f);
     });
 
+    const makeCard = (f) => {
+      const viewable = isViewable(f.filename);
+      const shortName = f.filename.includes('/') ? f.filename.split('/').slice(1).join('/') : f.filename;
+      return `
+      <div class="output-card">
+        <div class="output-card-name" title="${escHtml(f.filename)}">${escHtml(shortName)}</div>
+        <div class="output-card-size">${fmtBytes(f.size_bytes)}</div>
+        <div style="display:flex;gap:12px;margin-top:4px">
+          ${viewable ? `<a href="#" onclick="openFileViewer('${escAttr(run.run_id)}','${escAttr(f.filename)}');return false" style="font-size:.8rem;color:#a78bfa;text-decoration:none;cursor:pointer">◎ 查看</a>` : ''}
+          <a href="/runs/${run.run_id}/outputs/${encodePath(f.filename)}" download="${escHtml(shortName)}" style="font-size:.8rem;color:#a78bfa;text-decoration:none">↓ 下载</a>
+        </div>
+      </div>`;
+    };
+
     let html = '';
-    for (const [dir, files] of Object.entries(groups)) {
-      html += `<h3 style="font-size:.8rem;text-transform:uppercase;letter-spacing:.06em;color:#64748b;margin:16px 0 10px">${groupLabels[dir]||dir}</h3>`;
-      html += `<div class="output-grid">${files.map(f => {
-        const viewable = isViewable(f.filename);
-        const shortName = f.filename.includes('/') ? f.filename.split('/').slice(1).join('/') : f.filename;
-        return `
-        <div class="output-card">
-          <div class="output-card-name" title="${escHtml(f.filename)}">${escHtml(shortName)}</div>
-          <div class="output-card-size">${fmtBytes(f.size_bytes)}</div>
-          <div style="display:flex;gap:12px;margin-top:4px">
-            ${viewable ? `<a href="#" onclick="openFileViewer('${escAttr(run.run_id)}','${escAttr(f.filename)}');return false" style="font-size:.8rem;color:#a78bfa;text-decoration:none;cursor:pointer">◎ 查看</a>` : ''}
-            <a href="/runs/${run.run_id}/outputs/${encodePath(f.filename)}" download="${escHtml(shortName)}" style="font-size:.8rem;color:#a78bfa;text-decoration:none">
-              ↓ 下载
-            </a>
-          </div>
-        </div>`;
-      }).join('')}</div>`;
+    for (const g of groupOrder) {
+      if (!groups[g] || !groups[g].length) continue;
+      html += `<div class="output-group-label">${g}</div>`;
+      html += `<div class="output-grid">${groups[g].map(makeCard).join('')}</div>`;
     }
     el.innerHTML = html;
   }).catch(() => {
