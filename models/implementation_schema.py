@@ -35,6 +35,8 @@ class ImplementationSpec(BaseModel):
     automation_risk: Literal["low", "medium", "high"]
     required_python_extras: list[str] = Field(default_factory=list)
     required_secrets: list[str] = Field(default_factory=list)
+    # Populated only for OSMnx/street-network candidates; None otherwise
+    osmnx_feature_plan: dict | None = None
     data_acquisition_steps: list[DataAcquisitionStep] = Field(default_factory=list)
     feature_engineering_steps: list[FeatureEngineeringStep] = Field(default_factory=list)
     analysis_steps: list[AnalysisStep] = Field(default_factory=list)

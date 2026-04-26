@@ -22,6 +22,10 @@ def score_candidate(candidate: dict, gate_status: dict, repair_history: list[dic
     else:
         automation_feasibility = 0.7
 
+    # Guardrail: required_secrets cap automation feasibility (Step 3 policy)
+    if required_secrets:
+        automation_feasibility = min(automation_feasibility, 0.45)
+
     threats = candidate.get("key_threats", [])
     mitigations = candidate.get("mitigations", {})
     if threats:
@@ -56,6 +60,10 @@ def score_candidate(candidate: dict, gate_status: dict, repair_history: list[dic
         + 0.15 * novelty
         + 0.10 * technology_innovation
     )
+
+    # Guardrail: high-risk candidates are capped regardless of tech innovation (Step 3 policy)
+    if risk == "high":
+        overall = min(overall, 0.65)
 
     if any(h.get("result") == "blocked" for h in repair_history):
         overall = min(overall, 0.45)

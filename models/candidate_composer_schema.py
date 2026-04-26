@@ -35,3 +35,5 @@ class ComposedCandidate(BaseModel):
     required_secrets: list[str] = Field(default_factory=list)
     automation_risk: Literal["low", "medium", "high"] = "low"
     cloud_safe: bool = True
+    # Composer-level shortlist hint; feasibility precheck may override to "blocked"
+    initial_shortlist_status: Literal["ready", "review", "blocked"] = "ready"

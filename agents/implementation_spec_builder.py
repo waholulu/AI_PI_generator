@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from agents.feature_modules.osmnx_features import build_osmnx_feature_plan
 from models.candidate_composer_schema import ComposedCandidate
 from models.implementation_schema import (
     AnalysisStep,
@@ -38,12 +39,32 @@ def build_implementation_spec(candidate: ComposedCandidate) -> ImplementationSpe
     exposure_method, exposure_files = _acquisition_method(candidate.exposure_source)
     outcome_method, outcome_files = _acquisition_method(candidate.outcome_source)
 
+    # Attach OSMnx feature plan for candidates using OpenStreetMap street network data
+    osmnx_feature_plan: dict | None = None
+    if "osmnx" in candidate.technology_tags or "osmnx" in candidate.exposure_source.lower():
+        osmnx_feature_plan = build_osmnx_feature_plan(
+            candidate_id=candidate.candidate_id,
+            exposure_family=candidate.exposure_family,
+            unit_of_analysis=candidate.unit_of_analysis,
+        )
+
+    feature_step_libs = ["pandas", "geopandas"]
+    feature_step_pseudo = "load exposure and outcome, spatially aggregate to tract, join on GEOID"
+    if osmnx_feature_plan:
+        feature_step_libs.append("osmnx")
+        feature_step_pseudo = (
+            f"call build_osmnx_features(place_name=smoke_test_geography, use_fixture=True) "
+            f"to get {', '.join(osmnx_feature_plan['expected_features'][:3])} + more; "
+            "then join to outcome on GEOID"
+        )
+
     return ImplementationSpec(
         candidate_id=candidate.candidate_id,
         cloud_safe=candidate.cloud_safe,
         automation_risk=candidate.automation_risk,
         required_python_extras=required_extras,
         required_secrets=candidate.required_secrets,
+        osmnx_feature_plan=osmnx_feature_plan,
         data_acquisition_steps=[
             DataAcquisitionStep(
                 source_name=candidate.exposure_source,
@@ -64,8 +85,8 @@ def build_implementation_spec(candidate: ComposedCandidate) -> ImplementationSpe
                 step_id="join_features_outcome",
                 input_sources=[candidate.exposure_source, candidate.outcome_source],
                 output_features=candidate.exposure_variables,
-                library_tags=["pandas", "geopandas"],
-                pseudo_code="load exposure and outcome, spatially aggregate to tract, join on GEOID",
+                library_tags=feature_step_libs,
+                pseudo_code=feature_step_pseudo,
             )
         ],
         analysis_steps=[

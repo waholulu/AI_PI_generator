@@ -91,6 +91,21 @@ def compose_candidates(req: ComposeRequest) -> list[ComposedCandidate]:
         tech_tags = _technology_tags(exp_source, exp_name, exp_spec)
         cloud_safe = registry.is_cloud_safe(exp_source) and registry.is_cloud_safe(out_source)
 
+        # Experimental guardrail: shortlist_status starts as "review" (not ready)
+        # for any candidate that needs secrets or has high automation risk.
+        # This prevents experimental candidates from ever being auto-promoted.
+        if risk == "high" or required_secrets:
+            _initial_shortlist = "review"
+        else:
+            _initial_shortlist = "ready"
+
+        # Paid API block: when no_paid_api is set, block candidates that
+        # cost money regardless of experimental flag.
+        if req.no_paid_api and (
+            exp_source_spec.get("cost_required") or out_source_spec.get("cost_required")
+        ):
+            _initial_shortlist = "blocked"
+
         candidates.append(
             ComposedCandidate(
                 candidate_id=f"beh_{serial:03d}",
@@ -115,6 +130,7 @@ def compose_candidates(req: ComposeRequest) -> list[ComposedCandidate]:
                 required_secrets=required_secrets,
                 automation_risk=risk,
                 cloud_safe=cloud_safe,
+                initial_shortlist_status=_initial_shortlist,
             )
         )
         serial += 1
