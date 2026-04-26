@@ -1,3 +1,5 @@
+# DEPRECATED: This Streamlit UI is no longer maintained.
+# The production frontend is ui/static/index.html served by api/server.py.
 import streamlit as st
 import json
 import os
