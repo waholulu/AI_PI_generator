@@ -14,9 +14,9 @@ def _acquisition_method(source_name: str) -> tuple[str, list[str]]:
     if "osmnx" in sid:
         return "osmnx", ["data/raw/osmnx_features.parquet"]
     if source_name == "CDC_PLACES":
-        return "api/download", ["data/raw/cdc_places.csv"]
+        return "api", ["data/raw/cdc_places.csv"]
     if source_name == "ACS":
-        return "api/download", ["data/raw/acs_controls.csv"]
+        return "api", ["data/raw/acs_controls.csv"]
     if source_name == "TIGER_Lines":
         return "download", ["data/raw/tiger_tracts.geojson"]
     if source_name in {"NLCD", "EPA_EnviroAtlas"}:
@@ -27,7 +27,7 @@ def _acquisition_method(source_name: str) -> tuple[str, list[str]]:
         return "download", ["data/raw/microsoft_buildings.geojson"]
     if source_name == "GTFS":
         return "download", ["data/raw/gtfs.zip"]
-    return "api/download", ["data/raw/source_extract.csv"]
+    return "api", ["data/raw/source_extract.csv"]
 
 
 def build_implementation_spec(candidate: ComposedCandidate) -> ImplementationSpec:
