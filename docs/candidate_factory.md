@@ -142,7 +142,7 @@ Up to `VALIDATION_MAX_SUBSTITUTIONS` (default: 2) rounds are attempted.
 
 ## 8. Development Pack
 
-`agents/development_pack_writer.py` writes a directory of files:
+`agents/development_pack_writer.py` writes a directory of files under `output/development_packs/{candidate_id}/`:
 
 | File | Purpose |
 |------|---------|
@@ -153,6 +153,56 @@ Up to `VALIDATION_MAX_SUBSTITUTIONS` (default: 2) rounds are attempted.
 | `analysis_plan.yaml` | Method + outcome |
 | `acceptance_tests.md` | Test requirements |
 | `claude_task_prompt.md` | Prompt for Claude Code |
+
+**Auto-generation**: `run_candidate_factory_ideation()` automatically generates a development pack for every `ready` candidate — no manual trigger needed.  `review` and `blocked` candidates do not get packs generated automatically.
+
+---
+
+## 9. Claude Code Ready
+
+`agents/development_pack_status.evaluate_development_pack_readiness()` applies a 10-point checklist to determine whether a candidate is `claude_code_ready`:
+
+| Check | Condition |
+|-------|-----------|
+| `implementation_spec.json` exists | pack file present and non-empty |
+| `claude_task_prompt.md` exists | pack file present and non-empty |
+| `data_contract.yaml` exists | pack file present and non-empty |
+| `feature_plan.yaml` exists | pack file present and non-empty |
+| `analysis_plan.yaml` exists | pack file present and non-empty |
+| `acceptance_tests.md` exists | pack file present and non-empty |
+| `automation_risk` not high | `low` or `medium` only |
+| `required_secrets` empty | no env-vars needed at runtime |
+| no experimental tags | none of `streetview_cv`, `deep_learning`, `satellite_cv`, `experimental` |
+| gate not failed | overall gate is `pass` or `warning`, not `fail` |
+
+`shortlist_status = "review"` with non-file blocking reasons → `development_pack_status = "review_required"`.
+
+Candidates with `claude_code_ready = true` get a **Claude Code Ready** badge in the UI and a visible **Copy Task Prompt** button on the candidate card.
+
+---
+
+## 10. Run Output Files
+
+After a candidate factory run, the following files are written to `output/`:
+
+| File | Content |
+|------|---------|
+| `candidate_cards.json` | All candidate cards with scores, gate_status, claude_code_ready |
+| `feasibility_report.json` | Summary counts (ready/review/blocked/risk tiers) + per-candidate subchecks |
+| `development_pack_index.json` | Mapping of candidate_id → pack status + file paths |
+| `gate_trace.json` | Per-candidate gate trace + repair history + scores |
+| `topic_screening.json` | Candidates formatted for HITL / literature stage |
+| `repair_history.json` | Flat log of all repair actions |
+| `development_packs/{id}/` | One directory per ready candidate |
+
+These files are also accessible via the REST API:
+
+```
+GET /runs/{run_id}/feasibility-report
+GET /runs/{run_id}/development-pack-index
+GET /runs/{run_id}/candidates/{id}/claude-task-prompt
+GET /runs/{run_id}/development-packs/{id}
+```
 
 ---
 

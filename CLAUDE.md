@@ -92,10 +92,12 @@ Topics with ≤2 refinable gate failures are held in `output/tentative_pool.json
 - **MemoryRetriever** (`agents/memory_retriever.py`) — CSV-based persistent idea memory to avoid repeating failed directions
 - **Settings** (`agents/settings.py`) — Centralized path configuration; all paths relative to `AUTOPI_DATA_ROOT`
 - **Logging** (`agents/logging_config.py`) — Structured JSON logging; use `get_logger(__name__)` in all agents
-- **RuleEngine** (`agents/rule_engine.py`) — Zero-LLM-cost deterministic gate checks (G2/G3/G4/G6)
+- **RuleEngine** (`agents/rule_engine.py`) — Zero-LLM-cost deterministic gate checks (G2/G3/G4/G6); `run_hard_blockers()` accepts `use_role_based_g3=True` for candidate factory path
 - **BudgetTracker** (`agents/budget_tracker.py`) — Thread-safe dual-layer LLM cost guard
 - **OpenAlexVerifier** (`agents/openalex_verifier.py`) — Four-tuple novelty check via pyalex
 - **ReflectionLoop** (`agents/reflection_loop.py`) — Per-topic iterative refinement with trace persistence
+- **DevelopmentPackStatus** (`agents/development_pack_status.py`) — `evaluate_development_pack_readiness()` determines `claude_code_ready` via 10-point checklist
+- **CandidateOutputWriter** (`agents/candidate_output_writer.py`) — Writes `feasibility_report.json`, `development_pack_index.json`, `gate_trace.json` per run; called automatically by candidate factory
 
 ### Orchestrator (`agents/orchestrator.py`)
 
@@ -116,6 +118,9 @@ data/           Generated artifacts: literature cards, raw data
 memory/         Persistent idea memory (CSV + JSONL)
 models/         Pydantic models (topic_schema.py, data_source.py)
 output/         Final outputs: field scan, drafts, BibTeX, checkpoints,
+                candidate_cards.json, feasibility_report.json,
+                development_pack_index.json, gate_trace.json,
+                repair_history.json, development_packs/{candidate_id}/,
                 ideation_traces/, tentative_pool.json, ideation_run_summary.json
 prompts/        System prompts for LLM calls + data source registry
 scripts/        CLI wrappers for cloud operations + diagnostic report generator
@@ -168,6 +173,13 @@ uv run python -m pytest tests/test_topic_schema.py tests/test_settings_new_paths
   tests/test_rule_engine.py tests/test_budget_tracker.py tests/test_openalex_verifier.py \
   tests/test_reflection_loop.py tests/test_ideation_v2.py tests/test_hitl_helpers_v2.py \
   tests/test_integration_module1_v2.py -v
+
+# Candidate factory eval — enforces thresholds in CI
+uv run python scripts/eval_candidate_factory.py \
+  --template built_environment_health \
+  --max-candidates 40 \
+  --enable-experimental false \
+  --check-thresholds
 
 # Live tests (require API keys)
 uv run python -m pytest tests/test_field_scan_live.py -v   # Live OpenAlex test
