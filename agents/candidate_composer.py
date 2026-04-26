@@ -68,6 +68,13 @@ def compose_candidates(req: ComposeRequest) -> list[ComposedCandidate]:
         out_spec = outcomes[out_name]
         method_spec = methods[method_name]
 
+        if not req.enable_experimental and exp_name == "streetview_built_form":
+            continue
+        if "streetview_cv" not in req.preferred_technology and exp_name == "streetview_built_form":
+            continue
+        if "deep_learning" not in req.preferred_technology and "deepvision" in method_name:
+            continue
+
         if exp_spec.get("tier") == "experimental" and not req.enable_experimental:
             continue
 
@@ -105,6 +112,10 @@ def compose_candidates(req: ComposeRequest) -> list[ComposedCandidate]:
             exp_source_spec.get("cost_required") or out_source_spec.get("cost_required")
         ):
             _initial_shortlist = "blocked"
+        elif req.automation_risk_tolerance == "low_only" and risk in {"medium", "high"}:
+            _initial_shortlist = "review"
+        elif req.automation_risk_tolerance == "low_medium" and risk == "high":
+            _initial_shortlist = "review"
 
         candidates.append(
             ComposedCandidate(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from agents.source_registry import SourceRegistry
 from models.research_plan_schema import (
     DataSourceSpec,
     FeasibilitySpec,
@@ -17,25 +18,56 @@ def _as_nonempty(value: Any, fallback: str) -> str:
 
 
 def _candidate_data_sources(candidate: dict[str, Any]) -> list[DataSourceSpec]:
+    registry = SourceRegistry.load()
     raw_sources = candidate.get("data_sources")
     if not isinstance(raw_sources, list):
-        raw_sources = [{"name": name} for name in candidate.get("declared_sources", [])]
+        raw_sources = []
+        raw_sources.extend(
+            [
+                {"name": candidate.get("exposure_source"), "role": "exposure", "variable_family": candidate.get("exposure_variable")},
+                {"name": candidate.get("outcome_source"), "role": "outcome", "variable_family": candidate.get("outcome_variable")},
+            ]
+        )
+        join_plan = candidate.get("join_plan") or {}
+        for name in join_plan.get("controls", []) or []:
+            raw_sources.append({"name": name, "role": "control"})
+        for name in join_plan.get("boundary_source", []) or []:
+            raw_sources.append({"name": name, "role": "boundary"})
+        raw_sources.extend([{"name": name} for name in candidate.get("declared_sources", [])])
     specs: list[DataSourceSpec] = []
+    seen: set[str] = set()
     for source in raw_sources:
         if isinstance(source, str):
             source = {"name": source}
         name = _as_nonempty(source.get("name") or source.get("source"), "Unknown data source")
-        specs.append(
-            DataSourceSpec(
-                name=name,
-                source_type=str(source.get("source_type") or "unknown"),
-                access_url=str(source.get("access_url") or source.get("url") or ""),
-                documentation_url=str(source.get("documentation_url") or ""),
-                license=str(source.get("license") or ""),
-                expected_format=str(source.get("expected_format") or source.get("format") or ""),
-                access_notes=str(source.get("access_notes") or source.get("accessibility") or ""),
+        if not name or name == "Unknown data source":
+            continue
+        canonical = registry.resolve(name) or name
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+
+        registry_spec = registry.get(canonical)
+        if registry_spec:
+            specs.append(
+                registry.enrich_data_source_from_registry(
+                    source_id=canonical,
+                    role=source.get("role"),
+                    variable_family=source.get("variable_family"),
+                )
             )
-        )
+        else:
+            specs.append(
+                DataSourceSpec(
+                    name=name,
+                    source_type=str(source.get("source_type") or "unknown"),
+                    access_url=str(source.get("access_url") or source.get("url") or ""),
+                    documentation_url=str(source.get("documentation_url") or ""),
+                    license=str(source.get("license") or ""),
+                    expected_format=str(source.get("expected_format") or source.get("format") or ""),
+                    access_notes=str(source.get("access_notes") or source.get("accessibility") or ""),
+                )
+            )
     if not specs:
         specs = [DataSourceSpec(name="Unspecified public source", source_type="unknown")]
     return specs
@@ -72,6 +104,7 @@ def build_research_plan_from_candidate(
     data_sources = _candidate_data_sources(candidate)
     exposure = VariableSpec(
         name=exposure_name,
+        family=str(candidate.get("exposure_family") or candidate.get("exposure_variable_family") or candidate.get("exposure_variable") or ""),
         definition=str(candidate.get("exposure_definition") or ""),
         measurement_proxy=str(candidate.get("exposure_proxy") or ""),
         spatial_unit=str(candidate.get("spatial_unit") or ""),
@@ -80,6 +113,7 @@ def build_research_plan_from_candidate(
     )
     outcome = VariableSpec(
         name=outcome_name,
+        family=str(candidate.get("outcome_family") or candidate.get("outcome_variable_family") or candidate.get("outcome_variable") or ""),
         definition=str(candidate.get("outcome_definition") or ""),
         measurement_proxy=str(candidate.get("outcome_proxy") or ""),
         spatial_unit=str(candidate.get("spatial_unit") or ""),

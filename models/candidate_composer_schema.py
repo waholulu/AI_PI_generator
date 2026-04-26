@@ -14,6 +14,7 @@ class ComposeRequest(BaseModel):
     no_paid_api: bool = True
     no_manual_download: bool = True
     preferred_technology: list[str] = Field(default_factory=list)
+    automation_risk_tolerance: Literal["low_only", "low_medium", "experimental"] = "low_medium"
 
 
 class ComposedCandidate(BaseModel):

@@ -15,6 +15,7 @@ import json
 
 from agents import settings
 from agents.candidate_composer import compose_candidates
+from agents.candidate_export_validator import validate_candidate_export_contract
 from agents.candidate_feasibility import precheck_candidate
 from agents.candidate_output_writer import (
     write_development_pack_index,
@@ -111,6 +112,11 @@ def _to_screening_candidate(
         "key_threats": c.key_threats,
         "mitigations": c.mitigations,
         "declared_sources": [c.exposure_source, c.outcome_source],
+        "exposure_source": c.exposure_source,
+        "outcome_source": c.outcome_source,
+        "exposure_family": c.exposure_family,
+        "outcome_family": c.outcome_family,
+        "join_plan": c.join_plan,
         "brief_rationale": (
             f"Assess whether {exp} is empirically associated with {out} "
             f"using {c.exposure_source} and {c.outcome_source}."
@@ -145,7 +151,14 @@ def run_candidate_factory_ideation(state: dict) -> dict:
         template_id=template_id,
         domain_input=domain_input,
         max_candidates=state.get("max_candidates", 20),
+        enable_tier2=(state.get("technology_options") or {}).get("remote_sensing", True),
         enable_experimental=state.get("enable_experimental", False),
+        no_paid_api=(state.get("cloud_constraints") or {}).get("no_paid_api", True),
+        no_manual_download=(state.get("cloud_constraints") or {}).get("no_manual_download", True),
+        preferred_technology=[
+            key for key, enabled in (state.get("technology_options") or {}).items() if bool(enabled)
+        ],
+        automation_risk_tolerance=state.get("automation_risk_tolerance", "low_medium"),
     )
     candidates = compose_candidates(req)
 
@@ -171,6 +184,11 @@ def run_candidate_factory_ideation(state: dict) -> dict:
         gate_status = precheck_candidate(c)
         repaired_c, gate_status, repair_history = repair_candidate(c, gate_status)
         all_repair_histories.extend(repair_history)
+        gate_status = validate_candidate_export_contract(
+            repaired_c,
+            gate_status,
+            no_paid_api=req.no_paid_api,
+        )
 
         scores = score_candidate(repaired_c.model_dump(), gate_status, repair_history)
 
