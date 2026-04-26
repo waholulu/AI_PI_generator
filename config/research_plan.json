@@ -1,1 +1,128 @@
-{"keywords": ["artificial intelligence", "urban"]}
+{
+  "run_id": "20260426T172203Z-b1242a",
+  "project_title": "GeoAI and Urban Planning: Street Connectivity and Physical Inactivity",
+  "research_question": "Are more connected street networks associated with lower physical inactivity?",
+  "short_rationale": "Fallback deterministic candidate when ideation LLM is unavailable.",
+  "population": "",
+  "geography": "United States",
+  "time_window": "",
+  "unit_of_analysis": "",
+  "exposure": {
+    "name": "street_connectivity",
+    "definition": "",
+    "measurement_proxy": "",
+    "spatial_unit": "",
+    "temporal_frequency": "",
+    "data_source_names": [
+      "OSMnx_OpenStreetMap",
+      "CDC_PLACES",
+      "ACS",
+      "TIGER_Lines"
+    ]
+  },
+  "outcome": {
+    "name": "physical_inactivity",
+    "definition": "",
+    "measurement_proxy": "",
+    "spatial_unit": "",
+    "temporal_frequency": "",
+    "data_source_names": [
+      "OSMnx_OpenStreetMap",
+      "CDC_PLACES",
+      "ACS",
+      "TIGER_Lines"
+    ]
+  },
+  "identification": {
+    "primary_method": "cross_sectional_spatial_association",
+    "causal_claim_strength": "associational",
+    "key_threats": [],
+    "mitigations": {}
+  },
+  "data_sources": [
+    {
+      "name": "OSMnx_OpenStreetMap",
+      "role": "control",
+      "source_type": "api",
+      "access_url": "",
+      "documentation_url": "",
+      "license": "",
+      "expected_format": "",
+      "access_notes": "",
+      "machine_readable": false,
+      "auth_required": false,
+      "cost_required": false,
+      "covers_variable_families": [],
+      "spatial_units": [],
+      "join_keys": [],
+      "technology_tags": []
+    },
+    {
+      "name": "CDC_PLACES",
+      "role": "control",
+      "source_type": "download",
+      "access_url": "",
+      "documentation_url": "",
+      "license": "",
+      "expected_format": "",
+      "access_notes": "",
+      "machine_readable": false,
+      "auth_required": false,
+      "cost_required": false,
+      "covers_variable_families": [],
+      "spatial_units": [],
+      "join_keys": [],
+      "technology_tags": []
+    },
+    {
+      "name": "ACS",
+      "role": "control",
+      "source_type": "api",
+      "access_url": "",
+      "documentation_url": "",
+      "license": "",
+      "expected_format": "",
+      "access_notes": "",
+      "machine_readable": false,
+      "auth_required": false,
+      "cost_required": false,
+      "covers_variable_families": [],
+      "spatial_units": [],
+      "join_keys": [],
+      "technology_tags": []
+    },
+    {
+      "name": "TIGER_Lines",
+      "role": "control",
+      "source_type": "download",
+      "access_url": "",
+      "documentation_url": "",
+      "license": "",
+      "expected_format": "",
+      "access_notes": "",
+      "machine_readable": false,
+      "auth_required": false,
+      "cost_required": false,
+      "covers_variable_families": [],
+      "spatial_units": [],
+      "join_keys": [],
+      "technology_tags": []
+    }
+  ],
+  "literature_queries": [
+    "GeoAI and Urban Planning: Street Connectivity and Physical Inactivity United States",
+    "street_connectivity physical_inactivity identification strategy",
+    "street_connectivity physical_inactivity open data United States"
+  ],
+  "hypotheses": [
+    "H1: street_connectivity is associated with physical_inactivity."
+  ],
+  "feasibility": {
+    "overall_verdict": "warning",
+    "data_verdict": "warning",
+    "novelty_verdict": "unknown",
+    "identification_verdict": "warning",
+    "main_risks": []
+  },
+  "selected_candidate_id": "fallback_001"
+}
