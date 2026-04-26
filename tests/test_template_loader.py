@@ -6,6 +6,7 @@ def test_template_loads() -> None:
 
     assert template["template_id"] == "built_environment_health_v1"
     assert "allowed_exposure_families" in template
+    assert len(template["allowed_exposure_families"]) >= 10
 
 
 def test_template_sources_exist_in_registry() -> None:

@@ -74,7 +74,7 @@ def test_legacy_path_unchanged_when_no_template():
     assert factory_called == [], "Factory must not be called when candidate_factory_enabled=False"
 
 
-# ── test 3: candidate_cards.json is written with ≥6 entries ──────────────────
+# ── test 3: candidate_cards.json is written with ≥20 entries ──────────────────
 
 def test_candidate_cards_written(run_scope):
     state = {
@@ -90,12 +90,13 @@ def test_candidate_cards_written(run_scope):
     assert cards_path.exists(), "candidate_cards.json was not created"
 
     cards = json.loads(cards_path.read_text())
-    assert len(cards) >= 6, f"Expected ≥6 candidates, got {len(cards)}"
+    assert len(cards) >= 20, f"Expected ≥20 candidates, got {len(cards)}"
 
-    required_fields = {"candidate_id", "exposure_source", "outcome_source", "method", "title"}
+    required_fields = {"candidate_id", "exposure_source", "outcome_source", "method", "title", "scores"}
     for card in cards:
         missing = required_fields - card.keys()
         assert not missing, f"Card {card.get('candidate_id')} missing fields: {missing}"
+        assert card["scores"].get("overall", 0) > 0
 
 
 # ── test 4: topic_screening.json has candidates with candidate_id ─────────────
@@ -116,7 +117,7 @@ def test_topic_screening_written(run_scope):
     screening = json.loads(screening_path.read_text())
     assert "candidates" in screening
     candidates = screening["candidates"]
-    assert len(candidates) >= 6
+    assert len(candidates) >= 20
 
     for c in candidates:
         assert "candidate_id" in c, "candidate_id missing from screening entry"

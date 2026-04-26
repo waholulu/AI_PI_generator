@@ -5,6 +5,8 @@ sources:
       - EPA Walkability Index
       - National Walkability Index
     source_type: download
+    tier: stable
+    cloud_safe: true
     access_url: https://www.epa.gov/smartgrowth/smart-location-mapping
     documentation_url: https://www.epa.gov/smartgrowth/national-walkability-index-user-guide-and-methodology
     expected_format: zip_csv_gis
@@ -26,6 +28,8 @@ sources:
       - SLD
       - EPA SLD
     source_type: download
+    tier: stable
+    cloud_safe: true
     access_url: https://www.epa.gov/smartgrowth/smart-location-mapping
     expected_format: zip_csv
     machine_readable: true
@@ -48,6 +52,8 @@ sources:
       - CDC Places
       - PLACES
     source_type: api_download
+    tier: stable
+    cloud_safe: true
     access_url: https://www.cdc.gov/places/tools/data-portal.html
     expected_format: csv_api_gis
     machine_readable: true
@@ -63,6 +69,8 @@ sources:
       physical_inactivity: {}
       asthma: {}
       poor_mental_health: {}
+      poor_physical_health: {}
+      cardiovascular_disease: {}
 
   OSMnx_OpenStreetMap:
     canonical_name: OpenStreetMap via OSMnx
@@ -70,6 +78,8 @@ sources:
       - OSMnx
       - OpenStreetMap via OSMnx
     source_type: api
+    tier: stable
+    cloud_safe: true
     expected_format: graph_geojson
     machine_readable: true
     auth_required: false
@@ -83,6 +93,8 @@ sources:
       amenity_access: {}
       park_access: {}
       transit_stop_access: {}
+      street_network: {}
+      destination_accessibility: {}
 
   TIGER_Lines:
     canonical_name: TIGER/Line
@@ -90,6 +102,8 @@ sources:
       - TIGER/Line
       - TIGER
     source_type: download
+    tier: stable
+    cloud_safe: true
     expected_format: shapefile
     machine_readable: true
     auth_required: false
@@ -105,6 +119,8 @@ sources:
       - ACS 5-year
       - US Census ACS
     source_type: api_download
+    tier: stable
+    cloud_safe: true
     expected_format: csv_api
     machine_readable: true
     auth_required: false
@@ -113,6 +129,79 @@ sources:
     spatial_units: [tract, county, place, zcta]
     variable_families:
       socioeconomic_controls: {}
+
+  NLCD:
+    canonical_name: National Land Cover Database
+    aliases: [NLCD]
+    source_type: download
+    tier: stable
+    cloud_safe: true
+    machine_readable: true
+    auth_required: false
+    cost_required: false
+    roles: [exposure]
+    spatial_units: [raster_30m, tract]
+    variable_families:
+      green_space: {}
+      impervious_surface: {}
+
+  EPA_EnviroAtlas:
+    canonical_name: EPA EnviroAtlas
+    aliases: [EnviroAtlas]
+    source_type: download
+    tier: stable
+    cloud_safe: true
+    machine_readable: true
+    auth_required: false
+    cost_required: false
+    roles: [exposure]
+    spatial_units: [tract, block_group]
+    variable_families:
+      tree_canopy: {}
+      park_access: {}
+      green_space: {}
+
+  VIIRS:
+    canonical_name: VIIRS Nighttime Lights
+    aliases: [NOAA VIIRS]
+    source_type: download
+    tier: tier2
+    cloud_safe: true
+    machine_readable: true
+    auth_required: false
+    cost_required: false
+    roles: [exposure]
+    spatial_units: [raster, tract]
+    variable_families:
+      nighttime_lights: {}
+
+  Microsoft_Building_Footprints:
+    canonical_name: Microsoft Building Footprints
+    aliases: [MS Building Footprints]
+    source_type: download
+    tier: tier2
+    cloud_safe: true
+    machine_readable: true
+    auth_required: false
+    cost_required: false
+    roles: [exposure]
+    spatial_units: [polygon, tract]
+    variable_families:
+      building_density: {}
+
+  GTFS:
+    canonical_name: General Transit Feed Specification
+    aliases: [GTFS feeds]
+    source_type: download
+    tier: tier2
+    cloud_safe: true
+    machine_readable: true
+    auth_required: false
+    cost_required: false
+    roles: [exposure]
+    spatial_units: [stop, tract, city]
+    variable_families:
+      transit_access: {}
 
   Mapillary_Street_Images:
     canonical_name: Mapillary street level imagery
@@ -125,10 +214,12 @@ sources:
     cost_required: false
     roles: [exposure, image_provider]
     tier: experimental
+    cloud_safe: false
     spatial_units: [point, street_segment]
     variable_families:
       greenery_visibility: {}
       sidewalk_presence: {}
+      streetview_built_form: {}
 
   Google_Street_View_Static_API:
     canonical_name: Google Street View Static API
@@ -142,6 +233,7 @@ sources:
     raw_image_caching_allowed: false
     roles: [exposure, image_provider]
     tier: experimental
+    cloud_safe: false
     spatial_units: [point, street_segment]
     variable_families:
       streetview_built_form: {}

@@ -9,34 +9,54 @@ from models.implementation_schema import (
 )
 
 
-def build_implementation_spec(candidate: ComposedCandidate) -> ImplementationSpec:
-    requires_secrets = []
-    if candidate.automation_risk == "high":
-        requires_secrets = ["OPTIONAL_API_KEY"]
+def _acquisition_method(source_name: str) -> tuple[str, list[str]]:
+    sid = source_name.lower()
+    if "osmnx" in sid:
+        return "osmnx", ["data/raw/osmnx_features.parquet"]
+    if source_name == "CDC_PLACES":
+        return "api/download", ["data/raw/cdc_places.csv"]
+    if source_name == "ACS":
+        return "api/download", ["data/raw/acs_controls.csv"]
+    if source_name == "TIGER_Lines":
+        return "download", ["data/raw/tiger_tracts.geojson"]
+    if source_name in {"NLCD", "EPA_EnviroAtlas"}:
+        return "download", ["data/raw/landcover_or_enviroatlas.tif", "data/raw/tract_aggregate.csv"]
+    if source_name == "VIIRS":
+        return "download", ["data/raw/viirs_nighttime_lights.tif"]
+    if source_name == "Microsoft_Building_Footprints":
+        return "download", ["data/raw/microsoft_buildings.geojson"]
+    if source_name == "GTFS":
+        return "download", ["data/raw/gtfs.zip"]
+    return "api/download", ["data/raw/source_extract.csv"]
 
+
+def build_implementation_spec(candidate: ComposedCandidate) -> ImplementationSpec:
     required_extras = ["geospatial"]
     if "experimental" in candidate.technology_tags:
         required_extras.append("vision")
 
+    exposure_method, exposure_files = _acquisition_method(candidate.exposure_source)
+    outcome_method, outcome_files = _acquisition_method(candidate.outcome_source)
+
     return ImplementationSpec(
         candidate_id=candidate.candidate_id,
-        cloud_safe=candidate.automation_risk != "high",
+        cloud_safe=candidate.cloud_safe,
         automation_risk=candidate.automation_risk,
         required_python_extras=required_extras,
-        required_secrets=requires_secrets,
+        required_secrets=candidate.required_secrets,
         data_acquisition_steps=[
             DataAcquisitionStep(
                 source_name=candidate.exposure_source,
                 source_role="exposure",
-                method="osmnx" if "osmnx" in candidate.exposure_source.lower() else "api",
-                expected_files=["data/raw/exposure.parquet"],
-                required_secrets=requires_secrets,
+                method=exposure_method,
+                expected_files=exposure_files,
+                required_secrets=candidate.required_secrets,
             ),
             DataAcquisitionStep(
                 source_name=candidate.outcome_source,
                 source_role="outcome",
-                method="download",
-                expected_files=["data/raw/outcome.csv"],
+                method=outcome_method,
+                expected_files=outcome_files,
             ),
         ],
         feature_engineering_steps=[

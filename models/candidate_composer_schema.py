@@ -11,6 +11,8 @@ class ComposeRequest(BaseModel):
     max_candidates: int = 40
     enable_tier2: bool = True
     enable_experimental: bool = False
+    no_paid_api: bool = True
+    no_manual_download: bool = True
     preferred_technology: list[str] = Field(default_factory=list)
 
 
@@ -26,7 +28,10 @@ class ComposedCandidate(BaseModel):
     unit_of_analysis: str
     join_plan: dict = Field(default_factory=dict)
     method_template: str
+    claim_strength: str = "associational"
     key_threats: list[str] = Field(default_factory=list)
     mitigations: dict[str, str] = Field(default_factory=dict)
     technology_tags: list[str] = Field(default_factory=list)
+    required_secrets: list[str] = Field(default_factory=list)
     automation_risk: Literal["low", "medium", "high"] = "low"
+    cloud_safe: bool = True

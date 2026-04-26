@@ -17,6 +17,7 @@ from agents import settings
 from agents.candidate_composer import compose_candidates
 from agents.candidate_feasibility import precheck_candidate
 from agents.candidate_repair import repair_candidate
+from agents.final_ranker import rank_candidates, score_candidate
 from agents.logging_config import get_logger
 from models.candidate_composer_schema import ComposeRequest
 
@@ -39,6 +40,7 @@ def _to_card(
     c,
     title: str,
     rq: str,
+    scores: dict | None = None,
     gate_status: dict | None = None,
     repair_history: list[dict] | None = None,
 ) -> dict:
@@ -53,11 +55,12 @@ def _to_card(
         "outcome_source": c.outcome_source,
         "unit_of_analysis": c.unit_of_analysis,
         "method": c.method_template,
-        "claim_strength": "associational",
+        "claim_strength": c.claim_strength,
         "technology_tags": c.technology_tags,
-        "required_secrets": gs.get("required_secrets", []),
+        "required_secrets": gs.get("required_secrets", c.required_secrets),
         "automation_risk": c.automation_risk,
-        "scores": {},
+        "cloud_safe": c.cloud_safe,
+        "scores": scores or {},
         "gate_status": gs,
         "repair_history": repair_history or [],
         "shortlist_status": gs.get("shortlist_status", "review"),
@@ -156,10 +159,13 @@ def run_candidate_factory_ideation(state: dict) -> dict:
         repaired_c, gate_status, repair_history = repair_candidate(c, gate_status)
         all_repair_histories.extend(repair_history)
 
-        cards.append(_to_card(repaired_c, title, rq, gate_status, repair_history))
+        scores = score_candidate(repaired_c.model_dump(), gate_status, repair_history)
+        cards.append(_to_card(repaired_c, title, rq, scores, gate_status, repair_history))
         screening_candidates.append(
             _to_screening_candidate(repaired_c, title, rq, rank, gate_status, repair_history)
         )
+
+    cards = rank_candidates(cards)
 
     cards_path = settings.output_dir() / "candidate_cards.json"
     cards_path.write_text(json.dumps(cards, indent=2, ensure_ascii=False))

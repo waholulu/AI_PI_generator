@@ -23,6 +23,7 @@ from __future__ import annotations
 import copy
 
 from agents.candidate_feasibility import precheck_candidate
+from agents.identification_template_filler import fill_identification_from_method
 from agents.logging_config import get_logger
 from agents.source_registry import SourceRegistry
 from models.candidate_composer_schema import ComposedCandidate
@@ -30,31 +31,6 @@ from models.candidate_composer_schema import ComposedCandidate
 logger = get_logger(__name__)
 
 # ── Static lookup tables ──────────────────────────────────────────────────────
-
-_METHOD_THREATS: dict[str, dict] = {
-    "cross_sectional_spatial_association": {
-        "threats": [
-            "socioeconomic_confounding",
-            "residential_self_selection",
-            "spatial_autocorrelation",
-            "exposure_measurement_error",
-        ],
-        "mitigations": {
-            "socioeconomic_confounding": (
-                "Include tract-level ACS socioeconomic controls."
-            ),
-            "residential_self_selection": (
-                "Include county/metro fixed effects and avoid causal claims."
-            ),
-            "spatial_autocorrelation": (
-                "Use clustered or spatially robust standard errors."
-            ),
-            "exposure_measurement_error": (
-                "Run sensitivity checks with alternative feature definitions."
-            ),
-        },
-    }
-}
 
 # Stable (non-experimental) canonical fallback per exposure family.
 # None means no stable fallback exists (stays blocked).
@@ -332,36 +308,23 @@ def _repair_round(
 
     # ── 9. Fill identification threats from method template ───────────────────
     if subchecks.get("identification_threats") == "warning":
-        method_defaults = _METHOD_THREATS.get(candidate.method_template)
-        if method_defaults:
-            default_threats = method_defaults["threats"]
-            default_mits = method_defaults["mitigations"]
-            # Merge: defaults as base, then append any extra existing threats
-            new_threats = list(default_threats)
-            new_mits = dict(default_mits)
-            for t in candidate.key_threats:
-                if t not in new_threats:
-                    new_threats.append(t)
-            # Existing mitigations take priority over defaults
-            for t, m in candidate.mitigations.items():
-                new_mits[t] = m
-
-            if new_threats != list(candidate.key_threats) or new_mits != dict(candidate.mitigations):
-                history.append(_entry(
-                    cid, round_num, "missing_identification_threats",
-                    "fill_threats_from_method_template",
-                    {
-                        "key_threats": list(candidate.key_threats),
-                        "mitigations": dict(candidate.mitigations),
-                    },
-                    {
-                        "key_threats": new_threats,
-                        "mitigations": new_mits,
-                    },
-                    "repaired",
-                ))
-                updates["key_threats"] = new_threats
-                updates["mitigations"] = new_mits
+        new_threats, new_mits = fill_identification_from_method(candidate)
+        if new_threats != list(candidate.key_threats) or new_mits != dict(candidate.mitigations):
+            history.append(_entry(
+                cid, round_num, "missing_identification_threats",
+                "fill_threats_from_method_template",
+                {
+                    "key_threats": list(candidate.key_threats),
+                    "mitigations": dict(candidate.mitigations),
+                },
+                {
+                    "key_threats": new_threats,
+                    "mitigations": new_mits,
+                },
+                "repaired",
+            ))
+            updates["key_threats"] = new_threats
+            updates["mitigations"] = new_mits
 
     if jp_changed:
         updates["join_plan"] = new_jp

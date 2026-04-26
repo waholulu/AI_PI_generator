@@ -7,15 +7,24 @@ from agents.source_registry import SourceRegistry
 from models.candidate_composer_schema import ComposeRequest, ComposedCandidate
 
 
-def _pick_source(preferred_sources: list[str], registry: SourceRegistry, allow_experimental: bool) -> str | None:
+def _pick_source(preferred_sources: list[str], registry: SourceRegistry, req: ComposeRequest) -> str | None:
     for src in preferred_sources:
         sid = registry.resolve(src)
         if sid is None:
             continue
+
         spec = registry.sources.get(sid, {})
-        tier = spec.get("tier", "stable")
-        if tier == "experimental" and not allow_experimental:
+        tier = str(spec.get("tier", "stable"))
+
+        if tier == "experimental" and not req.enable_experimental:
             continue
+        if tier == "tier2" and not req.enable_tier2:
+            continue
+        if req.no_paid_api and spec.get("cost_required"):
+            continue
+        if req.no_manual_download and spec.get("source_type") == "manual_download":
+            continue
+
         return sid
     return None
 
@@ -26,6 +35,20 @@ def _risk_for_source(source_spec: dict) -> str:
     if source_spec.get("auth_required") or source_spec.get("cost_required"):
         return "medium"
     return "low"
+
+
+def _technology_tags(exp_source: str, exp_family: str, exp_spec: dict) -> list[str]:
+    tags: list[str] = []
+    source = exp_source.lower()
+    if "osmnx" in source:
+        tags.append("osmnx")
+    if any(k in source for k in ["nlcd", "viirs", "enviroatlas"]):
+        tags.append("remote_sensing")
+    if "gtfs" in source:
+        tags.append("mobility")
+    if exp_spec.get("tier") == "experimental" or exp_family == "streetview_built_form":
+        tags.append("experimental")
+    return tags
 
 
 def compose_candidates(req: ComposeRequest) -> list[ComposedCandidate]:
@@ -45,8 +68,11 @@ def compose_candidates(req: ComposeRequest) -> list[ComposedCandidate]:
         out_spec = outcomes[out_name]
         method_spec = methods[method_name]
 
-        exp_source = _pick_source(exp_spec.get("preferred_sources", []), registry, req.enable_experimental)
-        out_source = _pick_source(out_spec.get("preferred_sources", []), registry, True)
+        if exp_spec.get("tier") == "experimental" and not req.enable_experimental:
+            continue
+
+        exp_source = _pick_source(exp_spec.get("preferred_sources", []), registry, req)
+        out_source = _pick_source(out_spec.get("preferred_sources", []), registry, req)
         if not exp_source or not out_source:
             continue
 
@@ -56,11 +82,14 @@ def compose_candidates(req: ComposeRequest) -> list[ComposedCandidate]:
         risk_candidates = [_risk_for_source(exp_source_spec), _risk_for_source(out_source_spec)]
         risk = "high" if "high" in risk_candidates else ("medium" if "medium" in risk_candidates else "low")
 
-        tech_tags = []
-        if "osmnx" in exp_source.lower():
-            tech_tags.append("osmnx")
-        if exp_spec.get("tier") == "experimental":
-            tech_tags.append("experimental")
+        required_secrets: list[str] = []
+        if exp_source_spec.get("auth_required") or exp_source_spec.get("cost_required"):
+            required_secrets.append(f"{exp_source}:api_key")
+        if out_source_spec.get("auth_required") or out_source_spec.get("cost_required"):
+            required_secrets.append(f"{out_source}:api_key")
+
+        tech_tags = _technology_tags(exp_source, exp_name, exp_spec)
+        cloud_safe = registry.is_cloud_safe(exp_source) and registry.is_cloud_safe(out_source)
 
         candidates.append(
             ComposedCandidate(
@@ -79,10 +108,13 @@ def compose_candidates(req: ComposeRequest) -> list[ComposedCandidate]:
                     "join_key": "GEOID",
                 },
                 method_template=method_name,
+                claim_strength=method_spec.get("claim_strength", template.get("default_claim_strength", "associational")),
                 key_threats=list(method_spec.get("key_threats", [])),
                 mitigations=dict(method_spec.get("mitigations", {})),
                 technology_tags=tech_tags,
+                required_secrets=required_secrets,
                 automation_risk=risk,
+                cloud_safe=cloud_safe,
             )
         )
         serial += 1

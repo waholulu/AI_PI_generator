@@ -27,6 +27,59 @@ allowed_exposure_families:
     allowed_units: [street_segment, tract, city]
     derived_features: [node_density, edge_density, average_circuity, intersection_density]
 
+  green_space:
+    preferred_sources:
+      - NLCD
+      - EPA_EnviroAtlas
+    allowed_units: [raster_30m, tract, block_group]
+    derived_features: [green_space_share, ndvi_proxy]
+
+  impervious_surface:
+    preferred_sources:
+      - NLCD
+    allowed_units: [raster_30m, tract]
+    derived_features: [impervious_surface_share]
+
+  tree_canopy:
+    preferred_sources:
+      - EPA_EnviroAtlas
+    allowed_units: [block_group, tract]
+    derived_features: [tree_canopy_share]
+
+  park_access:
+    preferred_sources:
+      - EPA_EnviroAtlas
+      - OSMnx_OpenStreetMap
+    allowed_units: [tract, city]
+    derived_features: [park_access_index, avg_distance_to_park]
+
+  transit_access:
+    preferred_sources:
+      - GTFS
+      - EPA_Smart_Location_Database
+    allowed_units: [stop, tract, city]
+    derived_features: [transit_stop_density, frequent_service_access]
+
+  destination_accessibility:
+    preferred_sources:
+      - EPA_Smart_Location_Database
+      - OSMnx_OpenStreetMap
+    allowed_units: [block_group, tract]
+    derived_features: [destination_accessibility_index, amenity_density]
+
+  building_density:
+    preferred_sources:
+      - Microsoft_Building_Footprints
+      - EPA_Smart_Location_Database
+    allowed_units: [polygon, tract]
+    derived_features: [building_density, floor_area_proxy]
+
+  nighttime_lights:
+    preferred_sources:
+      - VIIRS
+    allowed_units: [raster, tract]
+    derived_features: [night_lights_mean, night_lights_variance]
+
   streetview_built_form:
     preferred_sources:
       - Mapillary_Street_Images
@@ -43,6 +96,18 @@ allowed_outcome_families:
     preferred_sources: [CDC_PLACES]
     allowed_units: [tract, county, place, zcta]
   diabetes:
+    preferred_sources: [CDC_PLACES]
+    allowed_units: [tract, county, place, zcta]
+  asthma:
+    preferred_sources: [CDC_PLACES]
+    allowed_units: [tract, county, place, zcta]
+  poor_mental_health:
+    preferred_sources: [CDC_PLACES]
+    allowed_units: [tract, county, place, zcta]
+  poor_physical_health:
+    preferred_sources: [CDC_PLACES]
+    allowed_units: [tract, county, place, zcta]
+  cardiovascular_disease:
     preferred_sources: [CDC_PLACES]
     allowed_units: [tract, county, place, zcta]
 

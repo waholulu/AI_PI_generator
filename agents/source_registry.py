@@ -49,3 +49,31 @@ class SourceRegistry:
             families = list((spec.get("variable_families") or {}).keys())
             output[source_id] = families
         return output
+
+    def get_sources_by_role(self, role: str) -> list[str]:
+        return [sid for sid, spec in self.sources.items() if role in (spec.get("roles", []) or [])]
+
+    def get_sources_by_variable_family(self, family: str) -> list[str]:
+        matches: list[str] = []
+        for sid, spec in self.sources.items():
+            families = spec.get("variable_families") or {}
+            if family in families:
+                matches.append(sid)
+        return matches
+
+    def is_cloud_safe(self, source_name: str) -> bool:
+        spec = self.get(source_name) or {}
+        if "cloud_safe" in spec:
+            return bool(spec["cloud_safe"])
+        return not bool(spec.get("cost_required") or spec.get("auth_required"))
+
+    def requires_secret(self, source_name: str) -> bool:
+        spec = self.get(source_name) or {}
+        return bool(spec.get("auth_required") or spec.get("cost_required"))
+
+    def get_machine_readable_sources(self) -> list[str]:
+        return [sid for sid, spec in self.sources.items() if bool(spec.get("machine_readable"))]
+
+    def get_source_tier(self, source_name: str) -> str:
+        spec = self.get(source_name) or {}
+        return str(spec.get("tier", "stable"))
