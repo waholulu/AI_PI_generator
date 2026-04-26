@@ -397,11 +397,27 @@ class RuleEngine:
     # ── Convenience: run all hard-blockers ───────────────────────────────────
 
     def run_hard_blockers(
-        self, topic: Topic, declared_sources: list[str]
+        self,
+        topic: Topic,
+        declared_sources: list[str],
+        use_role_based_g3: bool = False,
+        exposure_family: str = "",
+        outcome_family: str = "",
     ) -> list[GateResult]:
-        """Run G2, G3, G6 and return all three results."""
+        """Run G2, G3, G6 and return all three results.
+
+        When use_role_based_g3=True the candidate-factory role-based G3 is used
+        instead of the legacy topic-scoped G3.  exposure_family and outcome_family
+        must be supplied in that case.
+        """
+        if use_role_based_g3:
+            g3 = self.check_G3_role_based_data_availability(
+                exposure_family, outcome_family, declared_sources
+            )
+        else:
+            g3 = self.check_G3_data_availability(topic, declared_sources)
         return [
             self.check_G2_scale_alignment(topic),
-            self.check_G3_data_availability(topic, declared_sources),
+            g3,
             self.check_G6_automation_feasibility(topic, declared_sources),
         ]

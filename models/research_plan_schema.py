@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 class VariableSpec(BaseModel):
     name: str
+    family: str = ""
     definition: str = ""
     measurement_proxy: str = ""
     spatial_unit: str = ""

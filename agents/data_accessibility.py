@@ -55,6 +55,9 @@ def evaluate_data_sources(plan: ResearchPlan) -> list[DataAccessCheck]:
     time_hint = plan.time_window.lower()
     temporal_frequency = plan.exposure.temporal_frequency.lower() or plan.outcome.temporal_frequency.lower()
 
+    exposure_family = (plan.exposure.family or plan.exposure.name).lower()
+    outcome_family = (plan.outcome.family or plan.outcome.name).lower()
+
     for source in plan.data_sources:
         source_blob = " ".join(
             [
@@ -67,13 +70,14 @@ def evaluate_data_sources(plan: ResearchPlan) -> list[DataAccessCheck]:
         machine_readable = _is_machine_readable(source)
         license_found = bool(source.license.strip())
         if source.covers_variable_families:
-            covers_exposure = (
-                source.role == "exposure"
-                and plan.exposure.name.lower() in [f.lower() for f in source.covers_variable_families]
+            families_lower = [f.lower() for f in source.covers_variable_families]
+            covers_exposure = source.role == "exposure" and (
+                exposure_family in families_lower
+                or exposure_name in families_lower
             )
-            covers_outcome = (
-                source.role == "outcome"
-                and plan.outcome.name.lower() in [f.lower() for f in source.covers_variable_families]
+            covers_outcome = source.role == "outcome" and (
+                outcome_family in families_lower
+                or outcome_name in families_lower
             )
         else:
             covers_exposure = (

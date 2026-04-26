@@ -60,15 +60,15 @@ def test_development_pack_preview_contract(monkeypatch, tmp_path) -> None:
     assert summary["status"] == "ready"
     assert summary["claude_code_ready"] is True
 
-    checklist = summary["checklist"]
-    assert checklist["has_implementation_spec"] is True
-    assert checklist["has_claude_task_prompt"] is True
-    assert checklist["has_data_contract"] is True
-    assert checklist["has_feature_plan"] is True
-    assert checklist["has_analysis_plan"] is True
-    assert checklist["has_acceptance_tests"] is True
-    assert checklist["has_required_secrets"] is False
-    assert checklist["automation_risk_allowed"] is True
+    checklist = summary["readiness_checklist"]
+    assert checklist["implementation_spec"] is True
+    assert checklist["claude_task_prompt"] is True
+    assert checklist["data_contract"] is True
+    assert checklist["feature_plan"] is True
+    assert checklist["analysis_plan"] is True
+    assert checklist["acceptance_tests"] is True
+    assert checklist["no_required_secrets"] is True
+    assert checklist["not_high_risk"] is True
 
     files = {f["filename"]: f for f in summary["files"]}
     assert "claude_task_prompt.md" in files
@@ -91,7 +91,7 @@ def test_development_pack_not_claude_code_ready_when_secrets_required(monkeypatc
     asyncio.run(server.generate_development_pack(run_id, "beh_secret"))
     summary = asyncio.run(server.get_development_pack(run_id, "beh_secret"))
 
-    assert summary["checklist"]["has_required_secrets"] is True
+    assert summary["readiness_checklist"]["no_required_secrets"] is False
     assert summary["claude_code_ready"] is False
 
 
@@ -109,7 +109,7 @@ def test_development_pack_not_claude_code_ready_when_high_risk(monkeypatch, tmp_
     asyncio.run(server.generate_development_pack(run_id, "beh_highrisk"))
     summary = asyncio.run(server.get_development_pack(run_id, "beh_highrisk"))
 
-    assert summary["checklist"]["automation_risk_allowed"] is False
+    assert summary["readiness_checklist"]["not_high_risk"] is False
     assert summary["claude_code_ready"] is False
 
 

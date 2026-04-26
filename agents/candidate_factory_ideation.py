@@ -16,7 +16,14 @@ import json
 from agents import settings
 from agents.candidate_composer import compose_candidates
 from agents.candidate_feasibility import precheck_candidate
+from agents.candidate_output_writer import (
+    write_development_pack_index,
+    write_feasibility_report,
+    write_gate_trace,
+)
 from agents.candidate_repair import repair_candidate
+from agents.development_pack_status import evaluate_development_pack_readiness
+from agents.development_pack_writer import write_development_pack
 from agents.final_ranker import rank_candidates, score_candidate
 from agents.logging_config import get_logger
 from models.candidate_composer_schema import ComposeRequest
@@ -43,8 +50,10 @@ def _to_card(
     scores: dict | None = None,
     gate_status: dict | None = None,
     repair_history: list[dict] | None = None,
+    pack_readiness: dict | None = None,
 ) -> dict:
     gs = gate_status or {}
+    pr = pack_readiness or {}
     return {
         "candidate_id": c.candidate_id,
         "title": title,
@@ -64,7 +73,9 @@ def _to_card(
         "gate_status": gs,
         "repair_history": repair_history or [],
         "shortlist_status": gs.get("shortlist_status", "review"),
-        "development_pack_status": "not_generated",
+        "development_pack_status": pr.get("development_pack_status", "not_generated"),
+        "claude_code_ready": pr.get("claude_code_ready", False),
+        "development_pack_files": pr.get("development_pack_files", []),
         "_raw": c.model_dump(),
     }
 
@@ -151,6 +162,8 @@ def run_candidate_factory_ideation(state: dict) -> dict:
     screening_candidates: list[dict] = []
     all_repair_histories: list[dict] = []
 
+    run_id = settings.current_run_scope() or "unknown"
+
     for rank, c in enumerate(candidates, start=1):
         title = _make_title(c)
         rq = _make_research_question(c)
@@ -160,7 +173,26 @@ def run_candidate_factory_ideation(state: dict) -> dict:
         all_repair_histories.extend(repair_history)
 
         scores = score_candidate(repaired_c.model_dump(), gate_status, repair_history)
-        cards.append(_to_card(repaired_c, title, rq, scores, gate_status, repair_history))
+
+        # Auto-generate development pack for ready candidates only.
+        shortlist = gate_status.get("shortlist_status", "blocked")
+        pack_dir = None
+        if shortlist == "ready":
+            try:
+                pack_dir = write_development_pack(run_id, repaired_c.model_dump())
+            except Exception as exc:
+                logger.warning(
+                    "development pack generation failed for %s: %s",
+                    repaired_c.candidate_id, exc
+                )
+
+        pack_readiness = evaluate_development_pack_readiness(
+            repaired_c.model_dump(), gate_status, pack_dir
+        )
+
+        cards.append(
+            _to_card(repaired_c, title, rq, scores, gate_status, repair_history, pack_readiness)
+        )
         screening_candidates.append(
             _to_screening_candidate(repaired_c, title, rq, rank, gate_status, repair_history)
         )
@@ -171,7 +203,10 @@ def run_candidate_factory_ideation(state: dict) -> dict:
     cards_path.write_text(json.dumps(cards, indent=2, ensure_ascii=False))
     logger.info("Wrote %d candidate cards → %s", len(cards), cards_path)
 
-    run_id = settings.current_run_scope() or "unknown"
+    write_feasibility_report(run_id, cards)
+    write_development_pack_index(run_id, cards)
+    write_gate_trace(run_id, cards)
+
     screening = {
         "run_id": run_id,
         "status": "pending_review",
@@ -208,5 +243,8 @@ def run_candidate_factory_ideation(state: dict) -> dict:
         "current_plan_path": str(plan_path),
         "candidate_cards_path": str(cards_path),
         "repair_history_path": str(repair_history_path),
+        "feasibility_report_path": str(settings.output_dir() / "feasibility_report.json"),
+        "development_pack_index_path": str(settings.output_dir() / "development_pack_index.json"),
+        "gate_trace_path": str(settings.output_dir() / "gate_trace.json"),
         "execution_status": "ideation_complete",
     }

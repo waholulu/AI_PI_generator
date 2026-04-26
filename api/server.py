@@ -39,6 +39,7 @@ from agents.logging_config import setup_logging, get_logger
 
 from api import log_store, run_manager
 from agents.hitl_helpers import apply_idea_selection, apply_idea_selection_by_candidate_id
+from agents.development_pack_status import evaluate_development_pack_readiness
 from agents.development_pack_writer import write_development_pack
 from agents.research_template_loader import load_research_template, validate_template_sources
 from api.models import (
@@ -789,6 +790,71 @@ async def list_development_pack_files(run_id: str, candidate_id: str):
         settings.deactivate_run_scope(token)
 
 
+@app.get("/runs/{run_id}/feasibility-report")
+async def get_feasibility_report(run_id: str):
+    """Return feasibility_report.json for a run (written by candidate factory)."""
+    run = run_manager.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found.")
+    token = settings.activate_run_scope(run_id)
+    try:
+        path = settings.output_dir() / "feasibility_report.json"
+        if not path.exists():
+            raise HTTPException(status_code=404, detail="feasibility_report.json not found for this run.")
+        return json.loads(path.read_text(encoding="utf-8"))
+    finally:
+        settings.deactivate_run_scope(token)
+
+
+@app.get("/runs/{run_id}/development-pack-index")
+async def get_development_pack_index(run_id: str):
+    """Return development_pack_index.json for a run (written by candidate factory)."""
+    run = run_manager.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found.")
+    token = settings.activate_run_scope(run_id)
+    try:
+        path = settings.output_dir() / "development_pack_index.json"
+        if not path.exists():
+            raise HTTPException(status_code=404, detail="development_pack_index.json not found for this run.")
+        return json.loads(path.read_text(encoding="utf-8"))
+    finally:
+        settings.deactivate_run_scope(token)
+
+
+@app.get("/runs/{run_id}/candidates/{candidate_id}/claude-task-prompt")
+async def get_claude_task_prompt(run_id: str, candidate_id: str):
+    """Return claude_task_prompt.md content for a candidate's development pack."""
+    run = run_manager.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found.")
+    token = settings.activate_run_scope(run_id)
+    try:
+        pack_dir = settings.development_packs_dir() / candidate_id
+        prompt_path = pack_dir / "claude_task_prompt.md"
+        if not prompt_path.exists():
+            raise HTTPException(
+                status_code=404,
+                detail=f"claude_task_prompt.md not found for candidate {candidate_id!r}.",
+            )
+        candidates = _load_candidate_cards(run_id)
+        card = next((c for c in candidates if c.get("candidate_id") == candidate_id), {})
+        gate_status = card.get("gate_status", {})
+        readiness = evaluate_development_pack_readiness(
+            card.get("_raw") or card, gate_status, pack_dir
+        )
+        return {
+            "run_id": run_id,
+            "candidate_id": candidate_id,
+            "claude_code_ready": readiness["claude_code_ready"],
+            "development_pack_status": readiness["development_pack_status"],
+            "blocking_reasons": readiness["blocking_reasons"],
+            "prompt": prompt_path.read_text(encoding="utf-8"),
+        }
+    finally:
+        settings.deactivate_run_scope(token)
+
+
 @app.get("/runs/{run_id}/development-packs/{candidate_id}")
 async def get_development_pack(run_id: str, candidate_id: str):
     run = run_manager.get_run(run_id)
@@ -829,36 +895,26 @@ async def get_development_pack(run_id: str, candidate_id: str):
 
         candidates = _load_candidate_cards(run_id)
         candidate_card = next((c for c in candidates if c.get("candidate_id") == candidate_id), {})
-        required_secrets = candidate_card.get("required_secrets", [])
-        risk = candidate_card.get("automation_risk", "unknown")
+        gate_status = candidate_card.get("gate_status", {})
+        payload = candidate_card.get("_raw") or candidate_card
+        readiness = evaluate_development_pack_readiness(payload, gate_status, pack_dir)
         checklist = {
-            "has_implementation_spec": has_required["implementation_spec.json"],
-            "has_claude_task_prompt": has_required["claude_task_prompt.md"],
-            "has_data_contract": has_required["data_contract.yaml"],
-            "has_feature_plan": has_required["feature_plan.yaml"],
-            "has_analysis_plan": has_required["analysis_plan.yaml"],
-            "has_acceptance_tests": has_required["acceptance_tests.md"],
-            "has_smoke_test": has_required["acceptance_tests.md"],
-            "has_required_secrets": bool(required_secrets),
-            "automation_risk_allowed": risk in ("low", "medium"),
+            "implementation_spec": has_required["implementation_spec.json"],
+            "claude_task_prompt": has_required["claude_task_prompt.md"],
+            "data_contract": has_required["data_contract.yaml"],
+            "feature_plan": has_required["feature_plan.yaml"],
+            "analysis_plan": has_required["analysis_plan.yaml"],
+            "acceptance_tests": has_required["acceptance_tests.md"],
+            "no_required_secrets": not bool(candidate_card.get("required_secrets")),
+            "not_high_risk": candidate_card.get("automation_risk", "high") in ("low", "medium"),
         }
-        ready = all(
-            [
-                checklist["has_implementation_spec"],
-                checklist["has_claude_task_prompt"],
-                checklist["has_data_contract"],
-                checklist["has_feature_plan"],
-                checklist["has_analysis_plan"],
-                checklist["has_acceptance_tests"],
-            ]
-        )
-        claude_code_ready = ready and not checklist["has_required_secrets"] and checklist["automation_risk_allowed"]
         return {
             "run_id": run_id,
             "candidate_id": candidate_id,
-            "status": "ready" if ready else "incomplete",
-            "claude_code_ready": claude_code_ready,
-            "checklist": checklist,
+            "status": readiness["development_pack_status"],
+            "claude_code_ready": readiness["claude_code_ready"],
+            "blocking_reasons": readiness["blocking_reasons"],
+            "readiness_checklist": checklist,
             "files": files,
         }
     finally:

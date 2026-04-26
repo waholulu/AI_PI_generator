@@ -852,6 +852,7 @@ function renderCandidateReviewTab(el, run) {
         <option value="remote_sensing">Remote sensing</option>
         <option value="epa">EPA sources</option>
         <option value="cdc_places">CDC PLACES outcomes</option>
+        <option value="claude_code_ready">Claude Code Ready</option>
         <option value="has_dev_pack">Has development pack</option>
         <option value="has_warnings">Has repairable warnings</option>
         <option value="blocked">Blocked</option>
@@ -884,6 +885,7 @@ function renderCandidateReviewTab(el, run) {
       if (fv === 'remote_sensing') candidates = candidates.filter(c => (c.technology_tags||[]).some(t => t.includes('remote_sensing') || t.includes('remote')));
       if (fv === 'epa')        candidates = candidates.filter(c => (c.exposure_source||'').toLowerCase().includes('epa') || (c.outcome_source||'').toLowerCase().includes('epa') || (c.technology_tags||[]).some(t => t.toLowerCase().includes('epa')));
       if (fv === 'cdc_places') candidates = candidates.filter(c => (c.outcome_source||'').toLowerCase().includes('cdc') || (c.outcome_source||'').toLowerCase().includes('places'));
+      if (fv === 'claude_code_ready') candidates = candidates.filter(c => c.claude_code_ready === true);
       if (fv === 'has_dev_pack')  candidates = candidates.filter(c => c.development_pack_status === 'ready');
       if (fv === 'has_warnings')  candidates = candidates.filter(c => (c.gate_summary?.warning_count||0) > 0 && c.shortlist_status !== 'blocked');
       if (fv === 'blocked')    candidates = candidates.filter(c => c.shortlist_status === 'blocked');
@@ -900,15 +902,23 @@ function renderCandidateReviewTab(el, run) {
               ? `<span class="gate-warn">⚠ ${gs.warning_count} warning${gs.warning_count > 1 ? 's' : ''}</span>`
               : '<span class="gate-ok">✓ All gates pass</span>';
           const tagsHtml = (c.technology_tags||[]).map(t => `<span class="tag">${escHtml(t)}</span>`).join('');
-          const dpHtml = c.development_pack_status === 'ready'
-            ? '<span class="dev-pack-ready">📦 dev pack ready</span>'
-            : '<span class="dev-pack-none">dev pack: not generated</span>';
+          const isExperimental = (c.technology_tags||[]).some(t => ['streetview_cv','deep_learning','satellite_cv','experimental'].includes(t));
+          const dpHtml = c.claude_code_ready
+            ? '<span class="badge badge-completed" style="font-size:.75rem">Claude Code Ready</span>'
+            : c.development_pack_status === 'review_required'
+              ? '<span class="badge badge-awaiting" style="font-size:.75rem">Review Required</span>'
+              : isExperimental
+                ? '<span class="badge badge-high" style="font-size:.75rem">Experimental Review Required</span>'
+                : '<span style="font-size:.75rem;color:#64748b">Not Claude Code Ready</span>';
           const hasSecrets = (c.required_secrets||[]).length > 0;
           const secretsHtml = hasSecrets
             ? `<div style="font-size:.78rem;color:#fbbf24">⚠ Required secrets: ${escHtml((c.required_secrets||[]).join(', '))}</div>`
             : '<div style="font-size:.78rem;color:#86efac">Required secrets: none</div>';
           const noPaidApi = state.cloudConstraints.no_paid_api;
           const selectDisabled = (noPaidApi && hasSecrets) ? 'disabled title="Paid API required — blocked by no_paid_api constraint"' : '';
+          const copyPromptBtn = c.claude_code_ready
+            ? `<button class="btn btn-primary" onclick="copyClaudePrompt('${run.run_id}','${escAttr(c.candidate_id)}')">Copy Task Prompt</button>`
+            : '';
           return `
           <div class="candidate-card">
             <div style="display:flex;gap:4px;flex-wrap:wrap">${statusBadge(c.shortlist_status)} ${riskBadge(c.automation_risk)} ${gateHtml}</div>
@@ -925,10 +935,10 @@ function renderCandidateReviewTab(el, run) {
             </div>
             ${secretsHtml}
             ${tagsHtml ? `<div style="margin-top:2px">${tagsHtml}</div>` : ''}
-            <div style="display:flex;gap:4px;align-items:center;margin-top:2px">${dpHtml}</div>
+            <div style="display:flex;gap:4px;align-items:center;margin-top:4px">${dpHtml}</div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
               <button class="btn btn-ghost" onclick="openCandidateDetail('${escAttr(c.candidate_id)}')">View details</button>
-              <button class="btn btn-ghost" onclick="generatePack('${run.run_id}','${escAttr(c.candidate_id)}')">Generate pack</button>
+              ${copyPromptBtn}
               <button class="btn btn-success" ${selectDisabled} onclick="selectCandidate('${run.run_id}','${escAttr(c.candidate_id)}')">Select for memo</button>
             </div>
           </div>`;
@@ -1113,11 +1123,15 @@ async function copyPackFile(runId, candidateId, filename) {
 }
 
 async function copyClaudePrompt(runId, candidateId) {
-  const data = await api('GET', `/runs/${runId}/development-packs/${candidateId}`);
-  const file = (data.files||[]).find(f => f.filename === 'claude_task_prompt.md');
-  if (!file) return toast('缺少 claude_task_prompt.md', 'error');
-  await navigator.clipboard.writeText(file.preview_text || '');
-  toast('Claude task prompt 已复制', 'success');
+  const data = await api('GET', `/runs/${runId}/candidates/${candidateId}/claude-task-prompt`);
+  if (!data.prompt) return toast('claude_task_prompt.md not found', 'error');
+  if (!data.claude_code_ready) {
+    const reasons = (data.blocking_reasons||[]).join(', ') || 'unknown';
+    const confirmed = confirm(`This candidate is not Claude Code Ready.\nBlocking reasons: ${reasons}\n\nCopy prompt anyway?`);
+    if (!confirmed) return;
+  }
+  await navigator.clipboard.writeText(data.prompt);
+  toast('Claude task prompt copied', 'success');
 }
 
 // ── Status tab ──────────────────────────────────────────────────────────────
