@@ -23,10 +23,8 @@ def validate_candidate_export_contract(
     exp_sid = registry.resolve(candidate.exposure_source)
     out_sid = registry.resolve(candidate.outcome_source)
 
-    if not exp_sid:
-        blocking_reasons.append("source_not_in_registry:exposure")
-    if not out_sid:
-        blocking_reasons.append("source_not_in_registry:outcome")
+    if not exp_sid or not out_sid:
+        blocking_reasons.append("source_not_in_registry")
 
     exp_spec = registry.sources.get(exp_sid, {}) if exp_sid else {}
     out_spec = registry.sources.get(out_sid, {}) if out_sid else {}

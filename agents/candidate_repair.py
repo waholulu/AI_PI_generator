@@ -181,7 +181,8 @@ def _repair_round(
     # ── 1. Replace missing/unknown exposure source ────────────────────────────
     if (
         subchecks.get("source_exists") == "fail"
-        and any("exposure_source_not_found" in r for r in reasons)
+        and "source_not_in_registry" in reasons
+        and registry.resolve(candidate.exposure_source) is None
     ):
         fallback = _EXPOSURE_FALLBACK.get(candidate.exposure_family)
         if fallback:
@@ -197,7 +198,8 @@ def _repair_round(
     # ── 2. Replace missing/unknown outcome source ─────────────────────────────
     if (
         subchecks.get("source_exists") == "fail"
-        and any("outcome_source_not_found" in r for r in reasons)
+        and "source_not_in_registry" in reasons
+        and registry.resolve(candidate.outcome_source) is None
     ):
         fallback = _OUTCOME_FALLBACK.get(
             candidate.outcome_family, _DEFAULT_OUTCOME_FALLBACK
@@ -214,7 +216,7 @@ def _repair_round(
     # ── 3. Replace exposure source with wrong role ────────────────────────────
     if (
         subchecks.get("role_coverage") == "fail"
-        and any("missing_exposure_role" in r for r in reasons)
+        and "missing_exposure_role_source" in reasons
     ):
         current_exp = updates.get("exposure_source", candidate.exposure_source)
         fallback = _EXPOSURE_FALLBACK.get(candidate.exposure_family)
@@ -231,7 +233,7 @@ def _repair_round(
     # ── 4. Replace outcome source with wrong role ─────────────────────────────
     if (
         subchecks.get("role_coverage") == "fail"
-        and any("missing_outcome_role" in r for r in reasons)
+        and "missing_outcome_role_source" in reasons
     ):
         current_out = updates.get("outcome_source", candidate.outcome_source)
         fallback = _OUTCOME_FALLBACK.get(

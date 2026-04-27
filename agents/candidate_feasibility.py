@@ -95,11 +95,11 @@ def precheck_candidate(candidate: ComposedCandidate) -> dict:
     missing_core = []
     if exp_sid is None:
         missing_core.append(exp_source)
-        reasons.append(f"exposure_source_not_found:{exp_source}")
+        reasons.append("source_not_in_registry")
         repairs.append("replace_exposure_source_from_template")
     if out_sid is None:
         missing_core.append(out_source)
-        reasons.append(f"outcome_source_not_found:{out_source}")
+        reasons.append("source_not_in_registry")
         repairs.append("replace_outcome_source_from_template")
     subchecks["source_exists"] = "fail" if missing_core else "pass"
 
@@ -112,10 +112,10 @@ def precheck_candidate(candidate: ComposedCandidate) -> dict:
     # concepts and may diverge from registry keys, so only roles are checked.
     role_fails = []
     if not ("exposure" in exp_spec.get("roles", [])):
-        role_fails.append(f"missing_exposure_role:{exp_source}")
+        role_fails.append("missing_exposure_role_source")
         repairs.append("replace_exposure_source_from_template")
     if not ("outcome" in out_spec.get("roles", [])):
-        role_fails.append(f"missing_outcome_role:{out_source}")
+        role_fails.append("missing_outcome_role_source")
         repairs.append("replace_outcome_source_from_template")
     if role_fails:
         subchecks["role_coverage"] = "fail"
@@ -132,8 +132,7 @@ def precheck_candidate(candidate: ComposedCandidate) -> dict:
             not_readable.append(src_name)
     if not_readable:
         subchecks["machine_readable"] = "fail"
-        for s in not_readable:
-            reasons.append(f"not_machine_readable:{s}")
+        reasons.append("missing_machine_readable_source")
     else:
         subchecks["machine_readable"] = "pass"
 
@@ -175,7 +174,7 @@ def precheck_candidate(candidate: ComposedCandidate) -> dict:
 
     if experimental_with_cost:
         subchecks["cloud_automation_feasibility"] = "warning"
-        reasons.append("experimental_source_requires_auth_or_cost")
+        reasons.append("experimental_source_requires_key")
     elif experimental_only:
         subchecks["cloud_automation_feasibility"] = "warning"
         reasons.append("experimental_source_in_use")

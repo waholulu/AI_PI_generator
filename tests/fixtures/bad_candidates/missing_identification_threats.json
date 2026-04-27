@@ -1,0 +1,19 @@
+{
+  "candidate_id": "bad_005",
+  "template_id": "built_environment_health_v1",
+  "exposure_family": "street_network",
+  "exposure_source": "OSMnx_OpenStreetMap",
+  "outcome_family": "physical_inactivity",
+  "outcome_source": "CDC_PLACES",
+  "outcome_variables": ["physical_inactivity"],
+  "unit_of_analysis": "census_tract",
+  "join_plan": {"controls": ["ACS"], "boundary_source": ["TIGER_Lines"]},
+  "method_template": "cross_sectional_spatial_association",
+  "claim_strength": "associational",
+  "key_threats": [],
+  "mitigations": {},
+  "technology_tags": [],
+  "required_secrets": [],
+  "automation_risk": "low",
+  "cloud_safe": true
+}

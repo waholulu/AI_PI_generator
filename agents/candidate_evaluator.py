@@ -70,10 +70,10 @@ def _data_registry_verdict(plan: ResearchPlan, threshold: float = 0.6) -> tuple[
         reasons: list[str] = []
     elif matched == 0:
         verdict = "fail"
-        reasons = ["no_registry_match"]
+        reasons = ["source_not_in_registry"]
     else:
         verdict = "warning"
-        reasons = ["partial_registry_match"]
+        reasons = ["source_alias_resolved"]
     return verdict, reasons, {"registry_matches": match_rows}
 
 

@@ -136,7 +136,7 @@ def test_unknown_outcome_source_fail():
     assert result["overall"] == "fail", f"Expected fail, got {result}"
     assert result["shortlist_status"] == "blocked"
     assert result["subchecks"]["source_exists"] == "fail"
-    assert any("outcome_source_not_found" in r for r in result["reasons"])
+    assert "source_not_in_registry" in result["reasons"]
     assert "replace_outcome_source_from_template" in result["repair_suggestions"]
 
 
@@ -167,4 +167,4 @@ def test_wrong_role_fails():
 
     assert result["overall"] == "fail"
     assert result["subchecks"]["role_coverage"] == "fail"
-    assert any("missing_exposure_role" in r for r in result["reasons"])
+    assert "missing_exposure_role_source" in result["reasons"]
