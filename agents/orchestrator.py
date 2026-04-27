@@ -1,5 +1,5 @@
 import operator
-from typing import Annotated, TypedDict
+from typing import Annotated, Optional, TypedDict
 from langgraph.graph import StateGraph, START, END
 import sqlite3
 
@@ -29,6 +29,34 @@ class ResearchState(TypedDict):
     degraded_nodes: Annotated[list[str], operator.add]
 
 
+class _Module1State(ResearchState, total=False):
+    """Extension fields added by the Module 1 upgrade.
+
+    Defined with total=False so existing code that builds ResearchState without
+    these keys continues to work — they are optional.
+    """
+    legacy_ideation: bool          # True → use IdeationAgentV0 (legacy path)
+    user_topic_path: Optional[str] # Path to user-supplied topic YAML (Level 1 mode)
+    ideation_mode: str             # "level_1" | "level_2"
+    budget_override_usd: Optional[float]
+    skip_reflection: bool
+    hitl_interruption: dict
+    template_id: Optional[str]
+    technology_options: dict
+    automation_risk_tolerance: str
+    cloud_constraints: dict
+    enable_experimental: bool
+    candidate_factory_enabled: bool
+    # Candidate factory output paths — populated by ideation node
+    candidate_cards_path: str
+    feasibility_report_path: str
+    repair_history_path: str
+    development_pack_index_path: str
+    gate_trace_path: str
+    # Selection
+    selected_candidate_id: str
+
+
 def _build_checkpointer():
     """Build a LangGraph checkpointer based on DATABASE_URL env var."""
     if settings.is_postgres():
@@ -41,6 +69,14 @@ def _build_checkpointer():
         return SqliteSaver(conn)
 
 
+def _route_start(state: dict) -> str:
+    """Conditional router: skip field_scanner when a user topic YAML is provided."""
+    if state.get("user_topic_path"):
+        logger.info("Level 1 mode: skipping field_scanner, routing direct to ideation")
+        return "ideation"
+    return "field_scanner"
+
+
 def build_orchestrator():
     """Builds and compiles the LangGraph workflow."""
     from agents.field_scanner_agent import field_scanner_node
@@ -50,7 +86,7 @@ def build_orchestrator():
     from agents.drafter_agent import drafter_node
     from agents.data_fetcher_agent import data_fetcher_node
 
-    builder = StateGraph(ResearchState)
+    builder = StateGraph(_Module1State)
 
     # Add actual nodes
     builder.add_node("field_scanner", field_scanner_node)
@@ -60,8 +96,14 @@ def build_orchestrator():
     builder.add_node("drafter", drafter_node)
     builder.add_node("data_fetcher", data_fetcher_node)
 
-    # Define edges (linear default path)
-    builder.add_edge(START, "field_scanner")
+    # Conditional fork at START: Level 1 skips field_scanner
+    builder.add_conditional_edges(
+        START,
+        _route_start,
+        {"field_scanner": "field_scanner", "ideation": "ideation"},
+    )
+
+    # Remaining linear edges
     builder.add_edge("field_scanner", "ideation")
     builder.add_edge("ideation", "idea_validator")
     builder.add_edge("idea_validator", "literature")

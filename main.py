@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 
 from agents import orchestrator, settings
 from agents.hitl_helpers import (
+    apply_idea_selection,
     load_validated_topics,
     record_rejected_topics,
     regenerate_topics,
@@ -86,7 +87,66 @@ def _stream_phase(graph, input_state, config, seen_nodes: set, total_nodes: int)
 def _check_hitl_interrupt(graph, config) -> bool:
     """Return True if the graph is currently paused at an interrupt point."""
     snapshot = graph.get_state(config)
+    values = getattr(snapshot, "values", {}) or {}
+    if values.get("hitl_interruption"):
+        return True
     return bool(snapshot.next)
+
+
+def render_level1_hitl_card(current_state: dict, initial_state: dict | None = None) -> str:
+    initial_state = initial_state or {}
+    inter = current_state.get("hitl_interruption", {}) or {}
+    topic_path = current_state.get("user_topic_path", initial_state.get("user_topic_path", "your_topic.yaml"))
+    domain = current_state.get("domain_input", initial_state.get("domain_input", "your domain"))
+
+    failed_gates = inter.get("failed_gates", []) or []
+    failed_gates_section = (
+        "Failed Gates:\n  - " + "\n  - ".join(str(g) for g in failed_gates)
+        if failed_gates
+        else "Failed Gates:\n  - (none provided)"
+    )
+    suggested_ops = inter.get("suggested_operations", []) or []
+    if suggested_ops:
+        lines = []
+        for op in suggested_ops:
+            if isinstance(op, dict):
+                lines.append(f"  - {op.get('op', 'unknown')}: {op.get('description', '')}".rstrip(": "))
+            else:
+                lines.append(f"  - {op}")
+        suggested_ops_section = "Suggested Operations:\n" + "\n".join(lines)
+    else:
+        suggested_ops_section = "Suggested Operations:\n  - (none)"
+
+    diff_from_original = inter.get("diff_from_original", {}) or {}
+    if diff_from_original:
+        diff_section = "Diff from original:\n" + "\n".join(
+            f"  - {k}: {v}" for k, v in diff_from_original.items()
+        )
+    else:
+        diff_section = "Diff from original:\n  - (none)"
+
+    template_path = settings.prompts_dir() / "level1_hitl_card.txt"
+    try:
+        template = template_path.read_text(encoding="utf-8")
+    except Exception:
+        template = (
+            "Level1 HITL Required\n"
+            "Topic: {topic_title}\nTopic ID: {topic_id}\nStatus: {status}\n\n"
+            "{failed_gates_section}\n{suggested_ops_section}\n{diff_section}\n"
+            "Re-run: python main.py --mode level_1 --user-topic {topic_path}\n"
+            "Switch: python main.py --mode level_2 --domain \"{domain}\"\n"
+        )
+
+    return template.format(
+        topic_title=inter.get("topic_title", "(unknown)"),
+        topic_id=inter.get("topic_id", "(unknown)"),
+        status=inter.get("kind", "hitl_required"),
+        failed_gates_section=failed_gates_section,
+        suggested_ops_section=suggested_ops_section,
+        diff_section=diff_section,
+        topic_path=topic_path,
+        domain=domain,
+    )
 
 
 def _display_validation_report() -> list:
@@ -168,66 +228,6 @@ def _prompt_topic_choice(ideas: list, allow_regenerate: bool = True) -> int:
         _log(f"编号超出范围，请输入 {options} 中的数字。", level="WARN")
 
 
-def _apply_selection_to_files(idea_idx: int, ideas: list) -> None:
-    """Rotate the chosen idea to rank-1 in topic_screening.json and research_context.json."""
-    if idea_idx == 0:
-        return  # Top-1 already selected; nothing to change.
-
-    screening_path = settings.topic_screening_path()
-    context_path = settings.research_context_path()
-    plan_path = settings.research_plan_path()
-
-    if not os.path.exists(screening_path):
-        _log("找不到 topic_screening.json，无法更改选题顺序。", level="WARN")
-        return
-
-    try:
-        with open(screening_path, "r", encoding="utf-8") as f:
-            screening = json.load(f)
-        candidates: list = screening.get("candidates", [])
-        if idea_idx >= len(candidates):
-            _log(f"选题编号 {idea_idx} 超出候选列表范围，保持默认选题。", level="WARN")
-            return
-        selected = candidates.pop(idea_idx)
-        candidates.insert(0, selected)
-        for i, c in enumerate(candidates):
-            c["rank"] = i + 1
-        screening["candidates"] = candidates
-        with open(screening_path, "w", encoding="utf-8") as f:
-            json.dump(screening, f, indent=2, ensure_ascii=False)
-
-        selected_title = selected.get("title", "")
-        _log(f"已将 「{selected_title}」 设为第一候选选题。", level="HITL")
-
-        # Update research_context.json
-        if os.path.exists(context_path):
-            with open(context_path, "r", encoding="utf-8") as f:
-                ctx = json.load(f)
-            if isinstance(ctx, dict):
-                ctx["selected_topic"] = {
-                    "title": selected_title,
-                    "score": selected.get("final_score", selected.get("initial_score")),
-                    "quantitative_specs": selected.get("quantitative_specs", {}),
-                    "data_sources": selected.get("data_sources", []),
-                    "publishability": selected.get("publishability", ""),
-                    "selection_overridden": True,
-                }
-                with open(context_path, "w", encoding="utf-8") as f:
-                    json.dump(ctx, f, indent=2, ensure_ascii=False)
-
-        # Update research_plan.json title
-        if os.path.exists(plan_path):
-            with open(plan_path, "r", encoding="utf-8") as f:
-                plan = json.load(f)
-            plan["project_title"] = selected_title
-            plan["topic_screening"] = {"top_candidate_title": selected_title, "manually_selected": True}
-            with open(plan_path, "w", encoding="utf-8") as f:
-                json.dump(plan, f, indent=2, ensure_ascii=False)
-
-    except Exception as exc:
-        _log(f"更新选题文件时出错：{exc}", level="WARN")
-
-
 def _display_degraded_warnings(graph, config) -> None:
     """Print a warning block if any agents ran in degraded (LLM-fallback) mode."""
     try:
@@ -246,29 +246,110 @@ def _display_degraded_warnings(graph, config) -> None:
     print("=" * 60)
 
 
+def _parse_args():
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Auto-PI Research Automation Pipeline",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["level_1", "level_2"],
+        default="level_2",
+        help="Ideation mode: level_1 (user-provided topic YAML) or level_2 (auto-generate from domain)",
+    )
+    parser.add_argument(
+        "--domain",
+        default=None,
+        help="Research domain description for Level 2 (e.g. 'GeoAI and Urban Planning')",
+    )
+    parser.add_argument(
+        "--user-topic",
+        dest="user_topic",
+        default=None,
+        metavar="PATH",
+        help="Path to user-supplied structured topic YAML file (Level 1 mode)",
+    )
+    parser.add_argument(
+        "--legacy-ideation",
+        dest="legacy_ideation",
+        action="store_true",
+        default=False,
+        help="Use legacy IdeationAgentV0 instead of V2 (backward compatibility)",
+    )
+    parser.add_argument(
+        "--budget-override-usd",
+        dest="budget_override_usd",
+        type=float,
+        default=None,
+        metavar="USD",
+        help="Override per-run LLM budget in USD (default: from reflection_config.yaml)",
+    )
+    parser.add_argument(
+        "--skip-reflection",
+        dest="skip_reflection",
+        action="store_true",
+        default=False,
+        help="Skip reflection loop in Level 2 (one-shot topic generation, no iterative refinement)",
+    )
+    return parser.parse_args()
+
+
 def main():
     _print_banner()
 
     load_dotenv()
 
-    domain_input = input(
-        "\n请输入您的宏观研究领域描述（例如：'GeoAI and Urban Planning'）： "
-    ).strip()
+    args = _parse_args()
 
-    if not domain_input:
+    # Determine domain input
+    if args.mode == "level_1" and args.user_topic:
+        # Level 1: domain derived from topic YAML or defaults
+        domain_input = args.domain or ""
+        if not domain_input:
+            _log("Level 1 模式：从用户提供的 topic YAML 推导领域。")
+    elif args.domain:
+        domain_input = args.domain.strip()
+    else:
+        domain_input = input(
+            "\n请输入您的宏观研究领域描述（例如：'GeoAI and Urban Planning'）： "
+        ).strip()
+
+    if not domain_input and args.mode == "level_2":
         _log("未输入有效领域，程序退出。", level="ERROR")
         sys.exit(1)
 
-    _log(f"初始化工作流，目标领域：{domain_input!r}")
+    # Apply --legacy-ideation as env var so IdeationAgent router picks it up
+    if args.legacy_ideation:
+        import os as _os
+        _os.environ["LEGACY_IDEATION"] = "1"
+
+    _log(f"初始化工作流，目标领域：{domain_input!r}" if domain_input else "初始化工作流（Level 1 模式）")
 
     graph = orchestrator.build_orchestrator()
 
     initial_state = {
         "domain_input": domain_input,
         "execution_status": "starting",
+        "legacy_ideation": args.legacy_ideation,
+        "ideation_mode": args.mode,
+        "budget_override_usd": args.budget_override_usd,
+        "skip_reflection": args.skip_reflection,
     }
+    if args.user_topic:
+        import os as _os
+        user_topic_path = _os.path.abspath(args.user_topic)
+        if not _os.path.exists(user_topic_path):
+            _log(f"--user-topic 文件不存在：{user_topic_path}", level="ERROR")
+            sys.exit(1)
+        initial_state["user_topic_path"] = user_topic_path
+        _log(f"Level 1 模式：从 {user_topic_path} 加载用户主题。")
 
-    config = {"configurable": {"thread_id": "1"}}
+    run_id = datetime.now().strftime("%Y%m%dT%H%M%S")
+    scope_token = settings.activate_run_scope(run_id)
+    config = {"configurable": {"thread_id": run_id}}
+    initial_state["run_id"] = run_id
 
     total_nodes = len(NODE_ORDER)
     seen_nodes: set[str] = set()
@@ -334,7 +415,11 @@ def main():
                 continue  # loop back to display new topics
 
             # User selected a topic — apply and resume
-            _apply_selection_to_files(selected_idx, ideas)
+            selected_title = apply_idea_selection(selected_idx)
+            if selected_title:
+                _log(f"已将 「{selected_title}」 设为第一候选选题。", level="HITL")
+            else:
+                _log("选题更新失败，保持默认排序。", level="WARN")
 
             _log("用户确认，恢复工作流...", level="HITL")
             _stream_phase(graph, None, config, seen_nodes, total_nodes)
@@ -346,6 +431,8 @@ def main():
         _log("用户中断（Ctrl+C），工作流停止。", level="ABORT")
     except Exception as e:
         _log(f"工作流执行发生异常：{e}", level="ERROR")
+    finally:
+        settings.deactivate_run_scope(scope_token)
 
 
 if __name__ == "__main__":

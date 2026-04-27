@@ -1,0 +1,141 @@
+template_id: built_environment_health_v1
+description: Built environment exposure X to small area health outcome Y
+default_geography: United States
+default_unit_of_analysis: census_tract
+default_time_window: 2016-2024
+default_claim_strength: associational
+
+required_roles:
+  exposure: true
+  outcome: true
+  control: true
+  boundary: true
+
+allowed_exposure_families:
+  walkability:
+    preferred_sources:
+      - EPA_National_Walkability_Index
+      - EPA_Smart_Location_Database
+      - OSMnx_OpenStreetMap
+    allowed_units: [block_group, tract, street_segment]
+    derived_features: [walkability_index, intersection_density, land_use_mix, transit_stop_density]
+
+  street_network:
+    preferred_sources:
+      - OSMnx_OpenStreetMap
+    allowed_units: [street_segment, tract, city]
+    derived_features: [node_density, edge_density, average_circuity, intersection_density]
+
+  green_space:
+    preferred_sources:
+      - NLCD
+      - EPA_EnviroAtlas
+    allowed_units: [raster_30m, tract, block_group]
+    derived_features: [green_space_share, ndvi_proxy]
+
+  impervious_surface:
+    preferred_sources:
+      - NLCD
+    allowed_units: [raster_30m, tract]
+    derived_features: [impervious_surface_share]
+
+  tree_canopy:
+    preferred_sources:
+      - EPA_EnviroAtlas
+    allowed_units: [block_group, tract]
+    derived_features: [tree_canopy_share]
+
+  park_access:
+    preferred_sources:
+      - EPA_EnviroAtlas
+      - OSMnx_OpenStreetMap
+    allowed_units: [tract, city]
+    derived_features: [park_access_index, avg_distance_to_park]
+
+  transit_access:
+    preferred_sources:
+      - GTFS
+      - EPA_Smart_Location_Database
+    allowed_units: [stop, tract, city]
+    derived_features: [transit_stop_density, frequent_service_access]
+
+  destination_accessibility:
+    preferred_sources:
+      - EPA_Smart_Location_Database
+      - OSMnx_OpenStreetMap
+    allowed_units: [block_group, tract]
+    derived_features: [destination_accessibility_index, amenity_density]
+
+  building_density:
+    preferred_sources:
+      - Microsoft_Building_Footprints
+      - EPA_Smart_Location_Database
+    allowed_units: [polygon, tract]
+    derived_features: [building_density, floor_area_proxy]
+
+  nighttime_lights:
+    preferred_sources:
+      - VIIRS
+    allowed_units: [raster, tract]
+    derived_features: [night_lights_mean, night_lights_variance]
+
+  streetview_built_form:
+    preferred_sources:
+      - Mapillary_Street_Images
+      - Google_Street_View_Static_API
+    tier: experimental
+    allowed_units: [street_segment, tract]
+    derived_features: [greenery_visibility_index, sidewalk_presence_score]
+
+allowed_outcome_families:
+  physical_inactivity:
+    preferred_sources: [CDC_PLACES]
+    allowed_units: [tract, county, place, zcta]
+  obesity:
+    preferred_sources: [CDC_PLACES]
+    allowed_units: [tract, county, place, zcta]
+  diabetes:
+    preferred_sources: [CDC_PLACES]
+    allowed_units: [tract, county, place, zcta]
+  asthma:
+    preferred_sources: [CDC_PLACES]
+    allowed_units: [tract, county, place, zcta]
+  poor_mental_health:
+    preferred_sources: [CDC_PLACES]
+    allowed_units: [tract, county, place, zcta]
+  poor_physical_health:
+    preferred_sources: [CDC_PLACES]
+    allowed_units: [tract, county, place, zcta]
+  cardiovascular_disease:
+    preferred_sources: [CDC_PLACES]
+    allowed_units: [tract, county, place, zcta]
+
+default_controls: [ACS]
+default_boundary_source: [TIGER_Lines]
+
+allowed_methods:
+  cross_sectional_spatial_association:
+    claim_strength: associational
+    required_controls: [ACS]
+    key_threats:
+      - socioeconomic_confounding
+      - residential_self_selection
+      - spatial_autocorrelation
+      - exposure_measurement_error
+    mitigations:
+      socioeconomic_confounding: Include tract-level ACS socioeconomic controls.
+      residential_self_selection: Include county/metro fixed effects and avoid causal claims.
+      spatial_autocorrelation: Use clustered or spatially robust standard errors.
+      exposure_measurement_error: Run sensitivity checks with alternative feature definitions.
+
+technology_options:
+  osmnx:
+    default_enabled: true
+    cloud_safe: true
+  remote_sensing:
+    default_enabled: true
+    cloud_safe: true
+  streetview_cv:
+    default_enabled: false
+    cloud_safe: conditional
+    requires: [api_key_or_open_provider, image_policy_check]

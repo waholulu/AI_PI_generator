@@ -1,0 +1,42 @@
+You are helping to refine a research topic that failed one or more quality gates.
+Propose concrete values for each suggested operation so the topic can pass those gates.
+
+Current topic:
+  ID            : {topic_id}
+  Exposure      : {exposure}
+  Outcome       : {outcome}
+  Geography     : {geography}
+  Method        : {method}
+  Spatial unit  : {spatial_unit}
+  Data sources  : {declared_sources}
+  Target venues : {target_venues}
+
+Allowed enum values (STRICT):
+{enum_block}
+
+Failed gates and suggested operations:
+{operations_list}
+
+Return a JSON array where each element is:
+  {{"op": "<operation_name>", "value": <concrete_value>, "rationale": "<one sentence>"}}
+
+Type rules for value:
+  - change_exposure_family / change_outcome_family / change_contribution_type:
+      value MUST be one of the enum values above.
+  - change_identification_strategy:
+      value MUST be one of IdentificationPrimary.
+  - change_sampling_mode:
+      value MUST be one of SamplingMode.
+  - change_frequency:
+      value MUST be one of Frequency.
+  - add_mitigations:
+      value MUST be a JSON object mapping threat -> mitigation text.
+  - adjust_temporal_scope:
+      value MUST be a JSON object with start_year (int), end_year (int).
+  - declare_additional_sources:
+      value MUST be a JSON array of source names.
+
+If no operation can be safely satisfied, emit a "free_form" op with:
+  value = {{"modified_fields": {{"dot.path": "new_value"}}, "rationale": "..."}}
+
+Return JSON array only — no markdown fences, no prose before or after.

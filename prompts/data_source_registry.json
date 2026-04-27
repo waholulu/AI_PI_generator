@@ -1,317 +1,911 @@
 [
   {
     "canonical_name": "US Census Bureau ACS",
-    "aliases": ["American Community Survey", "ACS", "US Census ACS", "Census Bureau", "US Census", "Census Data"],
+    "aliases": [
+      "American Community Survey",
+      "ACS",
+      "US Census ACS",
+      "Census Bureau",
+      "US Census",
+      "Census Data"
+    ],
     "url": "https://data.census.gov",
     "access_type": "api",
-    "domains": ["demographics", "housing", "economics", "urban", "population"]
+    "domains": [
+      "demographics",
+      "housing",
+      "economics",
+      "urban",
+      "population"
+    ]
   },
   {
     "canonical_name": "US Census Bureau Decennial",
-    "aliases": ["Decennial Census", "US Decennial Census", "Census 2020", "Census 2010"],
+    "aliases": [
+      "Decennial Census",
+      "US Decennial Census",
+      "Census 2020",
+      "Census 2010"
+    ],
     "url": "https://data.census.gov",
     "access_type": "api",
-    "domains": ["demographics", "population"]
+    "domains": [
+      "demographics",
+      "population"
+    ]
   },
   {
     "canonical_name": "World Bank Open Data",
-    "aliases": ["World Bank", "WDI", "World Development Indicators", "World Bank Data"],
+    "aliases": [
+      "World Bank",
+      "WDI",
+      "World Development Indicators",
+      "World Bank Data"
+    ],
     "url": "https://data.worldbank.org",
     "access_type": "api",
-    "domains": ["economics", "development", "health", "education", "global"]
+    "domains": [
+      "economics",
+      "development",
+      "health",
+      "education",
+      "global"
+    ]
   },
   {
     "canonical_name": "OECD Data",
-    "aliases": ["OECD", "OECD Statistics", "OECD.Stat"],
+    "aliases": [
+      "OECD",
+      "OECD Statistics",
+      "OECD.Stat"
+    ],
     "url": "https://data.oecd.org",
     "access_type": "api",
-    "domains": ["economics", "education", "health", "environment", "global"]
+    "domains": [
+      "economics",
+      "education",
+      "health",
+      "environment",
+      "global"
+    ]
   },
   {
     "canonical_name": "United Nations Data",
-    "aliases": ["UN Data", "UNdata", "United Nations Statistics"],
+    "aliases": [
+      "UN Data",
+      "UNdata",
+      "United Nations Statistics"
+    ],
     "url": "https://data.un.org",
     "access_type": "download",
-    "domains": ["demographics", "economics", "development", "global"]
+    "domains": [
+      "demographics",
+      "economics",
+      "development",
+      "global"
+    ]
   },
   {
     "canonical_name": "Bureau of Labor Statistics",
-    "aliases": ["BLS", "BLS Data", "Bureau of Labor Statistics"],
+    "aliases": [
+      "BLS",
+      "BLS Data",
+      "Bureau of Labor Statistics"
+    ],
     "url": "https://www.bls.gov/data/",
     "access_type": "api",
-    "domains": ["labor", "economics", "employment", "wages"]
+    "domains": [
+      "labor",
+      "economics",
+      "employment",
+      "wages"
+    ]
   },
   {
     "canonical_name": "Eurostat",
-    "aliases": ["Eurostat", "EU Statistics", "European Statistics"],
+    "aliases": [
+      "Eurostat",
+      "EU Statistics",
+      "European Statistics"
+    ],
     "url": "https://ec.europa.eu/eurostat",
     "access_type": "api",
-    "domains": ["economics", "demographics", "environment", "europe"]
+    "domains": [
+      "economics",
+      "demographics",
+      "environment",
+      "europe"
+    ]
   },
   {
     "canonical_name": "Federal Reserve Economic Data",
-    "aliases": ["FRED", "Federal Reserve Data", "St. Louis Fed"],
+    "aliases": [
+      "FRED",
+      "Federal Reserve Data",
+      "St. Louis Fed"
+    ],
     "url": "https://fred.stlouisfed.org",
     "access_type": "api",
-    "domains": ["economics", "finance", "monetary"]
+    "domains": [
+      "economics",
+      "finance",
+      "monetary"
+    ]
   },
   {
     "canonical_name": "OpenStreetMap",
-    "aliases": ["OSM", "OpenStreetMap", "Overpass API", "OSM Data"],
+    "aliases": [
+      "OSM",
+      "OpenStreetMap",
+      "Overpass API",
+      "OSM Data"
+    ],
     "url": "https://www.openstreetmap.org",
     "access_type": "api",
-    "domains": ["geography", "urban", "transportation", "infrastructure"]
+    "domains": [
+      "geography",
+      "urban",
+      "transportation",
+      "infrastructure"
+    ]
   },
   {
     "canonical_name": "NASA EarthData",
-    "aliases": ["NASA EarthData", "NASA Earth Observation", "NASA EOSDIS", "MODIS", "Landsat", "NASA Earth Science"],
+    "aliases": [
+      "NASA EarthData",
+      "NASA Earth Observation",
+      "NASA EOSDIS",
+      "MODIS",
+      "Landsat",
+      "NASA Earth Science"
+    ],
     "url": "https://earthdata.nasa.gov",
     "access_type": "api",
-    "domains": ["environment", "remote sensing", "climate", "land use"]
+    "domains": [
+      "environment",
+      "remote sensing",
+      "climate",
+      "land use"
+    ]
   },
   {
     "canonical_name": "NOAA Climate Data",
-    "aliases": ["NOAA", "NOAA Climate", "NCEI", "GHCN", "National Weather Service", "NOAA Weather"],
+    "aliases": [
+      "NOAA",
+      "NOAA Climate",
+      "NCEI",
+      "GHCN",
+      "National Weather Service",
+      "NOAA Weather"
+    ],
     "url": "https://www.ncei.noaa.gov",
     "access_type": "api",
-    "domains": ["climate", "weather", "environment", "ocean"]
+    "domains": [
+      "climate",
+      "weather",
+      "environment",
+      "ocean"
+    ]
   },
   {
     "canonical_name": "EPA Environmental Data",
-    "aliases": ["EPA", "EPA Data", "EPA AQS", "Air Quality System", "EPA Envirofacts", "TRI"],
+    "aliases": [
+      "EPA",
+      "EPA Data",
+      "EPA AQS",
+      "Air Quality System",
+      "EPA Envirofacts",
+      "TRI"
+    ],
     "url": "https://www.epa.gov/enviro/",
     "access_type": "api",
-    "domains": ["environment", "air quality", "pollution", "health"]
+    "domains": [
+      "environment",
+      "air quality",
+      "pollution",
+      "health"
+    ]
   },
   {
     "canonical_name": "USGS Earth Explorer",
-    "aliases": ["USGS", "Earth Explorer", "USGS Data", "National Map", "USGS Water Data"],
+    "aliases": [
+      "USGS",
+      "Earth Explorer",
+      "USGS Data",
+      "National Map",
+      "USGS Water Data"
+    ],
     "url": "https://earthexplorer.usgs.gov",
     "access_type": "download",
-    "domains": ["geology", "hydrology", "remote sensing", "environment"]
+    "domains": [
+      "geology",
+      "hydrology",
+      "remote sensing",
+      "environment"
+    ]
   },
   {
     "canonical_name": "Copernicus Open Access Hub",
-    "aliases": ["Copernicus", "Sentinel", "Copernicus Data", "ESA Copernicus", "Sentinel-2"],
+    "aliases": [
+      "Copernicus",
+      "Sentinel",
+      "Copernicus Data",
+      "ESA Copernicus",
+      "Sentinel-2"
+    ],
     "url": "https://dataspace.copernicus.eu",
     "access_type": "api",
-    "domains": ["remote sensing", "environment", "climate", "land use"]
+    "domains": [
+      "remote sensing",
+      "environment",
+      "climate",
+      "land use"
+    ]
   },
   {
     "canonical_name": "Google Earth Engine",
-    "aliases": ["GEE", "Google Earth Engine", "Earth Engine"],
+    "aliases": [
+      "GEE",
+      "Google Earth Engine",
+      "Earth Engine"
+    ],
     "url": "https://earthengine.google.com",
     "access_type": "api",
-    "domains": ["remote sensing", "environment", "land use", "climate"]
+    "domains": [
+      "remote sensing",
+      "environment",
+      "land use",
+      "climate"
+    ]
   },
   {
     "canonical_name": "WHO Global Health Observatory",
-    "aliases": ["WHO GHO", "WHO Data", "Global Health Observatory", "WHO", "World Health Organization Data"],
+    "aliases": [
+      "WHO GHO",
+      "WHO Data",
+      "Global Health Observatory",
+      "WHO",
+      "World Health Organization Data"
+    ],
     "url": "https://www.who.int/data/gho",
     "access_type": "api",
-    "domains": ["health", "global", "epidemiology"]
+    "domains": [
+      "health",
+      "global",
+      "epidemiology"
+    ]
   },
   {
     "canonical_name": "CDC WONDER",
-    "aliases": ["CDC WONDER", "CDC Data", "CDC", "Centers for Disease Control"],
+    "aliases": [
+      "CDC WONDER",
+      "CDC Data",
+      "CDC",
+      "Centers for Disease Control"
+    ],
     "url": "https://wonder.cdc.gov",
     "access_type": "api",
-    "domains": ["health", "epidemiology", "mortality", "demographics"]
+    "domains": [
+      "health",
+      "epidemiology",
+      "mortality",
+      "demographics"
+    ]
   },
   {
     "canonical_name": "Global Burden of Disease",
-    "aliases": ["GBD", "Global Burden of Disease", "IHME GBD", "IHME"],
+    "aliases": [
+      "GBD",
+      "Global Burden of Disease",
+      "IHME GBD",
+      "IHME"
+    ],
     "url": "https://www.healthdata.org/research-analysis/gbd",
     "access_type": "download",
-    "domains": ["health", "epidemiology", "global"]
+    "domains": [
+      "health",
+      "epidemiology",
+      "global"
+    ]
   },
   {
     "canonical_name": "NIH National Library of Medicine",
-    "aliases": ["NLM", "PubMed", "NIH Data", "ClinicalTrials.gov", "NCBI"],
+    "aliases": [
+      "NLM",
+      "PubMed",
+      "NIH Data",
+      "ClinicalTrials.gov",
+      "NCBI"
+    ],
     "url": "https://www.nlm.nih.gov",
     "access_type": "api",
-    "domains": ["health", "biomedical", "clinical"]
+    "domains": [
+      "health",
+      "biomedical",
+      "clinical"
+    ]
   },
   {
     "canonical_name": "OpenAlex",
-    "aliases": ["OpenAlex", "OpenAlex API"],
+    "aliases": [
+      "OpenAlex",
+      "OpenAlex API"
+    ],
     "url": "https://openalex.org",
     "access_type": "api",
-    "domains": ["academic", "bibliometrics", "scientometrics"]
+    "domains": [
+      "academic",
+      "bibliometrics",
+      "scientometrics"
+    ]
   },
   {
     "canonical_name": "Crossref",
-    "aliases": ["Crossref", "Crossref API", "DOI metadata"],
+    "aliases": [
+      "Crossref",
+      "Crossref API",
+      "DOI metadata"
+    ],
     "url": "https://www.crossref.org",
     "access_type": "api",
-    "domains": ["academic", "bibliometrics"]
+    "domains": [
+      "academic",
+      "bibliometrics"
+    ]
   },
   {
     "canonical_name": "Semantic Scholar",
-    "aliases": ["Semantic Scholar", "S2", "Semantic Scholar API"],
+    "aliases": [
+      "Semantic Scholar",
+      "S2",
+      "Semantic Scholar API"
+    ],
     "url": "https://www.semanticscholar.org",
     "access_type": "api",
-    "domains": ["academic", "bibliometrics", "NLP"]
+    "domains": [
+      "academic",
+      "bibliometrics",
+      "NLP"
+    ]
   },
   {
     "canonical_name": "GTFS Transit Feeds",
-    "aliases": ["GTFS", "General Transit Feed", "Transit Feeds", "GTFS Data", "OpenMobilityData"],
+    "aliases": [
+      "GTFS",
+      "General Transit Feed",
+      "Transit Feeds",
+      "GTFS Data",
+      "OpenMobilityData"
+    ],
     "url": "https://transitfeeds.com",
     "access_type": "download",
-    "domains": ["transportation", "urban", "transit"]
+    "domains": [
+      "transportation",
+      "urban",
+      "transit"
+    ]
   },
   {
     "canonical_name": "NYC Open Data",
-    "aliases": ["NYC Open Data", "New York City Open Data", "NYC Data"],
+    "aliases": [
+      "NYC Open Data",
+      "New York City Open Data",
+      "NYC Data"
+    ],
     "url": "https://opendata.cityofnewyork.us",
     "access_type": "api",
-    "domains": ["urban", "government", "transportation", "housing"]
+    "domains": [
+      "urban",
+      "government",
+      "transportation",
+      "housing"
+    ]
   },
   {
     "canonical_name": "Data.gov",
-    "aliases": ["Data.gov", "US Open Data", "US Government Data", "Federal Data"],
+    "aliases": [
+      "Data.gov",
+      "US Open Data",
+      "US Government Data",
+      "Federal Data"
+    ],
     "url": "https://data.gov",
     "access_type": "download",
-    "domains": ["government", "economics", "environment", "health"]
+    "domains": [
+      "government",
+      "economics",
+      "environment",
+      "health"
+    ]
   },
   {
     "canonical_name": "Zillow Housing Data",
-    "aliases": ["Zillow", "Zillow Data", "ZHVI", "Zillow Home Value Index", "Zillow Research"],
+    "aliases": [
+      "Zillow",
+      "Zillow Data",
+      "ZHVI",
+      "Zillow Home Value Index",
+      "Zillow Research"
+    ],
     "url": "https://www.zillow.com/research/data/",
     "access_type": "download",
-    "domains": ["housing", "real estate", "economics", "urban"]
+    "domains": [
+      "housing",
+      "real estate",
+      "economics",
+      "urban"
+    ]
   },
   {
     "canonical_name": "National Longitudinal Surveys",
-    "aliases": ["NLS", "NLSY", "National Longitudinal Survey", "NLSY97", "NLSY79"],
+    "aliases": [
+      "NLS",
+      "NLSY",
+      "National Longitudinal Survey",
+      "NLSY97",
+      "NLSY79"
+    ],
     "url": "https://www.nlsinfo.org",
     "access_type": "download",
-    "domains": ["labor", "education", "demographics", "longitudinal"]
+    "domains": [
+      "labor",
+      "education",
+      "demographics",
+      "longitudinal"
+    ]
   },
   {
     "canonical_name": "Panel Study of Income Dynamics",
-    "aliases": ["PSID", "Panel Study of Income Dynamics"],
+    "aliases": [
+      "PSID",
+      "Panel Study of Income Dynamics"
+    ],
     "url": "https://psidonline.isr.umich.edu",
     "access_type": "download",
-    "domains": ["economics", "demographics", "income", "longitudinal"]
+    "domains": [
+      "economics",
+      "demographics",
+      "income",
+      "longitudinal"
+    ]
   },
   {
     "canonical_name": "IMF Data",
-    "aliases": ["IMF", "International Monetary Fund", "IMF Data", "WEO", "World Economic Outlook"],
+    "aliases": [
+      "IMF",
+      "International Monetary Fund",
+      "IMF Data",
+      "WEO",
+      "World Economic Outlook"
+    ],
     "url": "https://data.imf.org",
     "access_type": "api",
-    "domains": ["economics", "finance", "global", "monetary"]
+    "domains": [
+      "economics",
+      "finance",
+      "global",
+      "monetary"
+    ]
   },
   {
     "canonical_name": "FAO FAOSTAT",
-    "aliases": ["FAOSTAT", "FAO", "Food and Agriculture Organization", "FAO Data"],
+    "aliases": [
+      "FAOSTAT",
+      "FAO",
+      "Food and Agriculture Organization",
+      "FAO Data"
+    ],
     "url": "https://www.fao.org/faostat",
     "access_type": "download",
-    "domains": ["agriculture", "food", "environment", "global"]
+    "domains": [
+      "agriculture",
+      "food",
+      "environment",
+      "global"
+    ]
   },
   {
     "canonical_name": "Natural Earth",
-    "aliases": ["Natural Earth", "Natural Earth Data", "NaturalEarth"],
+    "aliases": [
+      "Natural Earth",
+      "Natural Earth Data",
+      "NaturalEarth"
+    ],
     "url": "https://www.naturalearthdata.com",
     "access_type": "download",
-    "domains": ["geography", "cartography", "GIS"]
+    "domains": [
+      "geography",
+      "cartography",
+      "GIS"
+    ]
   },
   {
     "canonical_name": "Global Human Settlement Layer",
-    "aliases": ["GHSL", "Global Human Settlement", "JRC GHSL"],
+    "aliases": [
+      "GHSL",
+      "Global Human Settlement",
+      "JRC GHSL"
+    ],
     "url": "https://ghsl.jrc.ec.europa.eu",
     "access_type": "download",
-    "domains": ["urban", "remote sensing", "population", "land use"]
+    "domains": [
+      "urban",
+      "remote sensing",
+      "population",
+      "land use"
+    ]
   },
   {
     "canonical_name": "Twitter/X Academic API",
-    "aliases": ["Twitter API", "X API", "Twitter Academic", "Twitter Data"],
+    "aliases": [
+      "Twitter API",
+      "X API",
+      "Twitter Academic",
+      "Twitter Data"
+    ],
     "url": "https://developer.x.com",
     "access_type": "api",
-    "domains": ["social media", "NLP", "network analysis"]
+    "domains": [
+      "social media",
+      "NLP",
+      "network analysis"
+    ]
   },
   {
     "canonical_name": "Reddit Data",
-    "aliases": ["Reddit", "Reddit API", "Pushshift Reddit"],
+    "aliases": [
+      "Reddit",
+      "Reddit API",
+      "Pushshift Reddit"
+    ],
     "url": "https://www.reddit.com/dev/api/",
     "access_type": "api",
-    "domains": ["social media", "NLP", "network analysis"]
+    "domains": [
+      "social media",
+      "NLP",
+      "network analysis"
+    ]
   },
   {
     "canonical_name": "Kaggle Datasets",
-    "aliases": ["Kaggle", "Kaggle Datasets", "Kaggle Data"],
+    "aliases": [
+      "Kaggle",
+      "Kaggle Datasets",
+      "Kaggle Data"
+    ],
     "url": "https://www.kaggle.com/datasets",
     "access_type": "download",
-    "domains": ["general", "machine learning", "various"]
+    "domains": [
+      "general",
+      "machine learning",
+      "various"
+    ]
   },
   {
     "canonical_name": "HuggingFace Datasets",
-    "aliases": ["HuggingFace", "HuggingFace Datasets", "HF Datasets"],
+    "aliases": [
+      "HuggingFace",
+      "HuggingFace Datasets",
+      "HF Datasets"
+    ],
     "url": "https://huggingface.co/datasets",
     "access_type": "api",
-    "domains": ["NLP", "machine learning", "various"]
+    "domains": [
+      "NLP",
+      "machine learning",
+      "various"
+    ]
   },
   {
     "canonical_name": "UCI Machine Learning Repository",
-    "aliases": ["UCI", "UCI ML Repository", "UCI Machine Learning"],
+    "aliases": [
+      "UCI",
+      "UCI ML Repository",
+      "UCI Machine Learning"
+    ],
     "url": "https://archive.ics.uci.edu",
     "access_type": "download",
-    "domains": ["machine learning", "statistics", "various"]
+    "domains": [
+      "machine learning",
+      "statistics",
+      "various"
+    ]
   },
   {
     "canonical_name": "IPUMS",
-    "aliases": ["IPUMS", "IPUMS USA", "IPUMS International", "IPUMS CPS", "IPUMS NHGIS"],
+    "aliases": [
+      "IPUMS",
+      "IPUMS USA",
+      "IPUMS International",
+      "IPUMS CPS",
+      "IPUMS NHGIS"
+    ],
     "url": "https://www.ipums.org",
     "access_type": "download",
-    "domains": ["demographics", "census", "health", "geography"]
+    "domains": [
+      "demographics",
+      "census",
+      "health",
+      "geography"
+    ]
   },
   {
     "canonical_name": "Wikidata",
-    "aliases": ["Wikidata", "Wikidata SPARQL", "Wikidata API"],
+    "aliases": [
+      "Wikidata",
+      "Wikidata SPARQL",
+      "Wikidata API"
+    ],
     "url": "https://www.wikidata.org",
     "access_type": "api",
-    "domains": ["knowledge graph", "general", "linked data"]
+    "domains": [
+      "knowledge graph",
+      "general",
+      "linked data"
+    ]
   },
   {
     "canonical_name": "SEC EDGAR",
-    "aliases": ["SEC EDGAR", "EDGAR", "SEC Filings", "SEC Data"],
+    "aliases": [
+      "SEC EDGAR",
+      "EDGAR",
+      "SEC Filings",
+      "SEC Data"
+    ],
     "url": "https://www.sec.gov/edgar",
     "access_type": "api",
-    "domains": ["finance", "corporate", "economics"]
+    "domains": [
+      "finance",
+      "corporate",
+      "economics"
+    ]
   },
   {
     "canonical_name": "NBER Data",
-    "aliases": ["NBER", "National Bureau of Economic Research"],
+    "aliases": [
+      "NBER",
+      "National Bureau of Economic Research"
+    ],
     "url": "https://www.nber.org/research/data",
     "access_type": "download",
-    "domains": ["economics", "finance", "labor"]
+    "domains": [
+      "economics",
+      "finance",
+      "labor"
+    ]
   },
   {
     "canonical_name": "European Environment Agency",
-    "aliases": ["EEA", "European Environment Agency", "EEA Data"],
+    "aliases": [
+      "EEA",
+      "European Environment Agency",
+      "EEA Data"
+    ],
     "url": "https://www.eea.europa.eu/data-and-maps",
     "access_type": "download",
-    "domains": ["environment", "climate", "europe"]
+    "domains": [
+      "environment",
+      "climate",
+      "europe"
+    ]
   },
   {
     "canonical_name": "DBLP",
-    "aliases": ["DBLP", "DBLP Computer Science Bibliography"],
+    "aliases": [
+      "DBLP",
+      "DBLP Computer Science Bibliography"
+    ],
     "url": "https://dblp.org",
     "access_type": "api",
-    "domains": ["academic", "computer science", "bibliometrics"]
+    "domains": [
+      "academic",
+      "computer science",
+      "bibliometrics"
+    ]
   },
   {
     "canonical_name": "Penn World Table",
-    "aliases": ["PWT", "Penn World Table"],
+    "aliases": [
+      "PWT",
+      "Penn World Table"
+    ],
     "url": "https://www.rug.nl/ggdc/productivity/pwt/",
     "access_type": "download",
-    "domains": ["economics", "global", "productivity"]
+    "domains": [
+      "economics",
+      "global",
+      "productivity"
+    ]
   },
   {
     "canonical_name": "GeoNames",
-    "aliases": ["GeoNames", "GeoNames Data"],
+    "aliases": [
+      "GeoNames",
+      "GeoNames Data"
+    ],
     "url": "https://www.geonames.org",
     "access_type": "api",
-    "domains": ["geography", "place names", "GIS"]
+    "domains": [
+      "geography",
+      "place names",
+      "GIS"
+    ]
+  },
+  {
+    "canonical_name": "Google Earth Engine",
+    "aliases": [
+      "Google Earth Engine",
+      "GEE",
+      "Earth Engine",
+      "Google_Earth_Engine"
+    ],
+    "url": "https://earthengine.google.com",
+    "access_type": "api",
+    "domains": [
+      "remote sensing",
+      "satellite imagery",
+      "GeoAI",
+      "urban analysis"
+    ]
+  },
+  {
+    "canonical_name": "Sentinel-2",
+    "aliases": [
+      "Sentinel2",
+      "Sentinel-2",
+      "S2",
+      "ESA Sentinel",
+      "Copernicus Sentinel"
+    ],
+    "url": "https://scihub.copernicus.eu",
+    "access_type": "open",
+    "domains": [
+      "remote sensing",
+      "satellite imagery",
+      "land cover",
+      "urban"
+    ]
+  },
+  {
+    "canonical_name": "Landsat",
+    "aliases": [
+      "Landsat",
+      "Landsat 8",
+      "Landsat 9",
+      "Landsat-8",
+      "Landsat-9",
+      "USGS Landsat"
+    ],
+    "url": "https://earthexplorer.usgs.gov",
+    "access_type": "open",
+    "domains": [
+      "remote sensing",
+      "satellite imagery",
+      "land cover",
+      "urban heat"
+    ]
+  },
+  {
+    "canonical_name": "SafeGraph",
+    "aliases": [
+      "SafeGraph",
+      "Dewey Data",
+      "SafeGraph Mobility"
+    ],
+    "url": "https://www.deweydata.io",
+    "access_type": "restricted",
+    "domains": [
+      "mobility",
+      "POI visits",
+      "urban activity",
+      "foot traffic"
+    ]
+  },
+  {
+    "canonical_name": "Microsoft Building Footprints",
+    "aliases": [
+      "Microsoft Building Footprints",
+      "Microsoft_Building_Footprints",
+      "Building Footprints",
+      "MSFT Footprints",
+      "Global ML Building Footprints"
+    ],
+    "url": "https://github.com/microsoft/GlobalMLBuildingFootprints",
+    "access_type": "open",
+    "domains": [
+      "buildings",
+      "urban form",
+      "GeoAI",
+      "morphology"
+    ]
+  },
+  {
+    "canonical_name": "VIIRS Nighttime Lights",
+    "aliases": [
+      "VIIRS",
+      "VIIRS_Nighttime_Lights",
+      "Nighttime Lights",
+      "NTL",
+      "Night Lights",
+      "DMSP-OLS"
+    ],
+    "url": "https://eogdata.mines.edu/products/vnl",
+    "access_type": "open",
+    "domains": [
+      "economic activity",
+      "urbanization",
+      "poverty",
+      "energy"
+    ]
+  },
+  {
+    "canonical_name": "WorldPop",
+    "aliases": [
+      "WorldPop",
+      "World Pop",
+      "Global Population Grid"
+    ],
+    "url": "https://www.worldpop.org",
+    "access_type": "open",
+    "domains": [
+      "population",
+      "demographics",
+      "urban",
+      "global"
+    ]
+  },
+  {
+    "canonical_name": "American Community Survey",
+    "aliases": [
+      "ACS",
+      "American Community Survey",
+      "US Census ACS",
+      "Census Bureau ACS",
+      "NHGIS ACS"
+    ],
+    "url": "https://www.census.gov/programs-surveys/acs",
+    "access_type": "open",
+    "domains": [
+      "demographics",
+      "income",
+      "housing",
+      "US census"
+    ]
+  },
+  {
+    "canonical_name": "TIGER/Line",
+    "aliases": [
+      "TIGER",
+      "TIGER/Line",
+      "TIGER_Lines",
+      "TIGRIS",
+      "US Census Boundaries"
+    ],
+    "url": "https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.html",
+    "access_type": "open",
+    "domains": [
+      "boundaries",
+      "roads",
+      "GIS",
+      "US census geography"
+    ]
+  },
+  {
+    "canonical_name": "Urban Open Data Portals",
+    "aliases": [
+      "OpenDataSoft_Urban",
+      "City Open Data",
+      "Municipal Open Data",
+      "Open Data Portals"
+    ],
+    "url": "https://data.gov",
+    "access_type": "open",
+    "domains": [
+      "urban",
+      "municipal",
+      "311",
+      "permits",
+      "zoning"
+    ]
   }
 ]
