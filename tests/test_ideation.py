@@ -83,15 +83,15 @@ class _FakeChat:
         return _FakeStructuredLLM(schema)
 
 
+@pytest.mark.skip(reason="IdeationAgent (V0) removed from ideation_agent module; see test_ideation_v2.py")
 def test_ideation_node_offline(monkeypatch: pytest.MonkeyPatch) -> None:
     """Ensure ideation node runs offline (end-to-end) by mocking LLM calls."""
 
-    def _fake_init(self: ideation_agent.IdeationAgent, use_strict_models: bool = False) -> None:
+    def _fake_init(self, use_strict_models: bool = False) -> None:
         self.fast_llm = _FakeChat()
         self.pro_llm = _FakeChat()
-        self.memory = ideation_agent.MemoryRetriever()
 
-    monkeypatch.setattr(ideation_agent.IdeationAgent, "__init__", _fake_init)  # type: ignore[arg-type]
+    monkeypatch.setattr(ideation_agent, "IdeationAgent", type("IdeationAgent", (), {"__init__": _fake_init}))
 
     state = ResearchState(
         domain_input="GeoAI and Urban Planning",

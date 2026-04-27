@@ -7,11 +7,14 @@ Auto-PI (AI PI Generator) is a multi-agent research automation pipeline that ass
 ## Quick Start
 
 ```bash
-# Requires Python 3.10
+# Requires Python 3.11–3.12
 uv sync            # or: pip install -e .
 cp .env.example .env
 # Fill in API keys in .env (at minimum GEMINI_API_KEY)
-python main.py     # interactive CLI
+python main.py                         # Level 2 interactive CLI (default)
+python main.py --mode level_1 --user-topic inputs/my_topic.yaml   # Level 1
+python main.py --legacy-ideation       # Legacy pipeline (V0)
+python main.py --help                  # All CLI flags
 ```
 
 Streamlit UI: `streamlit run ui/app.py`
@@ -19,18 +22,69 @@ API server (local): `uvicorn api.server:app --reload`
 
 ## Architecture
 
-### Pipeline (linear, LangGraph orchestrated)
+### Pipeline (conditional, LangGraph orchestrated)
 
 ```
+# Level 2 (domain auto-generation, default):
 START → field_scanner → ideation → idea_validator → [HITL checkpoint] → literature → drafter → data_fetcher → END
+
+# Level 1 (user-provided structured topic):
+START → ideation → idea_validator → [HITL checkpoint] → literature → drafter → data_fetcher → END
 ```
 
 - **Field Scanner** (`agents/field_scanner_agent.py`) — Scans OpenAlex for landscape analysis, extracts high-traction concepts
-- **Ideation** (`agents/ideation_agent.py`) — Generates 30 candidates → screens to 10 → ranks top 3 → enriches → produces `research_plan.json`
+- **Ideation** (`agents/ideation_agent.py`) — Thin router → V2 (default) or V0 (legacy). V2 runs 7-gate evaluation + reflection loop; produces `research_plan.json` + `tentative_pool.json`
 - **Idea Validator** (`agents/idea_validator_agent.py`) — Validates top candidates for novelty via OpenAlex recent-paper search and data availability via registry matching; auto-substitutes failed ideas from backup pool
 - **Literature** (`agents/literature_agent.py`) — Multi-query OpenAlex search, dedup, evidence cards, BibTeX
 - **Drafter** (`agents/drafter_agent.py`) — Synthesizes academic draft from plan + literature via Gemini Pro
 - **Data Fetcher** (`agents/data_fetcher_agent.py`) — Collects/simulates public datasets (currently mock)
+
+### Module 1 Upgrade (branch: `claude/auto-pi-module1-upgrade-JLv30`)
+
+The ideation engine now features structured slot schema, a seven-gate evaluation system, per-topic reflection loop, and a TENTATIVE topic pool:
+
+#### Structured Topic Schema (`models/topic_schema.py`)
+Topics are represented as five-dimensional slot structures: `ExposureX`, `OutcomeY`, `SpatialScope`, `TemporalScope`, `IdentificationStrategy`. The `Topic` model provides a `four_tuple_signature()` method (MD5 hash of X_family + Y_family + geography + method) used for oscillation detection.
+
+#### Seven-Gate Evaluation (`config/gate_config.yaml`, `agents/rule_engine.py`)
+
+| Gate | Name | Type | Judge |
+|------|------|------|-------|
+| G1 | mechanism_plausibility | refinable | LLM (threshold 4/5) |
+| G2 | scale_alignment | **hard_blocker** | rule_engine (rank diff ≤ 4) |
+| G3 | data_availability | **hard_blocker** | catalog lookup |
+| G4 | identification_validity | refinable | rule_engine + LLM |
+| G5 | novelty | refinable | OpenAlex 4-tuple |
+| G6 | automation_feasibility | **hard_blocker** | skill_registry |
+| G7 | contribution_clarity | refinable | LLM (threshold 4/5) |
+
+#### Reflection Loop (`agents/reflection_loop.py`)
+Per-topic iterative refinement (max 3 rounds) with:
+- Hard-blocker fail (G2/G3/G6) → immediate **REJECTED** (no LLM cost)
+- All refinable pass → **ACCEPTED**
+- 1-2 refinable fail → **REFINE** (next round)
+- ≥3 refinable fail → **TENTATIVE** (human review pool)
+- Oscillation detection (same 4-tuple for 3 rounds) → **TENTATIVE**
+- Early stop (score delta < 0.5 after min 2 rounds) → **TENTATIVE**
+
+Traces persisted to `output/ideation_traces/{topic_id}_trace.json`.
+
+#### Dual Budget Guard (`agents/budget_tracker.py`)
+- Per-run budget ($1.50 default) + per-topic budget ($0.10 default)
+- Three tiers: warn at 70%, stop new topics at 90%, kill switch at 100%
+
+#### Dual-Mode Entry (`agents/ideation_agent_v2.py`)
+- **Level 1**: User provides `--user-topic path.yaml` → validates structured topic → hard-blockers checked → `max_rounds=1` reflection → raises `HITLInterruption` on failure
+- **Level 2**: Domain text → generate 30 seeds → parallel reflection loop (5 workers) → rank ACCEPTED → write TENTATIVE pool
+
+#### TENTATIVE Topic Status
+Topics with ≤2 refinable gate failures are held in `output/tentative_pool.json` rather than auto-rejected. The Streamlit UI has a dedicated **TENTATIVE Review** tab with Promote / Kill / Re-run buttons.
+
+#### Backward Compatibility
+- `--legacy-ideation` flag (or `LEGACY_IDEATION=1` env) → routes to `IdeationAgentV0`
+- `legacy_six_gates` field present in every candidate in `topic_screening.json`
+- Feature flags in `config/reflection_config.yaml` allow per-feature rollback
+- Schema re-exports in `agents/ideation_agent.py` keep existing import paths valid
 
 ### Shared Utilities
 
@@ -38,26 +92,40 @@ START → field_scanner → ideation → idea_validator → [HITL checkpoint] �
 - **MemoryRetriever** (`agents/memory_retriever.py`) — CSV-based persistent idea memory to avoid repeating failed directions
 - **Settings** (`agents/settings.py`) — Centralized path configuration; all paths relative to `AUTOPI_DATA_ROOT`
 - **Logging** (`agents/logging_config.py`) — Structured JSON logging; use `get_logger(__name__)` in all agents
+- **RuleEngine** (`agents/rule_engine.py`) — Zero-LLM-cost deterministic gate checks (G2/G3/G4/G6); `run_hard_blockers()` accepts `use_role_based_g3=True` for candidate factory path
+- **BudgetTracker** (`agents/budget_tracker.py`) — Thread-safe dual-layer LLM cost guard
+- **OpenAlexVerifier** (`agents/openalex_verifier.py`) — Four-tuple novelty check via pyalex
+- **ReflectionLoop** (`agents/reflection_loop.py`) — Per-topic iterative refinement with trace persistence
+- **DevelopmentPackStatus** (`agents/development_pack_status.py`) — `evaluate_development_pack_readiness()` determines `claude_code_ready` via 10-point checklist
+- **CandidateOutputWriter** (`agents/candidate_output_writer.py`) — Writes `feasibility_report.json`, `development_pack_index.json`, `gate_trace.json` per run; called automatically by candidate factory
 
 ### Orchestrator (`agents/orchestrator.py`)
 
-- State (`ResearchState`) passes data between agents via **file path references**, not inline data
+- State (`_Module1State`, extends `ResearchState` with `total=False` fields) passes data between agents via **file path references**, not inline data
+- Conditional fork at `START`: when `user_topic_path` is set, `field_scanner` is skipped (Level 1 mode)
 - Checkpointer: SQLite locally, PostgreSQL in cloud (auto-selected based on `DATABASE_URL`)
 - HITL interrupt before the `literature` node
 
 ## Key Directories
 
 ```
-agents/     Core agent implementations
-api/        FastAPI REST API (server.py, run_manager.py, log_store.py, models.py)
-config/     Research plan template (research_plan.json)
-data/       Generated artifacts: literature cards, raw data
-memory/     Persistent idea memory (CSV + JSONL)
-output/     Final outputs: field scan, drafts, BibTeX, checkpoints
-prompts/    System prompts for LLM calls + data source registry
-scripts/    CLI wrappers for cloud operations
-tests/      Pytest test suite
-ui/         Streamlit monitoring interface
+agents/         Core agent implementations
+agents/_legacy/ Legacy IdeationAgentV0 (observation period; may be deleted later)
+api/            FastAPI REST API (server.py, run_manager.py, log_store.py, models.py)
+config/         YAML configs (gate_config, reflection_config, data_sources, etc.)
+                + research_plan.json template
+data/           Generated artifacts: literature cards, raw data
+memory/         Persistent idea memory (CSV + JSONL)
+models/         Pydantic models (topic_schema.py, data_source.py)
+output/         Final outputs: field scan, drafts, BibTeX, checkpoints,
+                candidate_cards.json, feasibility_report.json,
+                development_pack_index.json, gate_trace.json,
+                repair_history.json, development_packs/{candidate_id}/,
+                ideation_traces/, tentative_pool.json, ideation_run_summary.json
+prompts/        System prompts for LLM calls + data source registry
+scripts/        CLI wrappers for cloud operations + diagnostic report generator
+tests/          Pytest test suite
+ui/             Streamlit monitoring interface (3-tab layout)
 ```
 
 ## Tech Stack
@@ -96,15 +164,53 @@ See `.env.example` for the full list. Key variables:
 
 ## Testing
 
+Four test tiers run in CI order:
+
+| Tier | Command | Keys needed | In CI |
+|------|---------|-------------|-------|
+| Unit/mock | `uv run pytest tests/ -m "not live_openalex and not live_llm" -q` | none | ✓ |
+| Candidate factory eval | `uv run python scripts/eval_candidate_factory.py --check-thresholds` | none | ✓ |
+| Cloud smoke test | `uv run python scripts/cloud_smoke_test.py` | none (local server) | manual |
+| Live OpenAlex | `uv run pytest tests/test_field_scan_live.py -v` | OPENALEX_API_KEY | manual |
+
 ```bash
-pytest                                    # All tests (excludes live API)
-pytest tests/ -m "not live_openalex and not live_llm"  # Mock tests only
-pytest tests/test_field_scan_live.py -v   # Live OpenAlex test
+# Run all mock tests (no API keys required) — use uv run for correct venv
+uv run python -m pytest tests/ -m "not live_openalex and not live_llm" -q
+
+# Run only Module 1 upgrade tests
+uv run python -m pytest tests/test_topic_schema.py tests/test_settings_new_paths.py \
+  tests/test_rule_engine.py tests/test_budget_tracker.py tests/test_openalex_verifier.py \
+  tests/test_reflection_loop.py tests/test_ideation_v2.py tests/test_hitl_helpers_v2.py \
+  tests/test_integration_module1_v2.py -v
+
+# Candidate factory eval — enforces thresholds in CI; writes artifact to output/
+uv run python scripts/eval_candidate_factory.py \
+  --template built_environment_health \
+  --max-candidates 40 \
+  --enable-experimental false \
+  --check-thresholds
+# Enforced thresholds: candidate_count>=20, development_pack_ready_rate>=0.80,
+# score_completion_rate>=0.95, implementation_spec_completion_rate>=0.85,
+# low_or_medium_automation_risk_rate>=0.70, experimental_candidate_count==0
+
+# Cloud smoke test (requires local API server on port 8000)
+uv run python scripts/cloud_smoke_test.py
+
+# Live tests (require API keys)
+uv run python -m pytest tests/test_field_scan_live.py -v   # Live OpenAlex test
 ```
 
 **Markers** (defined in `pyproject.toml`):
 - `live_openalex` — Requires `OPENALEX_API_KEY` and `OPENALEX_EMAIL`
 - `live_llm` — Requires `GEMINI_API_KEY`
+
+### Module 1 Diagnostic Report
+
+```bash
+# Generate gate pass rates, refine frequency, budget stats from traces
+python scripts/generate_diagnostic_report.py
+# Output: output/diagnostic_report.md
+```
 
 ## Conventions
 

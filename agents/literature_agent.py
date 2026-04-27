@@ -11,7 +11,7 @@ from agents.openalex_utils import (
     multi_search_openalex,
 )
 from agents.arxiv_utils import multi_search_arxiv
-from agents.keyword_planner import KeywordPlanner
+from models.research_plan_schema import ResearchPlan
 
 logger = get_logger(__name__)
 
@@ -24,7 +24,6 @@ class LiteratureHarvester:
         self.pdfs_dir = str(settings.literature_pdfs_dir())
         self.references_bib = settings.references_bib_path()
         self.index_json = settings.literature_index_path()
-        self._planner = KeywordPlanner()
 
     def save_paper_info(self, paper: Dict[str, Any]) -> Dict[str, Any]:
         """Generates evidence card and updates indices."""
@@ -86,61 +85,24 @@ class LiteratureHarvester:
         logger.info("--- Module 2: Literature Harvester ---")
 
         plan_path = state.get("current_plan_path", settings.research_plan_path())
-        context_path = state.get("research_context_path", settings.research_context_path())
         try:
             with open(plan_path, "r", encoding="utf-8") as f:
-                plan = json.load(f)
+                plan = ResearchPlan.model_validate(json.load(f))
         except Exception as e:
             logger.error("Failed to load plan: %s", e)
             return state
 
-        context: Dict[str, Any] = {}
-        if os.path.exists(context_path):
-            try:
-                with open(context_path, "r", encoding="utf-8") as f:
-                    context = json.load(f)
-            except Exception as e:
-                logger.warning("Failed to load research context: %s", e)
-
-        extra_parts: List[str] = []
-        selected = context.get("selected_topic", {}) if isinstance(context, dict) else {}
-        title = selected.get("title")
-        if isinstance(title, str) and title:
-            extra_parts.append(f"Selected topic: {title}")
-
-        plan_ess = context.get("plan_essentials", {}) if isinstance(context, dict) else {}
-        outcomes = plan_ess.get("outcomes", [])
-        for outcome in outcomes[:2]:
-            if isinstance(outcome, dict):
-                var = outcome.get("variable") or outcome.get("name")
-                if isinstance(var, str) and var:
-                    extra_parts.append(f"Outcome: {var}")
-            elif isinstance(outcome, str) and outcome:
-                extra_parts.append(f"Outcome: {outcome}")
-
-        extra_context = "; ".join(extra_parts)
-
-        domain_for_planner = (
-            title
-            or " ".join(
-                kw for kw in (plan.get("keywords") or [])[:3] if isinstance(kw, str) and kw
-            )
-            or context.get("domain", "geoai")
-            or "geoai"
-        )
+        domain_for_planner = plan.project_title or "geoai"
+        query_pool: List[str] = list(plan.literature_queries or [])
+        if not query_pool:
+            query_pool = [
+                f"{plan.research_question} {plan.geography}".strip(),
+                f"{plan.exposure.name} {plan.outcome.name} {plan.identification.primary_method}".strip(),
+                f"{plan.exposure.name} {plan.outcome.name} open data".strip(),
+            ]
 
         final_limit = int(os.getenv("LITERATURE_FINAL_LIMIT", "3"))
-        plan_cache_hours = float(os.getenv("KEYWORD_PLAN_CACHE_HOURS", "24"))
-        plan_cache_key = build_cache_key(
-            "literature_keyword_plan",
-            {"domain_for_planner": domain_for_planner, "extra_context": extra_context},
-        )
-        keyword_plan = load_json_cache("keyword_plans", plan_cache_key, max_age_hours=plan_cache_hours)
-        if not isinstance(keyword_plan, dict):
-            keyword_plan = self._planner.plan(domain_for_planner, extra_context=extra_context)
-            save_json_cache("keyword_plans", plan_cache_key, keyword_plan)
-        query_pool: List[str] = keyword_plan.get("query_pool") or [domain_for_planner]
-        used_fallback: bool = keyword_plan.get("used_fallback", True)
+        used_fallback: bool = not bool(plan.literature_queries)
 
         logger.info(
             "Query pool (%d queries, fallback=%s): %s",
@@ -185,14 +147,41 @@ class LiteratureHarvester:
         # Respect the final_limit across both sources
         papers = papers[:final_limit + arxiv_limit]
 
+        plan_terms = {
+            term.lower()
+            for term in [plan.exposure.name, plan.outcome.name, plan.research_question]
+            if isinstance(term, str) and term
+        }
         inventory = []
         for paper in papers:
             card = self.save_paper_info(paper)
+            source_db = paper.get("source") or ("arxiv" if str(paper.get("paperId", "")).startswith("arxiv:") else "openalex")
+            matched_query = ""
+            title_abstract = f"{card.get('title', '')} {card.get('abstract', '')}".lower()
+            overlap_score = 0
+            for query in query_pool:
+                query_terms = [q for q in query.lower().split() if len(q) > 2]
+                score = sum(1 for q in query_terms if q in title_abstract)
+                if score > overlap_score:
+                    overlap_score = score
+                    matched_query = query
+            relevance = "low"
+            if overlap_score >= 3 or sum(1 for t in plan_terms if t in title_abstract) >= 2:
+                relevance = "high"
+            elif overlap_score >= 1:
+                relevance = "medium"
+            card["matched_query"] = matched_query or (query_pool[0] if query_pool else "")
+            card["relevance_to_plan"] = relevance
+            card["source_database"] = source_db
+            card_path = os.path.join(self.cards_dir, f"{card['citation_key']}.json")
+            with open(card_path, "w", encoding="utf-8") as f:
+                json.dump(card, f, indent=2, ensure_ascii=False)
             inventory.append(card)
 
         with open(self.index_json, "w", encoding="utf-8") as f:
             json.dump(inventory, f, indent=2, ensure_ascii=False)
 
+        context_path = state.get("research_context_path", settings.research_context_path())
         if os.path.exists(context_path):
             try:
                 with open(context_path, "r", encoding="utf-8") as f:

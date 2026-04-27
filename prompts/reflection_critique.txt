@@ -1,0 +1,105 @@
+# Per-gate LLM critique templates for the reflection loop.
+#
+# Format: YAML mapping of gate_id → {threshold, template}.
+# Each template is a Python str.format() string.
+# Available placeholders for all gates:
+#   {exposure_variable}  {exposure_family}  {outcome_variable}  {outcome_family}
+#   {geography}  {spatial_unit}  {method}
+#   {key_threats}  {mitigations}                 (G4)
+#   {contribution_statement}  {gap_addressed}    (G7)
+#   {total_hits}  {four_tuple_match_count}        (G5)
+#   {oa_top_papers_formatted}                     (G5)
+#   {target_venues}                               (G7)
+#
+# Literal braces in the reply-format line are escaped as {{ and }}.
+
+G1:
+  threshold: 4
+  template: |
+    You are a peer reviewer evaluating a causal research topic for mechanistic plausibility.
+
+    Topic:
+      Exposure : {exposure_variable} (family: {exposure_family})
+      Outcome  : {outcome_variable}  (family: {outcome_family})
+      Geography: {geography}
+      Method   : {method}
+
+    Score the strength of the causal mechanism linking this specific exposure to this specific outcome:
+      5 = Well-established biological/behavioural/economic pathway with strong prior evidence
+      4 = Plausible pathway supported by at least some empirical work
+      3 = Possible but contested, indirect, or context-dependent
+      2 = Weak or highly speculative; mechanism relies on an untested chain of steps
+      1 = No coherent causal pathway; exposure and outcome are not plausibly linked
+
+    Reply with a single JSON object and nothing else:
+    {{"score": <integer 1–5>, "reasoning": "<2–3 sentences explaining your score>"}}
+
+G4:
+  threshold: 4
+  template: |
+    You are a peer reviewer evaluating whether this research topic has a credible identification strategy.
+
+    Topic:
+      Exposure         : {exposure_variable} (family: {exposure_family})
+      Outcome          : {outcome_variable}  (family: {outcome_family})
+      Identification   : {method}
+      Key threats      : {key_threats}
+      Mitigations      : {mitigations}
+
+    Score how well the identification strategy defends against the stated threats to internal validity:
+      5 = All major threats explicitly listed and credibly addressed; design is quasi-experimental
+      4 = Main threats addressed; one minor gap remains
+      3 = Strategy plausible but leaves at least one important threat unaddressed
+      2 = Significant validity gap; results would likely reflect confounding rather than a causal effect
+      1 = Strategy fundamentally unsuited to isolate the effect; no credible identification
+
+    Reply with a single JSON object and nothing else:
+    {{"score": <integer 1–5>, "reasoning": "<2–3 sentences explaining your score>"}}
+
+G5:
+  threshold: 3
+  template: |
+    You are a peer reviewer assessing the novelty of a proposed research topic.
+
+    Topic:
+      Exposure  : {exposure_variable} (family: {exposure_family})
+      Outcome   : {outcome_variable}  (family: {outcome_family})
+      Geography : {geography}
+      Method    : {method}
+
+    OpenAlex search results:
+      Total papers found matching exposure+outcome : {total_hits}
+      Papers matching on ALL FOUR dimensions
+      (exposure family × outcome family × geography type × identification method): {four_tuple_match_count}
+
+    Top OpenAlex papers (for concrete novelty assessment):
+    {oa_top_papers_formatted}
+
+    Score novelty given these search results:
+      5 = Genuinely novel combination; 0 four-tuple matches; high contribution potential
+      4 = Very few matches (1–2); topic adds a clear marginal contribution to an emerging area
+      3 = Some matches (3–5); a strong positioning argument is needed to differentiate
+      2 = Many matches (6–15); contribution would need to be extremely specific or methodologically superior
+      1 = Saturated area (>15 four-tuple matches); unlikely to pass peer review as proposed
+
+    Reply with a single JSON object and nothing else:
+    {{"score": <integer 1–5>, "reasoning": "<2–3 sentences explaining your score>"}}
+
+G7:
+  threshold: 4
+  template: |
+    You are a peer reviewer assessing the clarity and significance of a research contribution statement.
+
+    Contribution statement : "{contribution_statement}"
+    Gap addressed          : "{gap_addressed}"
+    Target venues          : {target_venues}
+
+    Score how clearly this contribution advances the literature:
+      5 = Precisely names the knowledge gap, the proposed advance, and why it matters for theory or policy
+      4 = Clear contribution; minor ambiguity about scope or magnitude of impact
+      3 = General contribution described but the specific prior limitation is not clearly identified
+      2 = Vague or aspirational; no specific deficiency in prior work is cited
+      1 = No identifiable contribution beyond "we study topic X"; any paper on the topic would claim the same
+
+    Reply with a single JSON object and nothing else:
+    {{"score": <integer 1–5>, "reasoning": "<2–3 sentences explaining your score>"}}

@@ -23,11 +23,12 @@ Endpoints:
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, HTTPException
@@ -37,6 +38,10 @@ from agents import settings
 from agents.logging_config import setup_logging, get_logger
 
 from api import log_store, run_manager
+from agents.hitl_helpers import apply_idea_selection, apply_idea_selection_by_candidate_id
+from agents.development_pack_status import evaluate_development_pack_readiness
+from agents.development_pack_writer import write_development_pack
+from agents.research_template_loader import load_research_template, validate_template_sources
 from api.models import (
     ApproveRequest,
     ApproveResponse,
@@ -99,88 +104,33 @@ async def serve_ui():
 
 # ── Background pipeline execution ────────────────────────────────────
 
-def _apply_idea_selection(run_id: str, thread_id: str, idea_index: int) -> Optional[str]:
-    """Promote candidate at *idea_index* to rank-1 and persist the updated files.
-
-    Reads ``topic_screening.json`` from the run's scoped output directory,
-    rotates the selected candidate to position 0, re-assigns ranks, and
-    updates ``research_context.json``'s ``selected_topic`` accordingly.
-
-    Returns the title of the newly selected idea, or None if the index is invalid.
-    """
-    import json as _json
-
-    scope_token = settings.activate_run_scope(run_id)
-    try:
-        screening_path = settings.topic_screening_path()
-        context_path = settings.research_context_path()
-        plan_path = settings.research_plan_path()
-
-        if not Path(screening_path).exists():
-            return None
-
-        with open(screening_path, "r", encoding="utf-8") as f:
-            screening = _json.load(f)
-
-        candidates: list = screening.get("candidates", [])
-        if idea_index < 0 or idea_index >= len(candidates):
-            return None
-
-        # Rotate selected candidate to front
-        selected = candidates.pop(idea_index)
-        candidates.insert(0, selected)
-        for i, c in enumerate(candidates):
-            c["rank"] = i + 1
-        screening["candidates"] = candidates
-
-        with open(screening_path, "w", encoding="utf-8") as f:
-            _json.dump(screening, f, indent=2, ensure_ascii=False)
-
-        selected_title: str = selected.get("title", "")
-
-        # Update research_context.json
-        if Path(context_path).exists():
-            try:
-                with open(context_path, "r", encoding="utf-8") as f:
-                    ctx = _json.load(f)
-                if isinstance(ctx, dict):
-                    ctx["selected_topic"] = {
-                        "title": selected_title,
-                        "score": selected.get("final_score", selected.get("initial_score")),
-                        "quantitative_specs": selected.get("quantitative_specs", {}),
-                        "data_sources": selected.get("data_sources", []),
-                        "publishability": selected.get("publishability", ""),
-                        "selection_overridden": True,
-                    }
-                    with open(context_path, "w", encoding="utf-8") as f:
-                        _json.dump(ctx, f, indent=2, ensure_ascii=False)
-            except Exception as exc:
-                logger.warning("Could not update research_context.json after idea selection: %s", exc)
-
-        # Update research_plan.json title to match the new top-1
-        if Path(plan_path).exists():
-            try:
-                with open(plan_path, "r", encoding="utf-8") as f:
-                    plan = _json.load(f)
-                plan["project_title"] = selected_title
-                plan["topic_screening"] = {"top_candidate_title": selected_title, "manually_selected": True}
-                with open(plan_path, "w", encoding="utf-8") as f:
-                    _json.dump(plan, f, indent=2, ensure_ascii=False)
-            except Exception as exc:
-                logger.warning("Could not update research_plan.json after idea selection: %s", exc)
-
-        return selected_title
-    finally:
-        settings.deactivate_run_scope(scope_token)
-
-
-async def _run_pipeline(run_id: str, thread_id: str, domain_input: str) -> None:
+async def _run_pipeline(
+    run_id: str,
+    thread_id: str,
+    domain_input: str,
+    template_id: str | None = None,
+    technology_options: dict | None = None,
+    automation_risk_tolerance: str = "low_medium",
+    cloud_constraints: dict | None = None,
+    enable_experimental: bool = False,
+    max_candidates: int = 40,
+) -> None:
     """Run the pipeline phases in the background, handling HITL interrupt."""
     log_store.set_current_run(run_id)
     scope_token = settings.activate_run_scope(run_id)
     graph = _get_graph()
     config = {"configurable": {"thread_id": thread_id}}
-    initial_state = {"domain_input": domain_input, "execution_status": "starting"}
+    initial_state = {
+        "domain_input": domain_input,
+        "execution_status": "starting",
+        "template_id": template_id,
+        "technology_options": technology_options or {},
+        "automation_risk_tolerance": automation_risk_tolerance,
+        "cloud_constraints": cloud_constraints or {},
+        "enable_experimental": enable_experimental,
+        "candidate_factory_enabled": bool(template_id),
+        "max_candidates": max_candidates,
+    }
 
     def _stream_phase1() -> Optional[str]:
         """Synchronous streaming phase; returns first pending node if HITL, else None."""
@@ -307,13 +257,62 @@ async def health():
     return HealthResponse(status="ok")
 
 
+@app.get("/templates")
+async def list_templates():
+    template_dir = Path("config/research_templates")
+    if not template_dir.exists():
+        return {"templates": []}
+    templates = []
+    for path in sorted(template_dir.glob("*.yaml")):
+        tid = path.stem
+        try:
+            tpl = load_research_template(tid)
+            templates.append(
+                {
+                    "template_id": tpl.get("template_id", tid),
+                    "file_id": tid,
+                    "description": tpl.get("description", ""),
+                    "default_geography": tpl.get("default_geography", ""),
+                }
+            )
+        except Exception:
+            templates.append({"template_id": tid, "file_id": tid, "description": "invalid template"})
+    return {"templates": templates}
+
+
+@app.get("/templates/{template_id}")
+async def get_template(template_id: str):
+    try:
+        template = load_research_template(template_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    missing_sources = validate_template_sources(template)
+    return {
+        "template": template,
+        "validation": {
+            "sources_ok": len(missing_sources) == 0,
+            "missing_sources": missing_sources,
+        },
+    }
+
+
 @app.post("/runs", response_model=RunStatus, status_code=202)
 async def start_run(req: StartRunRequest, background_tasks: BackgroundTasks):
     """Start a new pipeline run. Returns immediately with run_id."""
     run = run_manager.create_run(req.domain_input, thread_id=req.thread_id)
     logger.info("Starting run %s for domain: %s", run.run_id, req.domain_input)
     task = asyncio.create_task(
-        _run_pipeline(run.run_id, run.thread_id, req.domain_input)
+        _run_pipeline(
+            run.run_id,
+            run.thread_id,
+            req.domain_input,
+            template_id=req.template_id,
+            technology_options=req.technology_options,
+            automation_risk_tolerance=req.automation_risk_tolerance,
+            cloud_constraints=req.cloud_constraints,
+            enable_experimental=req.enable_experimental,
+            max_candidates=req.max_candidates,
+        )
     )
     _tasks[run.run_id] = task
     return run
@@ -399,6 +398,167 @@ def _load_current_topics(run_id: str) -> list:
         settings.deactivate_run_scope(scope_token)
 
 
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _source_at(candidate: dict[str, Any], index: int) -> str:
+    sources = candidate.get("declared_sources") or []
+    if not isinstance(sources, list):
+        return ""
+    if index >= len(sources):
+        return ""
+    value = sources[index]
+    return str(value) if value is not None else ""
+
+
+def _normalize_candidate_card(candidate: dict[str, Any], fallback_idx: int) -> dict[str, Any]:
+    gate_status = candidate.get("gate_status") or {}
+    scores = candidate.get("scores") or {}
+    overall_gate = gate_status.get("overall", "pending")
+    gate_summary = {
+        "overall": overall_gate,
+        "failed_count": len(gate_status.get("failed_gates") or []),
+        "warning_count": len(gate_status.get("warnings") or []),
+    }
+    if candidate.get("shortlist_status"):
+        shortlist_status = candidate.get("shortlist_status")
+    else:
+        shortlist_status = (
+            "ready" if overall_gate == "pass" else "blocked" if overall_gate == "fail" else "review"
+        )
+
+    return {
+        "candidate_id": candidate.get("candidate_id") or candidate.get("topic_id") or f"legacy_{fallback_idx:03d}",
+        "title": candidate.get("title", ""),
+        "research_question": candidate.get("research_question", ""),
+        "exposure_label": candidate.get("exposure_label") or candidate.get("exposure_variable") or candidate.get("exposure_family", ""),
+        "exposure_source": candidate.get("exposure_source")
+        or _source_at(candidate, 0),
+        "outcome_label": candidate.get("outcome_label") or candidate.get("outcome_variable") or candidate.get("outcome_family", ""),
+        "outcome_source": candidate.get("outcome_source")
+        or _source_at(candidate, 1),
+        "unit_of_analysis": candidate.get("unit_of_analysis", ""),
+        "method": candidate.get("method") or candidate.get("method_template", ""),
+        "claim_strength": candidate.get("claim_strength", "associational"),
+        "technology_tags": candidate.get("technology_tags", []),
+        "required_secrets": gate_status.get("required_secrets", candidate.get("required_secrets", [])),
+        "automation_risk": candidate.get("automation_risk", "unknown"),
+        "shortlist_status": shortlist_status,
+        "scores": {
+            "data_feasibility": _safe_float(scores.get("data_feasibility")),
+            "automation_feasibility": _safe_float(scores.get("automation_feasibility")),
+            "identification_quality": _safe_float(scores.get("identification_quality")),
+            "novelty": _safe_float(scores.get("novelty")),
+            "technology_innovation": _safe_float(scores.get("technology_innovation")),
+            "overall": _safe_float(scores.get("overall")),
+        },
+        "gate_summary": gate_summary,
+        "development_pack_status": candidate.get("development_pack_status", "not_generated"),
+        "_raw": candidate.get("_raw") or candidate,
+    }
+
+
+def _build_candidate_detail(candidate: dict[str, Any], fallback_idx: int) -> dict[str, Any]:
+    card = _normalize_candidate_card(candidate, fallback_idx)
+    raw = card["_raw"]
+    join_plan = raw.get("join_plan") or {}
+    join_steps = join_plan.get("steps")
+    if not join_steps:
+        join_steps = [
+            f"Prepare exposure features from {card['exposure_source'] or 'exposure source'}",
+            f"Load outcome data from {card['outcome_source'] or 'outcome source'}",
+            f"Join datasets at {card['unit_of_analysis'] or 'target'} level by GEOID",
+        ]
+    x_y_structure = [
+        {
+            "role": "exposure",
+            "variable": card["exposure_label"],
+            "source": card["exposure_source"],
+            "unit": card["unit_of_analysis"],
+            "format": "derived_features",
+            "status": "pass",
+        },
+        {
+            "role": "outcome",
+            "variable": card["outcome_label"],
+            "source": card["outcome_source"],
+            "unit": card["unit_of_analysis"],
+            "format": "tabular",
+            "status": "pass",
+        },
+    ]
+    if raw.get("key_threats") or raw.get("mitigations"):
+        identification = {
+            "primary_method": card["method"],
+            "claim_strength": card["claim_strength"],
+            "key_threats": raw.get("key_threats", []),
+            "mitigations": raw.get("mitigations", {}),
+        }
+    else:
+        identification = {
+            "primary_method": card["method"],
+            "claim_strength": card["claim_strength"],
+            "key_threats": [],
+            "mitigations": {},
+        }
+    policy_constraints = []
+    cloud_constraints = raw.get("cloud_constraints") or {}
+    if cloud_constraints.get("no_paid_api"):
+        policy_constraints.append("no_paid_api")
+    if cloud_constraints.get("no_raw_image_storage"):
+        policy_constraints.append("no_raw_image_storage")
+
+    return {
+        "candidate_id": card["candidate_id"],
+        "title": card["title"],
+        "research_question": card["research_question"],
+        "x_y_structure": x_y_structure,
+        "join_plan": {
+            "steps": join_steps,
+            "join_key": join_plan.get("join_key", "GEOID"),
+        },
+        "identification": identification,
+        "technology": {
+            "cloud_safe": bool(raw.get("cloud_safe", True)),
+            "automation_risk": card["automation_risk"],
+            "required_extras": raw.get("required_extras", card["technology_tags"]),
+            "required_secrets": card["required_secrets"],
+            "policy_constraints": policy_constraints,
+        },
+        "gate_status": raw.get("gate_status", {}),
+        "repair_history": raw.get("repair_history", []),
+    }
+
+
+def _load_candidate_cards(run_id: str) -> list[dict]:
+    """Load candidate cards from run-scoped outputs (or fallback screening candidates)."""
+    token = settings.activate_run_scope(run_id)
+    try:
+        output_path = settings.output_dir() / "candidate_cards.json"
+        if output_path.exists():
+            try:
+                payload = json.loads(output_path.read_text(encoding="utf-8"))
+                if isinstance(payload, list):
+                    return [_normalize_candidate_card(c, i) for i, c in enumerate(payload, start=1)]
+                if isinstance(payload, dict):
+                    candidates = payload.get("candidates", [])
+                    return [_normalize_candidate_card(c, i) for i, c in enumerate(candidates, start=1)]
+            except json.JSONDecodeError:
+                pass
+        screening = Path(settings.topic_screening_path())
+        if screening.exists():
+            payload = json.loads(screening.read_text(encoding="utf-8"))
+            candidates = payload.get("candidates", [])
+            return [_normalize_candidate_card(c, i) for i, c in enumerate(candidates, start=1)]
+        return []
+    finally:
+        settings.deactivate_run_scope(token)
+
+
 @app.post("/runs/{run_id}/approve", response_model=ApproveResponse)
 async def approve_hitl(run_id: str, req: ApproveRequest = ApproveRequest()):
     """Handle the HITL checkpoint.
@@ -469,9 +629,14 @@ async def approve_hitl(run_id: str, req: ApproveRequest = ApproveRequest()):
             detail="selected_idea_index is required when action='select'.",
         )
 
-    selected_title = await asyncio.to_thread(
-        _apply_idea_selection, run_id, run.thread_id, req.selected_idea_index
-    )
+    def _apply() -> str | None:
+        scope_token = settings.activate_run_scope(run_id)
+        try:
+            return apply_idea_selection(req.selected_idea_index)
+        finally:
+            settings.deactivate_run_scope(scope_token)
+
+    selected_title = await asyncio.to_thread(_apply)
     if selected_title is None:
         raise HTTPException(
             status_code=422,
@@ -510,6 +675,273 @@ async def reject_hitl(run_id: str):
     run_manager.update_status(run_id, "aborted")
     logger.info("HITL rejected for run %s. Run aborted.", run_id)
     return ApproveResponse(run_id=run_id, status="aborted", message="Run aborted by user.")
+
+
+@app.get("/runs/{run_id}/candidates")
+async def list_candidates(run_id: str):
+    run = run_manager.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found.")
+    cards = _load_candidate_cards(run_id)
+    public_cards = [{k: v for k, v in c.items() if k != "_raw"} for c in cards]
+    return {"run_id": run_id, "count": len(public_cards), "candidates": public_cards}
+
+
+@app.get("/runs/{run_id}/candidates/{candidate_id}")
+async def get_candidate(run_id: str, candidate_id: str):
+    run = run_manager.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found.")
+    candidates = _load_candidate_cards(run_id)
+    for i, candidate in enumerate(candidates, start=1):
+        if candidate.get("candidate_id") == candidate_id:
+            return {"run_id": run_id, "candidate": _build_candidate_detail(candidate, i)}
+    raise HTTPException(status_code=404, detail=f"Candidate {candidate_id!r} not found.")
+
+
+@app.post("/runs/{run_id}/candidates/{candidate_id}/select", response_model=ApproveResponse)
+async def select_candidate_by_id(run_id: str, candidate_id: str):
+    """Select a candidate by candidate_id and resume the paused pipeline."""
+    run = run_manager.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found.")
+    if run.status != "awaiting_approval":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Run is in status '{run.status}', not 'awaiting_approval'.",
+        )
+
+    token = settings.activate_run_scope(run_id)
+    try:
+        selected_title = await asyncio.to_thread(apply_idea_selection_by_candidate_id, candidate_id)
+    finally:
+        settings.deactivate_run_scope(token)
+
+    if selected_title is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"candidate_id {candidate_id!r} not found in current screening candidates.",
+        )
+
+    run_manager.record_milestone(run_id, "approved", f"candidate_id selected: {candidate_id}")
+    logger.info("HITL: candidate_id selected for run %s: %s", run_id, candidate_id)
+
+    task = asyncio.create_task(_resume_pipeline(run_id, run.thread_id))
+    _tasks[run_id] = task
+
+    return ApproveResponse(
+        run_id=run_id,
+        status="running",
+        message=f"Pipeline resumed with selected candidate_id: {candidate_id!r}",
+        selected_idea=selected_title,
+    )
+
+
+@app.post("/runs/{run_id}/candidates/{candidate_id}/development-pack")
+async def generate_development_pack(run_id: str, candidate_id: str):
+    run = run_manager.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found.")
+    candidates = _load_candidate_cards(run_id)
+    candidate = next((c for c in candidates if c.get("candidate_id") == candidate_id), None)
+    if not candidate:
+        raise HTTPException(status_code=404, detail=f"Candidate {candidate_id!r} not found.")
+
+    payload = candidate.get("_raw") or candidate
+    try:
+        pack_dir = write_development_pack(run_id, payload)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to generate development pack: {exc}")
+    return {
+        "run_id": run_id,
+        "candidate_id": candidate_id,
+        "pack_dir": str(pack_dir),
+        "files": sorted(p.name for p in pack_dir.glob("*") if p.is_file()),
+    }
+
+
+@app.get("/runs/{run_id}/development-packs")
+async def list_development_packs(run_id: str):
+    run = run_manager.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found.")
+    token = settings.activate_run_scope(run_id)
+    try:
+        base = settings.development_packs_dir()
+        packs = []
+        for d in sorted(base.glob("*")):
+            if d.is_dir():
+                packs.append({"candidate_id": d.name, "files": sorted(p.name for p in d.glob('*') if p.is_file())})
+        return {"run_id": run_id, "development_packs": packs}
+    finally:
+        settings.deactivate_run_scope(token)
+
+
+@app.get("/runs/{run_id}/development-packs/{candidate_id}/files")
+async def list_development_pack_files(run_id: str, candidate_id: str):
+    run = run_manager.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found.")
+    token = settings.activate_run_scope(run_id)
+    try:
+        pack_dir = settings.development_packs_dir() / candidate_id
+        if not pack_dir.exists():
+            raise HTTPException(status_code=404, detail=f"Development pack for {candidate_id!r} not found.")
+        files = [{"filename": p.name, "size_bytes": p.stat().st_size} for p in sorted(pack_dir.glob("*")) if p.is_file()]
+        return {"run_id": run_id, "candidate_id": candidate_id, "files": files}
+    finally:
+        settings.deactivate_run_scope(token)
+
+
+@app.get("/runs/{run_id}/feasibility-report")
+async def get_feasibility_report(run_id: str):
+    """Return feasibility_report.json for a run (written by candidate factory)."""
+    run = run_manager.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found.")
+    token = settings.activate_run_scope(run_id)
+    try:
+        path = settings.output_dir() / "feasibility_report.json"
+        if not path.exists():
+            raise HTTPException(status_code=404, detail="feasibility_report.json not found for this run.")
+        return json.loads(path.read_text(encoding="utf-8"))
+    finally:
+        settings.deactivate_run_scope(token)
+
+
+@app.get("/runs/{run_id}/development-pack-index")
+async def get_development_pack_index(run_id: str):
+    """Return development_pack_index.json for a run (written by candidate factory)."""
+    run = run_manager.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found.")
+    token = settings.activate_run_scope(run_id)
+    try:
+        path = settings.output_dir() / "development_pack_index.json"
+        if not path.exists():
+            raise HTTPException(status_code=404, detail="development_pack_index.json not found for this run.")
+        return json.loads(path.read_text(encoding="utf-8"))
+    finally:
+        settings.deactivate_run_scope(token)
+
+
+@app.get("/runs/{run_id}/candidates/{candidate_id}/claude-task-prompt")
+async def get_claude_task_prompt(run_id: str, candidate_id: str):
+    """Return claude_task_prompt.md content for a candidate's development pack."""
+    run = run_manager.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found.")
+    token = settings.activate_run_scope(run_id)
+    try:
+        pack_dir = settings.development_packs_dir() / candidate_id
+        prompt_path = pack_dir / "claude_task_prompt.md"
+        if not prompt_path.exists():
+            raise HTTPException(
+                status_code=404,
+                detail=f"claude_task_prompt.md not found for candidate {candidate_id!r}.",
+            )
+        candidates = _load_candidate_cards(run_id)
+        card = next((c for c in candidates if c.get("candidate_id") == candidate_id), {})
+        gate_status = card.get("gate_status", {})
+        readiness = evaluate_development_pack_readiness(
+            card.get("_raw") or card, gate_status, pack_dir
+        )
+        return {
+            "run_id": run_id,
+            "candidate_id": candidate_id,
+            "claude_code_ready": readiness["claude_code_ready"],
+            "development_pack_status": readiness["development_pack_status"],
+            "blocking_reasons": readiness["blocking_reasons"],
+            "prompt": prompt_path.read_text(encoding="utf-8"),
+        }
+    finally:
+        settings.deactivate_run_scope(token)
+
+
+@app.get("/runs/{run_id}/development-packs/{candidate_id}")
+async def get_development_pack(run_id: str, candidate_id: str):
+    run = run_manager.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found.")
+    token = settings.activate_run_scope(run_id)
+    try:
+        pack_dir = settings.development_packs_dir() / candidate_id
+        if not pack_dir.exists():
+            raise HTTPException(status_code=404, detail=f"Development pack for {candidate_id!r} not found.")
+
+        required = [
+            "implementation_spec.json",
+            "claude_task_prompt.md",
+            "data_contract.yaml",
+            "feature_plan.yaml",
+            "analysis_plan.yaml",
+            "acceptance_tests.md",
+        ]
+        found = {p.name for p in pack_dir.glob("*") if p.is_file()}
+        has_required = {name: name in found for name in required}
+
+        preview_limit = 8000
+        files = []
+        for file_path in sorted(pack_dir.glob("*")):
+            if not file_path.is_file():
+                continue
+            text = file_path.read_text(encoding="utf-8", errors="ignore")
+            files.append(
+                {
+                    "filename": file_path.name,
+                    "file_type": file_path.suffix.lstrip(".") or "text",
+                    "preview_text": text[:preview_limit],
+                    "truncated": len(text) > preview_limit,
+                    "download_url": f"/runs/{run_id}/development-packs/{candidate_id}/files/{file_path.name}",
+                }
+            )
+
+        candidates = _load_candidate_cards(run_id)
+        candidate_card = next((c for c in candidates if c.get("candidate_id") == candidate_id), {})
+        gate_status = candidate_card.get("gate_status", {})
+        payload = candidate_card.get("_raw") or candidate_card
+        readiness = evaluate_development_pack_readiness(payload, gate_status, pack_dir)
+        checklist = {
+            "implementation_spec": has_required["implementation_spec.json"],
+            "claude_task_prompt": has_required["claude_task_prompt.md"],
+            "data_contract": has_required["data_contract.yaml"],
+            "feature_plan": has_required["feature_plan.yaml"],
+            "analysis_plan": has_required["analysis_plan.yaml"],
+            "acceptance_tests": has_required["acceptance_tests.md"],
+            "no_required_secrets": not bool(candidate_card.get("required_secrets")),
+            "not_high_risk": candidate_card.get("automation_risk", "high") in ("low", "medium"),
+        }
+        return {
+            "run_id": run_id,
+            "candidate_id": candidate_id,
+            "status": readiness["development_pack_status"],
+            "claude_code_ready": readiness["claude_code_ready"],
+            "blocking_reasons": readiness["blocking_reasons"],
+            "readiness_checklist": checklist,
+            "files": files,
+        }
+    finally:
+        settings.deactivate_run_scope(token)
+
+
+@app.get("/runs/{run_id}/development-packs/{candidate_id}/files/{filename:path}")
+async def download_development_pack_file(run_id: str, candidate_id: str, filename: str):
+    run = run_manager.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found.")
+    token = settings.activate_run_scope(run_id)
+    try:
+        pack_dir = settings.development_packs_dir() / candidate_id
+        if not pack_dir.exists():
+            raise HTTPException(status_code=404, detail=f"Development pack for {candidate_id!r} not found.")
+        file_path = (pack_dir / filename).resolve()
+        if not file_path.is_relative_to(pack_dir.resolve()):
+            raise HTTPException(status_code=403, detail="Access denied.")
+        if not file_path.exists() or not file_path.is_file():
+            raise HTTPException(status_code=404, detail=f"File {filename!r} not found.")
+        return FileResponse(path=str(file_path), filename=file_path.name)
+    finally:
+        settings.deactivate_run_scope(token)
 
 
 _BINARY_EXTENSIONS = {".sqlite", ".parquet", ".pdf", ".db"}

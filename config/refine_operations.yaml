@@ -1,0 +1,108 @@
+operations:
+  - op: aggregate_X_up
+    targets_gate: [G2]
+    params_schema:
+      target_unit: {type: str, enum_from: spatial_units}
+    description: 把 exposure_X 单独聚合到更粗粒度,对齐 outcome_Y(不动 outcome)
+
+  - op: disaggregate_Y_down
+    targets_gate: [G2]
+    params_schema:
+      target_unit: {type: str, enum_from: spatial_units}
+      method: {type: str, enum: [areal_weighted, population_weighted, dasymetric]}
+    description: 用插值把 outcome_Y 单独降维到 X 的单元
+
+  - op: harmonize_both_to
+    targets_gate: [G2]
+    params_schema:
+      common_unit: {type: str, enum_from: spatial_units}
+    description: X 和 Y 都聚合到共同单元(最后才用)
+
+  - op: add_fixed_effects
+    targets_gate: [G4]
+    params_schema:
+      level: {type: str, enum: [unit, time, unit_time, individual]}
+    description: 加固定效应缓解遗漏变量
+
+  - op: switch_to_natural_experiment
+    targets_gate: [G4, G5]
+    params_schema:
+      source_description: {type: str}
+    description: 切到自然实验,需说明变异来源
+
+  - op: narrow_to_movers_sample
+    targets_gate: [G4]
+    params_schema: {}
+    description: 只保留搬家样本缓解居住自选择
+
+  - op: switch_to_RDD
+    targets_gate: [G4]
+    params_schema:
+      boundary_description: {type: str}
+    description: 切到断点回归,需给出边界
+
+  - op: swap_geography
+    targets_gate: [G5]
+    params_schema:
+      new_geography: {type: str}
+    description: 换地理区域
+
+  - op: swap_temporal
+    targets_gate: [G5]
+    params_schema:
+      new_years: {type: list, item_type: int}
+    description: 换时间窗
+
+  - op: swap_X_measurement
+    targets_gate: [G5]
+    params_schema:
+      new_specific: {type: str}
+      new_proxy: {type: str}
+    description: 换 exposure 的具体测量
+
+  - op: add_heterogeneity_dim
+    targets_gate: [G5, G7]
+    params_schema:
+      dimension: {type: str}
+    description: 增加异质性分析维度
+
+  - op: substitute_X_source
+    targets_gate: [G3]
+    params_schema:
+      new_source: {type: str, enum_from: data_sources}
+    description: 替换 exposure 的数据来源
+
+  - op: narrow_scope
+    targets_gate: [G3]
+    params_schema:
+      new_scope: {type: str}
+    description: 缩小空间范围
+
+  - op: shift_years
+    targets_gate: [G3]
+    params_schema:
+      new_years: {type: list, item_type: int}
+    description: 调整时间窗
+
+  - op: sharpen_contribution
+    targets_gate: [G7]
+    params_schema:
+      new_primary: {type: str, enum_from: ContributionPrimary}
+      new_statement: {type: str}
+      new_gap: {type: str}
+    description: 重写贡献类型与论据
+
+  - op: free_form
+    targets_gate: [any]
+    params_schema:
+      rationale: {type: str}
+      modified_fields: {type: dict}
+    description: 无合适模板时,LLM 给出修改字段 JSON,trace 单独标记
+
+usage_rules:
+  max_ops_per_round: 2
+  free_form_tracking: true
+  anti_oscillation_pairs:
+    - [aggregate_X_up, disaggregate_Y_down]
+    - [swap_geography, swap_geography]
+    - [shift_years, shift_years]

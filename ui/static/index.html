@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Auto-PI Research Engine</title>
+  <title>Auto-PI Research Engine v0.3.0</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -45,6 +45,19 @@
       border-bottom: 1px solid #2d3148;
     }
     .new-run-form h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: .08em; color: #64748b; margin-bottom: 12px; }
+    .form-grid { display: grid; gap: 8px; }
+    .field-label { font-size: .75rem; color: #94a3b8; margin-top: 6px; display:block; }
+    .input, select {
+      width: 100%;
+      background: #0f1117;
+      border: 1px solid #2d3148;
+      border-radius: 8px;
+      color: #e2e8f0;
+      padding: 8px 10px;
+      font-size: .82rem;
+    }
+    .checkbox-row { display:flex; align-items:center; gap:8px; font-size:.8rem; color:#cbd5e1; }
+    .expect-box { margin-top:8px; padding:8px; border:1px solid #2d3148; border-radius:8px; font-size:.75rem; color:#94a3b8; }
 
     textarea {
       width: 100%;
@@ -272,6 +285,32 @@
       text-decoration: none;
     }
     .output-card a:hover { text-decoration: underline; }
+    .candidate-grid { display:grid; grid-template-columns: repeat(auto-fill,minmax(300px,1fr)); gap: 12px; }
+    .candidate-card { background:#1a1d27; border:1px solid #2d3148; border-radius:10px; padding:12px; display:flex; flex-direction:column; gap:6px; }
+    .candidate-title { font-weight:600; font-size:.9rem; }
+    .badge-low { background:#1a3a2a; color:#4ade80; }
+    .badge-medium { background:#3b2700; color:#fbbf24; }
+    .badge-high { background:#3b1111; color:#f87171; }
+
+    /* Candidate card extras */
+    .tag { display:inline-block; font-size:.68rem; padding:1px 6px; border-radius:4px; background:#1e2d4a; color:#60a5fa; margin:1px 2px 1px 0; }
+    .dev-pack-ready { color:#34d399; font-size:.75rem; }
+    .dev-pack-none  { color:#475569; font-size:.75rem; }
+    .gate-ok   { color:#4ade80; font-size:.75rem; }
+    .gate-warn { color:#fbbf24; font-size:.75rem; }
+    .gate-fail { color:#f87171; font-size:.75rem; }
+    .warn-box        { background:#3b1111; border:1px solid #7f1d1d; border-radius:6px; padding:8px 12px; font-size:.8rem; color:#f87171; margin:6px 0; }
+    .warn-box-orange { background:#2a1f00; border:1px solid #92400e; border-radius:6px; padding:8px 12px; font-size:.8rem; color:#fbbf24; margin:6px 0; }
+
+    /* Confirmation modal */
+    .confirm-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.65); z-index:1100; display:flex; align-items:center; justify-content:center; }
+    .confirm-box { background:#1a1d27; border:1px solid #334155; border-radius:12px; padding:24px; max-width:440px; width:90%; }
+    .confirm-box h3 { font-size:.95rem; margin-bottom:8px; color:#e2e8f0; }
+    .confirm-box p  { font-size:.85rem; color:#94a3b8; margin-bottom:16px; line-height:1.55; }
+    .confirm-actions { display:flex; gap:10px; justify-content:flex-end; }
+
+    /* Outputs semantic groups */
+    .output-group-label { font-size:.8rem; text-transform:uppercase; letter-spacing:.06em; color:#64748b; margin:16px 0 10px; }
 
     /* Modal */
     .modal-overlay {
@@ -422,7 +461,7 @@
     /* ── Mobile responsive ── */
     @media (max-width: 768px) {
       header { padding: 12px 16px; }
-      header span { display: none; }
+      header span { font-size: 0.75rem; }
 
       .layout {
         grid-template-columns: 1fr;
@@ -481,7 +520,7 @@
     <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
   </svg>
   <h1>Auto-PI Research Engine</h1>
-  <span>Multi-Agent Academic Research Pipeline</span>
+  <span>Multi-Agent Academic Research Pipeline &nbsp;v0.3.0</span>
 </header>
 
 <div class="layout">
@@ -489,7 +528,36 @@
   <aside class="sidebar">
     <div class="new-run-form">
       <h2>新建研究任务</h2>
-      <textarea id="domainInput" placeholder="输入研究方向，例如：GeoAI and Urban Planning">GeoAI and Urban Planning</textarea>
+      <div class="form-grid">
+        <textarea id="domainInput" placeholder="输入研究方向，例如：Built environment exposure and health outcomes">Built environment exposure and health outcomes</textarea>
+        <label class="field-label">Research template</label>
+        <select id="templateSelect" class="input"></select>
+        <label class="field-label">Automation risk tolerance</label>
+        <select id="riskTolerance" class="input">
+          <option value="low_medium">Low + medium</option>
+          <option value="low_only">Low only</option>
+          <option value="experimental">Experimental</option>
+        </select>
+        <label class="checkbox-row"><input type="checkbox" id="optOsmnx" checked> OSMnx</label>
+        <label class="checkbox-row"><input type="checkbox" id="optRemoteSensing" checked> Remote sensing</label>
+        <label class="checkbox-row"><input type="checkbox" id="optMsBuilding" checked> Microsoft building footprints</label>
+        <label class="checkbox-row"><input type="checkbox" id="optStreetView"> Street view CV</label>
+        <label class="checkbox-row"><input type="checkbox" id="optDL"> Deep learning</label>
+        <label class="checkbox-row"><input type="checkbox" id="ccNoPaidApi" checked> No paid API</label>
+        <label class="checkbox-row"><input type="checkbox" id="ccNoRawImage" checked> No raw image storage</label>
+        <label class="checkbox-row"><input type="checkbox" id="ccNoManual" checked> No manual download</label>
+        <label class="checkbox-row"><input type="checkbox" id="ccNoGpu" checked> No GPU</label>
+        <label class="checkbox-row"><input type="checkbox" id="enableExperimental"> Enable experimental</label>
+        <label class="field-label">Number of candidates</label>
+        <select id="maxCandidates" class="input">
+          <option value="20">20</option>
+          <option value="40" selected>40 (default)</option>
+          <option value="60">60</option>
+        </select>
+      </div>
+      <div class="expect-box">
+        Expected output: up to 40 candidates · Sources: OSMnx/CDC PLACES/ACS/TIGER/EPA/NLCD · Development pack enabled
+      </div>
       <button class="btn btn-primary" id="startBtn" onclick="startRun()">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
         启动研究
@@ -515,6 +583,18 @@
 
 <div id="toast"></div>
 
+<!-- High-risk / paid-API confirmation modal -->
+<div class="confirm-overlay" id="confirmModal" style="display:none" onclick="if(event.target===this)closeConfirmModal()">
+  <div class="confirm-box">
+    <h3 id="confirmTitle">Confirm Selection</h3>
+    <p id="confirmMsg"></p>
+    <div class="confirm-actions">
+      <button class="btn btn-ghost" onclick="closeConfirmModal()">Cancel</button>
+      <button class="btn btn-danger" id="confirmOkBtn">Confirm</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="fileModal" style="display:none" onclick="if(event.target===this)closeFileModal()">
   <div class="modal">
     <div class="modal-header">
@@ -533,12 +613,16 @@ const PIPELINE_NODES = ['field_scanner','ideation','literature','drafter','data_
 
 let state = {
   runs: [],
+  templates: [],
   activeRunId: null,
   pollTimer: null,
   logTimer: null,
   activeTab: 'status',
+  selectedCandidateId: null,
+  candidates: [],
   logAutoScroll: true,
   logLevel: '',
+  cloudConstraints: {},
 };
 
 // ── API helpers ─────────────────────────────────────────────────────────────
@@ -569,6 +653,21 @@ async function loadRuns() {
     state.runs = await api('GET', '/runs');
     renderRunList();
   } catch(e) { /* silent */ }
+}
+
+async function loadTemplates() {
+  try {
+    const data = await api('GET', '/templates');
+    state.templates = data.templates || [];
+    const sel = document.getElementById('templateSelect');
+    if (!sel) return;
+    sel.innerHTML = state.templates.map(t => `<option value="${escAttr(t.file_id || t.template_id)}">${escHtml(t.template_id || t.file_id)}</option>`).join('');
+    const built = state.templates.find(t => (t.file_id || t.template_id) === 'built_environment_health');
+    if (built) sel.value = 'built_environment_health';
+  } catch(e) {
+    const sel = document.getElementById('templateSelect');
+    if (sel) sel.innerHTML = '<option value="built_environment_health">built_environment_health</option>';
+  }
 }
 
 function renderRunList() {
@@ -610,7 +709,32 @@ async function startRun() {
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> 提交中...';
   try {
-    const run = await api('POST', '/runs', {domain_input: domain});
+    const run = await api('POST', '/runs', {
+      domain_input: domain,
+      template_id: document.getElementById('templateSelect').value || 'built_environment_health',
+      technology_options: {
+        osmnx: document.getElementById('optOsmnx').checked,
+        remote_sensing: document.getElementById('optRemoteSensing').checked,
+        microsoft_building_footprints: document.getElementById('optMsBuilding').checked,
+        streetview_cv: document.getElementById('optStreetView').checked,
+        deep_learning: document.getElementById('optDL').checked,
+      },
+      automation_risk_tolerance: document.getElementById('riskTolerance').value,
+      cloud_constraints: {
+        no_paid_api: document.getElementById('ccNoPaidApi').checked,
+        no_raw_image_storage: document.getElementById('ccNoRawImage').checked,
+        no_manual_download: document.getElementById('ccNoManual').checked,
+        no_gpu: document.getElementById('ccNoGpu').checked,
+      },
+      enable_experimental: document.getElementById('enableExperimental').checked,
+      max_candidates: parseInt(document.getElementById('maxCandidates').value, 10) || 40,
+    });
+    state.cloudConstraints = {
+      no_paid_api: document.getElementById('ccNoPaidApi').checked,
+      no_raw_image_storage: document.getElementById('ccNoRawImage').checked,
+      no_manual_download: document.getElementById('ccNoManual').checked,
+      no_gpu: document.getElementById('ccNoGpu').checked,
+    };
     // Push placeholder into local list so sidebar updates immediately
     state.runs.unshift(run);
     renderRunList();
@@ -675,6 +799,9 @@ function renderDetail(run) {
     </div>
 
     <div class="tabs">
+      <div class="tab ${state.activeTab==='candidate_review'?'active':''}" onclick="switchTab('candidate_review')">Candidate Review</div>
+      <div class="tab ${state.activeTab==='candidate_detail'?'active':''}" onclick="switchTab('candidate_detail')">Candidate Detail</div>
+      <div class="tab ${state.activeTab==='development_pack'?'active':''}" onclick="switchTab('development_pack')">Development Pack</div>
       <div class="tab ${state.activeTab==='status'?'active':''}" onclick="switchTab('status')">状态</div>
       <div class="tab ${state.activeTab==='logs'?'active':''}" onclick="switchTab('logs')">日志</div>
       <div class="tab ${state.activeTab==='outputs'?'active':''}" onclick="switchTab('outputs')">输出文件</div>
@@ -696,9 +823,322 @@ function switchTab(tab) {
 function renderTab(run) {
   const el = document.getElementById('tabContent');
   if (!el) return;
-  if (state.activeTab === 'status')   renderStatusTab(el, run);
+  if (state.activeTab === 'candidate_review') renderCandidateReviewTab(el, run);
+  else if (state.activeTab === 'candidate_detail') renderCandidateDetailTab(el, run);
+  else if (state.activeTab === 'development_pack') renderDevelopmentPackTab(el, run);
+  else if (state.activeTab === 'status')   renderStatusTab(el, run);
   else if (state.activeTab === 'logs')    renderLogsTab(el, run);
   else if (state.activeTab === 'outputs') renderOutputsTab(el, run);
+}
+
+async function fetchCandidates(runId) {
+  const data = await api('GET', `/runs/${runId}/candidates`);
+  state.candidates = data.candidates || [];
+  if (!state.selectedCandidateId && state.candidates.length) {
+    state.selectedCandidateId = state.candidates[0].candidate_id;
+  }
+  return state.candidates;
+}
+
+function riskBadge(risk) {
+  if (risk === 'low') return '<span class="badge badge-low">Low risk</span>';
+  if (risk === 'medium') return '<span class="badge badge-medium">Medium risk</span>';
+  return '<span class="badge badge-high">High risk</span>';
+}
+
+function renderCandidateReviewTab(el, run) {
+  el.innerHTML = `
+    <div class="log-toolbar" style="flex-wrap:wrap;gap:6px">
+      <select class="log-filter" id="candidateFilter">
+        <option value="">All</option>
+        <option value="ready">Ready only</option>
+        <option value="low">Low risk only</option>
+        <option value="no_secret">No API key required</option>
+        <option value="no_paid_api">No paid API</option>
+        <option value="osmnx">OSMnx</option>
+        <option value="remote_sensing">Remote sensing</option>
+        <option value="epa">EPA sources</option>
+        <option value="cdc_places">CDC PLACES outcomes</option>
+        <option value="claude_code_ready">Claude Code Ready</option>
+        <option value="has_dev_pack">Has development pack</option>
+        <option value="has_warnings">Has repairable warnings</option>
+        <option value="blocked">Blocked</option>
+      </select>
+      <select class="log-filter" id="candidateSort">
+        <option value="overall">Overall score</option>
+        <option value="data_feasibility">Data feasibility</option>
+        <option value="automation_feasibility">Automation feasibility</option>
+        <option value="identification_quality">Identification quality</option>
+        <option value="technology_innovation">Technology innovation</option>
+        <option value="lowest_risk">Lowest risk</option>
+        <option value="id">Candidate ID</option>
+      </select>
+      <button class="btn btn-ghost" onclick="renderCandidateReviewTab(document.getElementById('tabContent'), {run_id:'${run.run_id}'})">刷新</button>
+    </div>
+    <div id="candidateGrid">加载中...</div>
+  `;
+  fetchCandidates(run.run_id).then(() => {
+    const filter = document.getElementById('candidateFilter');
+    const sort = document.getElementById('candidateSort');
+    const riskOrder = {low: 0, medium: 1, high: 2, unknown: 3};
+    const renderCards = () => {
+      let candidates = [...state.candidates];
+      const fv = filter.value;
+      if (fv === 'ready')      candidates = candidates.filter(c => c.shortlist_status === 'ready');
+      if (fv === 'low')        candidates = candidates.filter(c => c.automation_risk === 'low');
+      if (fv === 'no_secret')  candidates = candidates.filter(c => (c.required_secrets||[]).length === 0);
+      if (fv === 'no_paid_api') candidates = candidates.filter(c => (c.required_secrets||[]).length === 0);
+      if (fv === 'osmnx')      candidates = candidates.filter(c => (c.technology_tags||[]).includes('osmnx'));
+      if (fv === 'remote_sensing') candidates = candidates.filter(c => (c.technology_tags||[]).some(t => t.includes('remote_sensing') || t.includes('remote')));
+      if (fv === 'epa')        candidates = candidates.filter(c => (c.exposure_source||'').toLowerCase().includes('epa') || (c.outcome_source||'').toLowerCase().includes('epa') || (c.technology_tags||[]).some(t => t.toLowerCase().includes('epa')));
+      if (fv === 'cdc_places') candidates = candidates.filter(c => (c.outcome_source||'').toLowerCase().includes('cdc') || (c.outcome_source||'').toLowerCase().includes('places'));
+      if (fv === 'claude_code_ready') candidates = candidates.filter(c => c.claude_code_ready === true);
+      if (fv === 'has_dev_pack')  candidates = candidates.filter(c => c.development_pack_status === 'ready');
+      if (fv === 'has_warnings')  candidates = candidates.filter(c => (c.gate_summary?.warning_count||0) > 0 && c.shortlist_status !== 'blocked');
+      if (fv === 'blocked')    candidates = candidates.filter(c => c.shortlist_status === 'blocked');
+      const sv = sort.value;
+      if (sv === 'id')         candidates.sort((a,b) => (a.candidate_id||'').localeCompare(b.candidate_id||''));
+      else if (sv === 'lowest_risk') candidates.sort((a,b) => (riskOrder[a.automation_risk]||3) - (riskOrder[b.automation_risk]||3));
+      else                     candidates.sort((a,b) => (b.scores?.[sv]||0) - (a.scores?.[sv]||0));
+      document.getElementById('candidateGrid').innerHTML = `<div class="candidate-grid">${
+        candidates.map(c => {
+          const gs = c.gate_summary || {};
+          const gateHtml = gs.failed_count > 0
+            ? `<span class="gate-fail">✗ ${gs.failed_count} gate failed</span>`
+            : gs.warning_count > 0
+              ? `<span class="gate-warn">⚠ ${gs.warning_count} warning${gs.warning_count > 1 ? 's' : ''}</span>`
+              : '<span class="gate-ok">✓ All gates pass</span>';
+          const tagsHtml = (c.technology_tags||[]).map(t => `<span class="tag">${escHtml(t)}</span>`).join('');
+          const isExperimental = (c.technology_tags||[]).some(t => ['streetview_cv','deep_learning','satellite_cv','experimental'].includes(t));
+          const dpHtml = c.claude_code_ready
+            ? '<span class="badge badge-completed" style="font-size:.75rem">Claude Code Ready</span>'
+            : c.development_pack_status === 'review_required'
+              ? '<span class="badge badge-awaiting" style="font-size:.75rem">Review Required</span>'
+              : isExperimental
+                ? '<span class="badge badge-high" style="font-size:.75rem">Experimental Review Required</span>'
+                : '<span style="font-size:.75rem;color:#64748b">Not Claude Code Ready</span>';
+          const hasSecrets = (c.required_secrets||[]).length > 0;
+          const secretsHtml = hasSecrets
+            ? `<div style="font-size:.78rem;color:#fbbf24">⚠ Required secrets: ${escHtml((c.required_secrets||[]).join(', '))}</div>`
+            : '<div style="font-size:.78rem;color:#86efac">Required secrets: none</div>';
+          const noPaidApi = state.cloudConstraints.no_paid_api;
+          const selectDisabled = (noPaidApi && hasSecrets) ? 'disabled title="Paid API required — blocked by no_paid_api constraint"' : '';
+          const copyPromptBtn = c.claude_code_ready
+            ? `<button class="btn btn-primary" onclick="copyClaudePrompt('${run.run_id}','${escAttr(c.candidate_id)}')">Copy Task Prompt</button>`
+            : '';
+          return `
+          <div class="candidate-card">
+            <div style="display:flex;gap:4px;flex-wrap:wrap">${statusBadge(c.shortlist_status)} ${riskBadge(c.automation_risk)} ${gateHtml}</div>
+            <div class="candidate-title">${escHtml(c.title)}</div>
+            <div style="font-size:.8rem;color:#94a3b8">${escHtml(c.research_question)}</div>
+            <div style="font-size:.8rem">X: ${escHtml(c.exposure_label||'')} · <em>${escHtml(c.exposure_source||'')}</em></div>
+            <div style="font-size:.8rem">Y: ${escHtml(c.outcome_label||'')} · <em>${escHtml(c.outcome_source||'')}</em></div>
+            <div style="font-size:.8rem">Unit: ${escHtml(c.unit_of_analysis||'')} · Method: ${escHtml(c.method||'')}</div>
+            <div style="font-size:.8rem;display:flex;gap:10px;flex-wrap:wrap">
+              <span>Overall: <strong>${Math.round((c.scores?.overall||0)*100)}</strong></span>
+              <span>Data: ${Math.round((c.scores?.data_feasibility||0)*100)}</span>
+              <span>Auto: ${Math.round((c.scores?.automation_feasibility||0)*100)}</span>
+              <span>ID: ${Math.round((c.scores?.identification_quality||0)*100)}</span>
+            </div>
+            ${secretsHtml}
+            ${tagsHtml ? `<div style="margin-top:2px">${tagsHtml}</div>` : ''}
+            <div style="display:flex;gap:4px;align-items:center;margin-top:4px">${dpHtml}</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
+              <button class="btn btn-ghost" onclick="openCandidateDetail('${escAttr(c.candidate_id)}')">View details</button>
+              ${copyPromptBtn}
+              <button class="btn btn-success" ${selectDisabled} onclick="selectCandidate('${run.run_id}','${escAttr(c.candidate_id)}')">Select for memo</button>
+            </div>
+          </div>`;
+        }).join('')
+      }</div>`;
+    };
+    filter.onchange = renderCards;
+    sort.onchange = renderCards;
+    renderCards();
+  }).catch(e => {
+    document.getElementById('candidateGrid').innerHTML = `<div style="color:#f87171">${escHtml(e.message)}</div>`;
+  });
+}
+
+function statusBadge(status) {
+  if (status === 'ready') return '<span class="badge badge-completed">Ready</span>';
+  if (status === 'blocked') return '<span class="badge badge-failed">Blocked</span>';
+  return '<span class="badge badge-awaiting">Review</span>';
+}
+
+function openCandidateDetail(candidateId) {
+  state.selectedCandidateId = candidateId;
+  switchTab('candidate_detail');
+}
+
+function renderCandidateDetailTab(el, run) {
+  if (!state.selectedCandidateId) {
+    el.innerHTML = '<div style="color:#64748b">请先在 Candidate Review 选择一个 candidate。</div>';
+    return;
+  }
+  el.innerHTML = '<div style="color:#64748b">加载中...</div>';
+  api('GET', `/runs/${run.run_id}/candidates/${state.selectedCandidateId}`).then(data => {
+    const c = data.candidate;
+    const rows = (c.x_y_structure||[]).map(x => `<tr><td>${escHtml(x.role)}</td><td>${escHtml(x.variable)}</td><td>${escHtml(x.source)}</td><td>${escHtml(x.unit)}</td><td>${escHtml(x.status)}</td></tr>`).join('');
+    const mitigations = c.identification?.mitigations || {};
+    const mitEntries = Object.entries(mitigations).filter(([,v]) => v);
+    const mitHtml = mitEntries.length
+      ? `<div style="margin-top:8px"><strong style="font-size:.8rem;color:#94a3b8">Mitigations:</strong><ul style="margin:4px 0 0 16px;font-size:.82rem;color:#cbd5e1">${mitEntries.map(([k,v]) => `<li><em>${escHtml(k)}:</em> ${escHtml(String(v))}</li>`).join('')}</ul></div>`
+      : '';
+    const hasSecrets = (c.technology?.required_secrets||[]).length > 0;
+    const hasRawImage = (c.technology?.policy_constraints||[]).includes('no_raw_image_storage');
+    const secretsWarnHtml = hasSecrets
+      ? `<div class="warn-box">⚠ Required secrets: <strong>${escHtml((c.technology.required_secrets).join(', '))}</strong>. This candidate requires paid API access.</div>`
+      : '';
+    const rawImageWarnHtml = hasRawImage
+      ? `<div class="warn-box-orange">⚠ Raw image storage is disabled. Only extracted numeric features may be stored.</div>`
+      : '';
+    const policyText = (c.technology?.policy_constraints||[]).filter(p => p !== 'no_raw_image_storage').join(', ') || 'none';
+    el.innerHTML = `
+      <h3 style="margin-bottom:8px">${escHtml(c.title)}</h3>
+      <div style="font-size:.85rem;color:#94a3b8;margin-bottom:12px">${escHtml(c.research_question)}</div>
+      <table><thead><tr><th>Role</th><th>Variable</th><th>Source</th><th>Unit</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>
+      <div class="status-card" style="margin-top:12px">
+        <h3>Join plan</h3>
+        ${(c.join_plan?.steps||[]).map((s,i)=>`<div style="font-size:.85rem;margin-bottom:4px">${i+1}. ${escHtml(s)}</div>`).join('')}
+        ${c.join_plan?.join_key ? `<div style="font-size:.78rem;color:#64748b;margin-top:6px">Join key: <code>${escHtml(c.join_plan.join_key)}</code></div>` : ''}
+      </div>
+      <div class="status-card">
+        <h3>Identification</h3>
+        <div style="font-size:.85rem"><strong>Primary method:</strong> ${escHtml(c.identification?.primary_method||'—')}</div>
+        <div style="font-size:.85rem"><strong>Claim strength:</strong> ${escHtml(c.identification?.claim_strength||'—')}</div>
+        ${(c.identification?.key_threats||[]).length ? `
+          <div style="margin-top:6px"><strong style="font-size:.8rem;color:#94a3b8">Key threats:</strong>
+            <ul style="margin:4px 0 0 16px;font-size:.82rem;color:#cbd5e1">${(c.identification.key_threats).map((t,i) => `<li>${i+1}. ${escHtml(t)}</li>`).join('')}</ul>
+          </div>` : ''}
+        ${mitHtml}
+      </div>
+      <div class="status-card">
+        <h3>Technology & Policy</h3>
+        ${secretsWarnHtml}${rawImageWarnHtml}
+        <div class="kv-grid" style="margin-top:${(secretsWarnHtml||rawImageWarnHtml)?'8px':'0'}">
+          <span class="kv-label">Cloud safe</span><span class="kv-value">${c.technology?.cloud_safe ? '✓ yes' : '✗ no'}</span>
+          <span class="kv-label">Automation risk</span><span class="kv-value">${escHtml(c.technology?.automation_risk||'unknown')}</span>
+          <span class="kv-label">Required extras</span><span class="kv-value">${(c.technology?.required_extras||[]).join(', ') || 'none'}</span>
+          <span class="kv-label">Required secrets</span><span class="kv-value">${hasSecrets ? escHtml((c.technology.required_secrets).join(', ')) : 'none'}</span>
+          <span class="kv-label">Other policy</span><span class="kv-value">${escHtml(policyText)}</span>
+        </div>
+      </div>
+    `;
+  }).catch(e => el.innerHTML = `<div style="color:#f87171">${escHtml(e.message)}</div>`);
+}
+
+function renderDevelopmentPackTab(el, run) {
+  if (!state.selectedCandidateId) {
+    el.innerHTML = '<div style="color:#64748b">请先选择 candidate。</div>';
+    return;
+  }
+  el.innerHTML = '<div style="color:#64748b">加载中...</div>';
+  api('GET', `/runs/${run.run_id}/development-packs/${state.selectedCandidateId}`).then(data => {
+    const checklist = data.checklist || {};
+    const items = Object.entries(checklist).map(([k,v]) => `<div>${v ? '✅' : '⚠️'} ${escHtml(k)}</div>`).join('');
+    const files = (data.files||[]).map(f => `
+      <div class="output-card">
+        <div class="output-card-name">${escHtml(f.filename)}</div>
+        <div style="display:flex;gap:10px">
+          <a href="#" onclick="openPackPreview('${run.run_id}','${state.selectedCandidateId}','${escAttr(f.filename)}');return false">Preview</a>
+          <a href="#" onclick="copyPackFile('${run.run_id}','${state.selectedCandidateId}','${escAttr(f.filename)}');return false">Copy</a>
+          <a href="${f.download_url}" download>Download</a>
+        </div>
+      </div>`).join('');
+    el.innerHTML = `
+      <div class="status-card"><h3>Claude Code Ready</h3><div>${data.claude_code_ready ? '✅ Ready' : '⚠️ Not Ready'}</div>${items}</div>
+      <div class="output-grid">${files}</div>
+      <button class="btn btn-primary" onclick="copyClaudePrompt('${run.run_id}','${state.selectedCandidateId}')">Copy Claude Code Task Prompt</button>
+    `;
+  }).catch(e => el.innerHTML = `<div style="color:#f87171">${escHtml(e.message)}</div>`);
+}
+
+async function generatePack(runId, candidateId) {
+  try {
+    await api('POST', `/runs/${runId}/candidates/${candidateId}/development-pack`);
+    toast('development pack 已生成', 'success');
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+function showConfirmModal(title, msg, btnLabel, btnClass, onConfirm) {
+  document.getElementById('confirmTitle').textContent = title;
+  document.getElementById('confirmMsg').textContent = msg;
+  const btn = document.getElementById('confirmOkBtn');
+  btn.className = `btn ${btnClass}`;
+  btn.textContent = btnLabel;
+  btn.onclick = () => { closeConfirmModal(); onConfirm(); };
+  document.getElementById('confirmModal').style.display = 'flex';
+}
+
+function closeConfirmModal() {
+  document.getElementById('confirmModal').style.display = 'none';
+}
+
+async function _doSelect(runId, candidateId) {
+  try {
+    await api('POST', `/runs/${runId}/candidates/${candidateId}/select`);
+    toast('已选择 candidate，继续执行', 'success');
+    await refreshDetail();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function selectCandidate(runId, candidateId) {
+  const candidate = state.candidates.find(c => c.candidate_id === candidateId);
+  const isHighRisk = candidate && candidate.automation_risk === 'high';
+  const hasSecrets = candidate && (candidate.required_secrets || []).length > 0;
+  const noPaidApi = state.cloudConstraints.no_paid_api;
+
+  if (noPaidApi && hasSecrets) {
+    showConfirmModal(
+      'Paid API Required',
+      `This candidate requires secrets: ${(candidate.required_secrets || []).join(', ')}. Your run has "No paid API" enabled. Selecting it may fail or incur costs. Proceed anyway?`,
+      'Proceed anyway',
+      'btn-danger',
+      () => _doSelect(runId, candidateId)
+    );
+    return;
+  }
+  if (isHighRisk) {
+    showConfirmModal(
+      'High-Risk Candidate',
+      'This candidate may require API keys, paid access, or non-default compute resources. I understand the implications and want to proceed.',
+      'I understand, proceed',
+      'btn-danger',
+      () => _doSelect(runId, candidateId)
+    );
+    return;
+  }
+  await _doSelect(runId, candidateId);
+}
+
+async function openPackPreview(runId, candidateId, filename) {
+  const data = await api('GET', `/runs/${runId}/development-packs/${candidateId}`);
+  const file = (data.files||[]).find(f => f.filename === filename);
+  if (!file) return toast('文件不存在', 'error');
+  document.getElementById('modalTitle').textContent = filename;
+  document.getElementById('modalBody').innerHTML = renderPlainContent(file.preview_text || '');
+  document.getElementById('modalDownload').href = file.download_url;
+  document.getElementById('fileModal').style.display = 'flex';
+}
+
+async function copyPackFile(runId, candidateId, filename) {
+  const data = await api('GET', `/runs/${runId}/development-packs/${candidateId}`);
+  const file = (data.files||[]).find(f => f.filename === filename);
+  await navigator.clipboard.writeText(file?.preview_text || '');
+  toast('已复制预览内容', 'success');
+}
+
+async function copyClaudePrompt(runId, candidateId) {
+  const data = await api('GET', `/runs/${runId}/candidates/${candidateId}/claude-task-prompt`);
+  if (!data.prompt) return toast('claude_task_prompt.md not found', 'error');
+  if (!data.claude_code_ready) {
+    const reasons = (data.blocking_reasons||[]).join(', ') || 'unknown';
+    const confirmed = confirm(`This candidate is not Claude Code Ready.\nBlocking reasons: ${reasons}\n\nCopy prompt anyway?`);
+    if (!confirmed) return;
+  }
+  await navigator.clipboard.writeText(data.prompt);
+  toast('Claude task prompt copied', 'success');
 }
 
 // ── Status tab ──────────────────────────────────────────────────────────────
@@ -773,6 +1213,46 @@ function renderStatusTab(el, run) {
 // ── HITL actions ─────────────────────────────────────────────────────────────
 const MAX_REGEN_ROUNDS = 3;
 
+// Align validated ideas with topic_screening.candidates so the picker index
+// matches what apply_idea_selection() will operate on. Mirrors the backend
+// helper in agents/hitl_helpers.py: dedupe by title (substitute beats failed
+// original), fall back to non-failed only, last-resort to all entries — never
+// returns empty when the validation report has any ideas.
+async function alignIdeasWithScreening(runId, allIdeas) {
+  if (!Array.isArray(allIdeas) || allIdeas.length === 0) return [];
+  let screeningTitles = [];
+  try {
+    const url = `/runs/${runId}/outputs/${encodePath('output/topic_screening.json')}`;
+    const res = await fetch(url);
+    if (res.ok) {
+      const data = await res.json();
+      const candidates = Array.isArray(data.candidates) ? data.candidates : [];
+      screeningTitles = candidates.map(c => String(c.title || ''));
+    }
+  } catch (_) { /* fall through */ }
+
+  if (screeningTitles.length) {
+    const byTitle = new Map();
+    for (const idea of allIdeas) {
+      const title = String(idea.title || '');
+      if (!title) continue;
+      const prev = byTitle.get(title);
+      if (!prev) {
+        byTitle.set(title, idea);
+      } else if (prev.overall_verdict === 'failed' && idea.overall_verdict !== 'failed') {
+        byTitle.set(title, idea);
+      }
+    }
+    const aligned = screeningTitles
+      .filter(t => byTitle.has(t))
+      .map(t => byTitle.get(t));
+    if (aligned.length) return aligned;
+  }
+
+  const nonFailed = allIdeas.filter(idea => idea.overall_verdict !== 'failed');
+  return nonFailed.length ? nonFailed : allIdeas;
+}
+
 async function renderHitlPicker(run) {
   const container = document.getElementById('hitlPicker');
   if (!container) return;
@@ -788,8 +1268,8 @@ async function renderHitlPicker(run) {
     const res = await fetch(url);
     if (!res.ok) throw new Error(res.statusText);
     const data = await res.json();
-    ideas = (Array.isArray(data.validated_ideas) ? data.validated_ideas : [])
-      .filter(idea => idea.overall_verdict !== 'failed');
+    const allIdeas = Array.isArray(data.validated_ideas) ? data.validated_ideas : [];
+    ideas = await alignIdeasWithScreening(run.run_id, allIdeas);
   } catch (e) {
     container.innerHTML = `
       <div style="color:#f87171">加载候选选题失败：${escHtml(e.message)}</div>
@@ -939,6 +1419,32 @@ async function fetchLogs() {
 }
 
 // ── Outputs tab ──────────────────────────────────────────────────────────────
+const CANDIDATE_OUTPUT_NAMES = new Set([
+  'candidate_cards.json','feasibility_report.json','repair_history.json',
+  'topic_screening.json','idea_validation.json','ideation_run_summary.json',
+  'field_scan.json',
+]);
+const SELECTED_OUTPUT_NAMES = new Set([
+  'research_plan.json','research_memo.md','literature_index.json',
+  'data_access_report.json','academic_draft.md','Draft_v1.md',
+  'references.bib','research_context.json',
+]);
+const DEV_OUTPUT_SUFFIXES = [
+  'implementation_spec.json','claude_task_prompt.md','data_contract.yaml',
+  'feature_plan.yaml','analysis_plan.yaml','acceptance_tests.md',
+];
+
+function _semanticGroup(filename) {
+  const base = filename.split('/').pop();
+  if (filename.includes('development_packs') || DEV_OUTPUT_SUFFIXES.some(s => base === s))
+    return 'Development Outputs';
+  if (CANDIDATE_OUTPUT_NAMES.has(base)) return 'Candidate Outputs';
+  if (SELECTED_OUTPUT_NAMES.has(base))  return 'Selected Research Outputs';
+  if (filename.includes('ideation_traces') || base.includes('diagnostic') || base.includes('gate_trace'))
+    return 'Diagnostics';
+  return 'Other';
+}
+
 function renderOutputsTab(el, run) {
   el.innerHTML = '<div style="color:#64748b;font-size:.875rem">加载中...</div>';
   api('GET', `/runs/${run.run_id}/outputs`).then(data => {
@@ -947,33 +1453,34 @@ function renderOutputsTab(el, run) {
       return;
     }
 
-    // Group files by top-level directory
+    // Semantic grouping
+    const groupOrder = ['Candidate Outputs','Selected Research Outputs','Development Outputs','Diagnostics','Other'];
     const groups = {};
-    const groupLabels = {output:'输出文件', config:'配置文件', data:'数据文件'};
+    groupOrder.forEach(g => { groups[g] = []; });
     data.files.forEach(f => {
-      const dir = f.filename.includes('/') ? f.filename.split('/')[0] : 'output';
-      if (!groups[dir]) groups[dir] = [];
-      groups[dir].push(f);
+      const g = _semanticGroup(f.filename);
+      groups[g].push(f);
     });
 
+    const makeCard = (f) => {
+      const viewable = isViewable(f.filename);
+      const shortName = f.filename.includes('/') ? f.filename.split('/').slice(1).join('/') : f.filename;
+      return `
+      <div class="output-card">
+        <div class="output-card-name" title="${escHtml(f.filename)}">${escHtml(shortName)}</div>
+        <div class="output-card-size">${fmtBytes(f.size_bytes)}</div>
+        <div style="display:flex;gap:12px;margin-top:4px">
+          ${viewable ? `<a href="#" onclick="openFileViewer('${escAttr(run.run_id)}','${escAttr(f.filename)}');return false" style="font-size:.8rem;color:#a78bfa;text-decoration:none;cursor:pointer">◎ 查看</a>` : ''}
+          <a href="/runs/${run.run_id}/outputs/${encodePath(f.filename)}" download="${escHtml(shortName)}" style="font-size:.8rem;color:#a78bfa;text-decoration:none">↓ 下载</a>
+        </div>
+      </div>`;
+    };
+
     let html = '';
-    for (const [dir, files] of Object.entries(groups)) {
-      html += `<h3 style="font-size:.8rem;text-transform:uppercase;letter-spacing:.06em;color:#64748b;margin:16px 0 10px">${groupLabels[dir]||dir}</h3>`;
-      html += `<div class="output-grid">${files.map(f => {
-        const viewable = isViewable(f.filename);
-        const shortName = f.filename.includes('/') ? f.filename.split('/').slice(1).join('/') : f.filename;
-        return `
-        <div class="output-card">
-          <div class="output-card-name" title="${escHtml(f.filename)}">${escHtml(shortName)}</div>
-          <div class="output-card-size">${fmtBytes(f.size_bytes)}</div>
-          <div style="display:flex;gap:12px;margin-top:4px">
-            ${viewable ? `<a href="#" onclick="openFileViewer('${escAttr(run.run_id)}','${escAttr(f.filename)}');return false" style="font-size:.8rem;color:#a78bfa;text-decoration:none;cursor:pointer">◎ 查看</a>` : ''}
-            <a href="/runs/${run.run_id}/outputs/${encodePath(f.filename)}" download="${escHtml(shortName)}" style="font-size:.8rem;color:#a78bfa;text-decoration:none">
-              ↓ 下载
-            </a>
-          </div>
-        </div>`;
-      }).join('')}</div>`;
+    for (const g of groupOrder) {
+      if (!groups[g] || !groups[g].length) continue;
+      html += `<div class="output-group-label">${g}</div>`;
+      html += `<div class="output-grid">${groups[g].map(makeCard).join('')}</div>`;
     }
     el.innerHTML = html;
   }).catch(() => {
@@ -1200,6 +1707,7 @@ function renderPlainContent(text) {
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 (async () => {
+  await loadTemplates();
   await loadRuns();
   // Refresh run list every 10s
   setInterval(loadRuns, 10000);
