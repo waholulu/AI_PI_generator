@@ -382,6 +382,119 @@ def _acceptance_tests(candidate: ComposedCandidate) -> str:
     """).strip()
 
 
+# ── pytest skeleton ──────────────────────────────────────────────────────────
+
+def _pytest_skeleton(candidate: ComposedCandidate) -> str:
+    cid = candidate.candidate_id
+    exp_var = (candidate.exposure_variables or ["exposure_metric"])[0]
+    out_var = f"{candidate.outcome_family}_prevalence"
+    return textwrap.dedent(f'''
+        """Auto-generated pytest skeleton for {cid}.
+
+        Fill in each test body — replace `raise NotImplementedError` with real assertions.
+        Run: pytest tests/generated/test_{cid}_contract.py
+        """
+        from __future__ import annotations
+
+        import json
+        from pathlib import Path
+
+        import pytest
+
+        # ── Paths ──────────────────────────────────────────────────────────────
+        REPO_ROOT = Path(__file__).parent.parent.parent
+        FEATURES_CSV = REPO_ROOT / "data" / "processed" / "tract_features.csv"
+        MODEL_CSV = REPO_ROOT / "output" / "tables" / "model_summary.csv"
+        REPORT_MD = REPO_ROOT / "output" / "report" / "technical_summary.md"
+        SPEC_JSON = REPO_ROOT / "output" / "development_packs" / "{cid}" / "implementation_spec.json"
+
+
+        # ── Schema validation ──────────────────────────────────────────────────
+        def test_implementation_spec_is_valid_json():
+            assert SPEC_JSON.exists(), f"Spec not found: {{SPEC_JSON}}"
+            data = json.loads(SPEC_JSON.read_text())
+            assert data.get("candidate_id") == "{cid}"
+
+
+        # ── Feature engineering contract ───────────────────────────────────────
+        @pytest.mark.skipif(not FEATURES_CSV.exists(), reason="Run pipeline first")
+        def test_tract_features_non_empty():
+            import pandas as pd
+            df = pd.read_csv(FEATURES_CSV)
+            assert len(df) >= 10, f"Expected >= 10 rows, got {{len(df)}}"
+
+
+        @pytest.mark.skipif(not FEATURES_CSV.exists(), reason="Run pipeline first")
+        def test_tract_features_has_geoid():
+            import pandas as pd
+            df = pd.read_csv(FEATURES_CSV)
+            assert "GEOID" in df.columns
+
+
+        @pytest.mark.skipif(not FEATURES_CSV.exists(), reason="Run pipeline first")
+        def test_geoid_is_unique():
+            import pandas as pd
+            df = pd.read_csv(FEATURES_CSV)
+            assert df["GEOID"].nunique() == len(df), "GEOID must be unique"
+
+
+        @pytest.mark.skipif(not FEATURES_CSV.exists(), reason="Run pipeline first")
+        def test_exposure_coverage():
+            import pandas as pd
+            df = pd.read_csv(FEATURES_CSV)
+            if "{exp_var}" in df.columns:
+                pct_non_null = df["{exp_var}"].notna().mean()
+                assert pct_non_null >= 0.5, f"Exposure coverage {{pct_non_null:.0%}} < 50%"
+
+
+        @pytest.mark.skipif(not FEATURES_CSV.exists(), reason="Run pipeline first")
+        def test_outcome_coverage():
+            import pandas as pd
+            df = pd.read_csv(FEATURES_CSV)
+            if "{out_var}" in df.columns:
+                pct_non_null = df["{out_var}"].notna().mean()
+                assert pct_non_null >= 0.5, f"Outcome coverage {{pct_non_null:.0%}} < 50%"
+
+
+        # ── Model output contract ──────────────────────────────────────────────
+        @pytest.mark.skipif(not MODEL_CSV.exists(), reason="Run pipeline first")
+        def test_model_summary_columns():
+            import pandas as pd
+            df = pd.read_csv(MODEL_CSV)
+            required = {{"variable", "coefficient", "std_error", "p_value", "n_obs"}}
+            assert required.issubset(df.columns), f"Missing: {{required - set(df.columns)}}"
+
+
+        @pytest.mark.skipif(not MODEL_CSV.exists(), reason="Run pipeline first")
+        def test_model_summary_has_exposure_row():
+            import pandas as pd
+            df = pd.read_csv(MODEL_CSV)
+            assert len(df) >= 1, "Model summary must have at least one coefficient row"
+
+
+        # ── Report contract ────────────────────────────────────────────────────
+        @pytest.mark.skipif(not REPORT_MD.exists(), reason="Run pipeline first")
+        def test_report_has_limitations_section():
+            text = REPORT_MD.read_text()
+            assert "Limitations" in text or "limitations" in text
+
+
+        # ── Policy tests ───────────────────────────────────────────────────────
+        def test_automation_risk_not_high():
+            """Candidate must not be high automation risk."""
+            spec = json.loads(SPEC_JSON.read_text()) if SPEC_JSON.exists() else {{}}
+            risk = spec.get("automation_risk", "low")
+            assert risk != "high", f"automation_risk={{risk}} blocks claude_code_ready"
+
+
+        def test_no_experimental_tags():
+            spec = json.loads(SPEC_JSON.read_text()) if SPEC_JSON.exists() else {{}}
+            tags = set(spec.get("technology_tags", []))
+            experimental = tags & {{"streetview_cv", "deep_learning", "satellite_cv", "experimental"}}
+            assert not experimental, f"Experimental tags present: {{experimental}}"
+    ''').strip()
+
+
 # ── Main writer ───────────────────────────────────────────────────────────────
 
 def write_development_pack(run_id: str, candidate_payload: dict[str, Any]) -> Path:
@@ -418,6 +531,9 @@ def write_development_pack(run_id: str, candidate_payload: dict[str, Any]) -> Pa
                 | `acceptance_tests.md` | Pytest checklist and smoke test criteria |
                 | `claude_task_prompt.md` | Task prompt to hand to Claude Code for implementation |
 
+                An **executable pytest skeleton** is also written to
+                `tests/generated/test_{candidate.candidate_id}_contract.py`.
+
                 ## Quick Start
 
                 Copy `claude_task_prompt.md` and hand it to Claude Code to begin implementation.
@@ -425,6 +541,28 @@ def write_development_pack(run_id: str, candidate_payload: dict[str, Any]) -> Pa
             encoding="utf-8",
         )
 
+        # Augment spec with runtime policy fields before writing
+        spec.setdefault("failure_policy", {
+            "on_acquisition_error": "log_and_continue",
+            "on_join_error": "raise",
+            "on_model_error": "raise",
+        })
+        spec.setdefault("runtime_budget", {
+            "smoke_test_max_minutes": 8,
+            "full_run_max_minutes": 60,
+        })
+        spec.setdefault("network_timeout_seconds", 30)
+        spec.setdefault("fixture_policy", {
+            "use_fixture_in_ci": True,
+            "fixture_path": "data/fixtures",
+            "live_calls_only_in_smoke_test": True,
+        })
+        spec.setdefault("data_quality_checks", [
+            "min_non_null_exposure_fraction:0.5",
+            "min_non_null_outcome_fraction:0.5",
+            "geoid_uniqueness",
+            "no_duplicate_rows",
+        ])
         (pack_dir / "implementation_spec.json").write_text(
             json.dumps(spec, ensure_ascii=False, indent=2), encoding="utf-8"
         )
@@ -465,6 +603,13 @@ def write_development_pack(run_id: str, candidate_payload: dict[str, Any]) -> Pa
         )
         (pack_dir / "claude_task_prompt.md").write_text(
             _claude_task_prompt(candidate, spec), encoding="utf-8"
+        )
+
+        # Executable pytest skeleton — written to tests/generated/ at repo root
+        generated_dir = settings.output_dir().parent / "tests" / "generated"
+        generated_dir.mkdir(parents=True, exist_ok=True)
+        (generated_dir / f"test_{candidate.candidate_id}_contract.py").write_text(
+            _pytest_skeleton(candidate), encoding="utf-8"
         )
 
         # Keep a candidate-scoped copy of implementation_spec.json

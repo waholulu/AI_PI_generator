@@ -17,6 +17,18 @@ from agents.feature_modules.vision_features import (
 
 _FIXTURE_PATH = Path(__file__).parent / "fixtures" / "images" / "street_fixture.jpg"
 
+try:
+    from PIL import Image  # noqa: F401
+    import numpy  # noqa: F401
+    _VISION_EXTRAS_AVAILABLE = True
+except ImportError:
+    _VISION_EXTRAS_AVAILABLE = False
+
+_SKIP_LIGHT = pytest.mark.skipif(
+    not _FIXTURE_PATH.exists() or not _VISION_EXTRAS_AVAILABLE,
+    reason="Street fixture image not found or vision extras (Pillow, numpy) not installed",
+)
+
 
 def _fixture_bytes() -> bytes:
     assert _FIXTURE_PATH.exists(), f"Fixture image missing: {_FIXTURE_PATH}"
@@ -27,10 +39,7 @@ def _fixture_bytes() -> bytes:
 # Light mode
 # ---------------------------------------------------------------------------
 
-@pytest.mark.skipif(
-    not _FIXTURE_PATH.exists(),
-    reason="Street fixture image not found — run fixture generation first",
-)
+@_SKIP_LIGHT
 def test_light_vision_features_from_fixture():
     features = extract_light_vision_features(_fixture_bytes())
     assert 0.0 <= features["green_pixel_share"] <= 1.0
@@ -38,46 +47,31 @@ def test_light_vision_features_from_fixture():
     assert features["feature_mode"] == "light"
 
 
-@pytest.mark.skipif(
-    not _FIXTURE_PATH.exists(),
-    reason="Street fixture image not found",
-)
+@_SKIP_LIGHT
 def test_light_features_brightness_in_range():
     features = extract_light_vision_features(_fixture_bytes())
     assert 0.0 <= features["brightness_mean"] <= 255.0
 
 
-@pytest.mark.skipif(
-    not _FIXTURE_PATH.exists(),
-    reason="Street fixture image not found",
-)
+@_SKIP_LIGHT
 def test_light_features_edge_density_in_range():
     features = extract_light_vision_features(_fixture_bytes())
     assert 0.0 <= features["edge_density"] <= 1.0
 
 
-@pytest.mark.skipif(
-    not _FIXTURE_PATH.exists(),
-    reason="Street fixture image not found",
-)
+@_SKIP_LIGHT
 def test_light_features_sky_proxy_in_range():
     features = extract_light_vision_features(_fixture_bytes())
     assert 0.0 <= features["sky_proxy_share"] <= 1.0
 
 
-@pytest.mark.skipif(
-    not _FIXTURE_PATH.exists(),
-    reason="Street fixture image not found",
-)
+@_SKIP_LIGHT
 def test_light_features_gray_surface_in_range():
     features = extract_light_vision_features(_fixture_bytes())
     assert 0.0 <= features["gray_surface_proxy"] <= 1.0
 
 
-@pytest.mark.skipif(
-    not _FIXTURE_PATH.exists(),
-    reason="Street fixture image not found",
-)
+@_SKIP_LIGHT
 def test_light_features_all_keys_present():
     features = extract_light_vision_features(_fixture_bytes())
     expected_keys = {
@@ -91,10 +85,7 @@ def test_light_features_all_keys_present():
     assert expected_keys.issubset(features.keys())
 
 
-@pytest.mark.skipif(
-    not _FIXTURE_PATH.exists(),
-    reason="Street fixture image not found",
-)
+@_SKIP_LIGHT
 def test_synthetic_fixture_has_sky_signal():
     """Fixture upper-third is blue sky — sky_proxy_share should be detectable."""
     features = extract_light_vision_features(_fixture_bytes())
@@ -102,10 +93,7 @@ def test_synthetic_fixture_has_sky_signal():
     assert features["sky_proxy_share"] > 0.0
 
 
-@pytest.mark.skipif(
-    not _FIXTURE_PATH.exists(),
-    reason="Street fixture image not found",
-)
+@_SKIP_LIGHT
 def test_synthetic_fixture_has_green_signal():
     """Fixture has a green strip — green_pixel_share should be detectable."""
     features = extract_light_vision_features(_fixture_bytes())

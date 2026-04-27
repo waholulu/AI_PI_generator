@@ -57,7 +57,7 @@ def test_development_pack_preview_contract(monkeypatch, tmp_path) -> None:
     asyncio.run(server.generate_development_pack(run_id, "beh_123"))
     summary = asyncio.run(server.get_development_pack(run_id, "beh_123"))
 
-    assert summary["status"] == "ready"
+    assert summary["status"] == "claude_code_ready"
     assert summary["claude_code_ready"] is True
 
     checklist = summary["readiness_checklist"]

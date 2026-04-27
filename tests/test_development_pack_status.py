@@ -46,7 +46,7 @@ def test_ready_when_all_conditions_met(tmp_path: Path) -> None:
         _make_candidate(), _make_gate(), pack_dir
     )
     assert result["claude_code_ready"] is True
-    assert result["development_pack_status"] == "ready"
+    assert result["development_pack_status"] == "claude_code_ready"
     assert result["missing_files"] == []
     assert result["blocking_reasons"] == []
 
@@ -109,12 +109,25 @@ def test_not_generated_when_no_pack_dir() -> None:
     assert result["claude_code_ready"] is False
 
 
-def test_review_required_when_shortlist_review(tmp_path: Path) -> None:
+def test_blocked_by_secret_when_required_secrets(tmp_path: Path) -> None:
     pack_dir = tmp_path / "test_001"
     pack_dir.mkdir()
     _populate_pack(pack_dir)
     result = evaluate_development_pack_readiness(
         _make_candidate(required_secrets=["SOME_KEY"]),
+        _make_gate(overall="warning", shortlist="review"),
+        pack_dir,
+    )
+    assert result["development_pack_status"] == "blocked_by_secret"
+    assert result["claude_code_ready"] is False
+
+
+def test_review_required_when_experimental_tag(tmp_path: Path) -> None:
+    pack_dir = tmp_path / "test_001"
+    pack_dir.mkdir()
+    _populate_pack(pack_dir)
+    result = evaluate_development_pack_readiness(
+        _make_candidate(technology_tags=["experimental"]),
         _make_gate(overall="warning", shortlist="review"),
         pack_dir,
     )
@@ -133,4 +146,4 @@ def test_warning_gate_still_ready_without_other_blockers(tmp_path: Path) -> None
         pack_dir,
     )
     assert result["claude_code_ready"] is True
-    assert result["development_pack_status"] == "ready"
+    assert result["development_pack_status"] == "claude_code_ready"
