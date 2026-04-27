@@ -7,28 +7,40 @@ At its core is the **Candidate Factory** — a deterministic pipeline that turns
 
 ---
 
+## Two modes
+
+| Mode | What it does | LLM keys required |
+|------|-------------|-------------------|
+| **Mode 1: Candidate Factory** | Template → 20–40 ranked research designs with development packs | None (deterministic) |
+| **Mode 2: Legacy LLM Ideation** | LLM generates ideas → gates → HITL → literature | GEMINI_API_KEY |
+
+Mode 1 is the recommended starting point. Mode 2 extends the pipeline with full literature harvesting and draft writing.
+
 ## Quick start
 
 ```bash
-# 1. Install (Python 3.11 required)
+# 1. Install (Python 3.11–3.12 required)
 pip install -e ".[geospatial]"
 
 # 2. Run the test suite
 uv run pytest -q -m "not live_openalex and not live_llm"
 
 # 3. Validate the candidate factory meets thresholds
-python scripts/eval_candidate_factory.py \
+uv run python scripts/eval_candidate_factory.py \
   --template built_environment_health \
   --check-thresholds
 
 # 4. Start the API server
 uvicorn api.server:app --reload
 
-# 5. Build Docker image
+# 5. Run E2E acceptance test (server must be running)
+python scripts/e2e_acceptance_test.py
+
+# 6. Build Docker image
 docker build -t ai-pi-generator .
 ```
 
-Copy `.env.example` to `.env` and fill in at minimum `GEMINI_API_KEY`.
+Copy `.env.example` to `.env`. `GEMINI_API_KEY` is only required for Mode 2.
 
 ---
 
@@ -64,17 +76,22 @@ uvicorn api.server:app --reload
 ### Via the API
 
 ```bash
-# Start a run
+# Start a run with max_candidates=40 (new default)
 curl -X POST http://localhost:8000/runs \
   -H "Content-Type: application/json" \
-  -d '{"template_id": "built_environment_health",
-       "domain_input": "Built environment and health outcomes"}'
+  -d '{
+    "template_id": "built_environment_health",
+    "domain_input": "Built environment and health outcomes",
+    "max_candidates": 40,
+    "enable_experimental": false,
+    "cloud_constraints": {"no_paid_api": true}
+  }'
 
-# List candidates (after run completes ideation)
+# List candidates (after run completes)
 curl http://localhost:8000/runs/{run_id}/candidates
 
 # Get the Claude Code task prompt for a ready candidate
-curl http://localhost:8000/runs/{run_id}/candidates/{candidate_id}/claude-task-prompt
+curl http://localhost:8000/runs/{run_id}/outputs/development_packs/{candidate_id}/claude_task_prompt.md
 ```
 
 ### Via the CLI
@@ -117,19 +134,31 @@ See `.env.example` for the full list.
 
 ## Tests
 
+Four test tiers run in CI order:
+
+| Tier | Command | Keys needed | In CI |
+|------|---------|-------------|-------|
+| Unit/mock | `uv run pytest -q -m "not live_openalex and not live_llm"` | none | ✓ |
+| Candidate factory eval | `uv run python scripts/eval_candidate_factory.py --check-thresholds` | none | ✓ |
+| E2E acceptance | `python scripts/e2e_acceptance_test.py` | none (local server) | manual |
+| Live OpenAlex | `uv run pytest tests/test_field_scan_live.py` | OPENALEX_API_KEY | manual |
+
 ```bash
-# All mock tests (no API keys required)
+# All mock tests
 uv run pytest tests/ -q -m "not live_openalex and not live_llm"
 
 # Candidate factory eval with threshold enforcement
-python scripts/eval_candidate_factory.py \
+uv run python scripts/eval_candidate_factory.py \
   --template built_environment_health \
   --max-candidates 40 \
   --enable-experimental false \
   --check-thresholds
+
+# E2E acceptance (requires uvicorn api.server:app --reload in another terminal)
+python scripts/e2e_acceptance_test.py
 ```
 
-**Eval thresholds (v1):**
+**Eval thresholds (v1, enforced in CI):**
 
 | Metric | Threshold |
 |--------|-----------|
@@ -139,6 +168,16 @@ python scripts/eval_candidate_factory.py \
 | `development_pack_ready_rate` | ≥ 80% |
 | `low_or_medium_automation_risk_rate` | ≥ 70% |
 | `experimental_candidate_count` | = 0 (when experimental disabled) |
+
+**E2E acceptance thresholds:**
+
+| Check | Threshold |
+|-------|-----------|
+| `candidate_count` | ≥ 20 |
+| `exposure_families` | ≥ 6 |
+| `pass_or_warning_count` | ≥ 20 |
+| `claude_code_ready_count` | ≥ 8 |
+| `experimental_candidate_count` | = 0 (when disabled) |
 
 ---
 
