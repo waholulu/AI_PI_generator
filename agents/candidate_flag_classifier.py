@@ -21,6 +21,7 @@ INFO_FLAGS: frozenset[str] = frozenset({
     "source_alias_resolved",
     "non_canonical_source_name",
     "canonicalize_source_name",
+    "partial_registry_match",   # fuzzy alias hit in legacy registry; not a real data risk
 })
 
 AUTO_FIXABLE_FLAGS: frozenset[str] = frozenset({

@@ -17,6 +17,7 @@ from agents import settings
 from agents.candidate_composer import compose_candidates
 from agents.candidate_export_validator import validate_candidate_export_contract
 from agents.candidate_feasibility import precheck_candidate
+from agents.candidate_flag_classifier import compute_candidate_readiness
 from agents.candidate_output_writer import (
     write_development_pack_index,
     write_feasibility_report,
@@ -53,9 +54,11 @@ def _to_card(
     gate_status: dict | None = None,
     repair_history: list[dict] | None = None,
     pack_readiness: dict | None = None,
+    readiness_summary: dict | None = None,
 ) -> dict:
     gs = gate_status or {}
     pr = pack_readiness or {}
+    rs = readiness_summary or {}
     return {
         "candidate_id": c.candidate_id,
         "title": title,
@@ -75,6 +78,10 @@ def _to_card(
         "gate_status": gs,
         "repair_history": repair_history or [],
         "shortlist_status": gs.get("shortlist_status", "review"),
+        "readiness_summary": rs,
+        "readiness": rs.get("readiness", gs.get("shortlist_status", "review")),
+        "user_visible_reasons": rs.get("user_visible_reasons", []),
+        "debug_flags": rs.get("debug_flags", []),
         "development_pack_status": pr.get("development_pack_status", "not_generated"),
         "claude_code_ready": pr.get("claude_code_ready", False),
         "development_pack_files": pr.get("development_pack_files", []),
@@ -89,16 +96,21 @@ def _to_screening_candidate(
     rank: int,
     gate_status: dict | None = None,
     repair_history: list[dict] | None = None,
+    readiness_summary: dict | None = None,
 ) -> dict:
     """Format a candidate for topic_screening.json.
 
     Includes all fields that apply_idea_selection_by_candidate_id() and
     build_research_plan_from_candidate() expect, plus gate_status / repair_history
     from the precheck + repair pipeline.
+
+    evaluation.user_visible_reasons contains only actionable, filtered reasons
+    (blocking + review tier).  Raw gate flags live in debug.gate_reasons only.
     """
     exp = c.exposure_family.replace("_", " ")
     out = c.outcome_family.replace("_", " ")
     gs = gate_status or {}
+    rs = readiness_summary or {}
     return {
         "candidate_id": c.candidate_id,
         "topic_id": c.candidate_id,
@@ -128,9 +140,14 @@ def _to_screening_candidate(
         "gate_status": gs,
         "repair_history": repair_history or [],
         "shortlist_status": gs.get("shortlist_status", "review"),
+        "readiness": rs.get("readiness", gs.get("shortlist_status", "review")),
         "evaluation": {
             "overall_verdict": gs.get("overall", "pending"),
-            "reasons": gs.get("reasons", []),
+            "readiness": rs.get("readiness", gs.get("shortlist_status", "review")),
+            "user_visible_reasons": rs.get("user_visible_reasons", []),
+        },
+        "debug": {
+            "gate_reasons": gs.get("reasons", []),
         },
     }
 
@@ -194,6 +211,11 @@ def run_candidate_factory_ideation(state: dict) -> dict:
 
         scores = score_candidate(repaired_c.model_dump(), gate_status, repair_history)
 
+        # Compute structured readiness summary — single source of truth for UI display.
+        readiness_summary = compute_candidate_readiness(
+            repaired_c.model_dump(), gate_status, repair_history
+        )
+
         # Auto-generate development pack for ready candidates only.
         shortlist = gate_status.get("shortlist_status", "blocked")
         pack_dir = None
@@ -211,10 +233,10 @@ def run_candidate_factory_ideation(state: dict) -> dict:
         )
 
         cards.append(
-            _to_card(repaired_c, title, rq, scores, gate_status, repair_history, pack_readiness)
+            _to_card(repaired_c, title, rq, scores, gate_status, repair_history, pack_readiness, readiness_summary)
         )
         screening_candidates.append(
-            _to_screening_candidate(repaired_c, title, rq, rank, gate_status, repair_history)
+            _to_screening_candidate(repaired_c, title, rq, rank, gate_status, repair_history, readiness_summary)
         )
 
     cards = rank_candidates(cards)

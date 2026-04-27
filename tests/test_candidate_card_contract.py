@@ -18,6 +18,9 @@ _REQUIRED_CARD_KEYS = {
     "unit_of_analysis", "method", "claim_strength",
     "technology_tags", "required_secrets", "automation_risk",
     "shortlist_status", "scores", "gate_summary", "development_pack_status",
+    # Readiness fields — surfaced by _normalize_candidate_card() from readiness_summary
+    "readiness", "data_status", "automation_status", "identification_status",
+    "user_visible_reasons",
 }
 
 _REQUIRED_SCORE_KEYS = {

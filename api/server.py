@@ -418,6 +418,7 @@ def _source_at(candidate: dict[str, Any], index: int) -> str:
 def _normalize_candidate_card(candidate: dict[str, Any], fallback_idx: int) -> dict[str, Any]:
     gate_status = candidate.get("gate_status") or {}
     scores = candidate.get("scores") or {}
+    readiness_summary = candidate.get("readiness_summary") or {}
     overall_gate = gate_status.get("overall", "pending")
     gate_summary = {
         "overall": overall_gate,
@@ -448,6 +449,21 @@ def _normalize_candidate_card(candidate: dict[str, Any], fallback_idx: int) -> d
         "required_secrets": gate_status.get("required_secrets", candidate.get("required_secrets", [])),
         "automation_risk": candidate.get("automation_risk", "unknown"),
         "shortlist_status": shortlist_status,
+        # Readiness fields — sourced from readiness_summary when available (candidate_factory path),
+        # falling back to shortlist_status-derived values for legacy cards.
+        "readiness": (
+            readiness_summary.get("readiness")
+            or candidate.get("readiness")
+            or shortlist_status
+        ),
+        "data_status": readiness_summary.get("data_status", "unknown"),
+        "automation_status": readiness_summary.get("automation_status", "unknown"),
+        "identification_status": readiness_summary.get("identification_status", "unknown"),
+        "user_visible_reasons": (
+            readiness_summary.get("user_visible_reasons")
+            or candidate.get("user_visible_reasons")
+            or []
+        ),
         "scores": {
             "data_feasibility": _safe_float(scores.get("data_feasibility")),
             "automation_feasibility": _safe_float(scores.get("automation_feasibility")),

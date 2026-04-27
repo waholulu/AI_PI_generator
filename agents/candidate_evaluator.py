@@ -11,6 +11,7 @@ _INFO_FLAGS: frozenset[str] = frozenset({
     "source_alias_resolved",
     "non_canonical_source_name",
     "canonicalize_source_name",
+    "partial_registry_match",   # alias resolution success; not a real data risk
 })
 
 from agents import settings

@@ -400,11 +400,34 @@ class IdeaValidatorAgent:
             screening_data = json.load(f)
 
         candidates = screening_data.get("candidates", [])
+        is_candidate_factory = screening_data.get("ideation_mode") == "candidate_factory"
         if candidates and all(isinstance(c, dict) and c.get("evaluation") for c in candidates):
-            logger.info("topic_screening already contains evaluation; writing compatibility report only.")
+            logger.info(
+                "topic_screening already contains evaluation; writing compatibility report only "
+                "(ideation_mode=%s).", screening_data.get("ideation_mode", "unknown")
+            )
             validated_ideas = []
             for idea in candidates:
                 eval_data = idea.get("evaluation") or {}
+                # For candidate_factory output, evaluation.user_visible_reasons contains
+                # pre-filtered actionable reasons.  For legacy output, fall back to reasons.
+                if is_candidate_factory:
+                    failure_reasons = list(eval_data.get("user_visible_reasons") or [])
+                    overall_map = {
+                        "ready": "passed", "ready_after_auto_fix": "passed",
+                        "needs_review": "warning", "blocked": "failed",
+                    }
+                    readiness = eval_data.get("readiness", eval_data.get("overall_verdict", "pending"))
+                    overall_verdict = overall_map.get(readiness, "warning")
+                else:
+                    failure_reasons = list(eval_data.get("reasons") or [])
+                    overall_verdict = (
+                        "passed"
+                        if eval_data.get("overall_verdict") == "pass"
+                        else "failed"
+                        if eval_data.get("overall_verdict") == "fail"
+                        else "warning"
+                    )
                 validated_ideas.append(
                     IdeaValidation(
                         title=idea.get("title", ""),
@@ -417,14 +440,8 @@ class IdeaValidatorAgent:
                             was_llm_fallback=False,
                         ),
                         data_availability=[],
-                        overall_verdict=(
-                            "passed"
-                            if eval_data.get("overall_verdict") == "pass"
-                            else "failed"
-                            if eval_data.get("overall_verdict") == "fail"
-                            else "warning"
-                        ),
-                        failure_reasons=list(eval_data.get("reasons") or []),
+                        overall_verdict=overall_verdict,
+                        failure_reasons=failure_reasons,
                     )
                 )
 
@@ -497,7 +514,11 @@ class IdeaValidatorAgent:
                             if eval_data.get("overall_verdict") == "fail"
                             else "warning"
                         ),
-                        failure_reasons=list(eval_data.get("reasons") or []),
+                        failure_reasons=list(
+                            eval_data.get("user_visible_reasons")
+                            or eval_data.get("reasons")
+                            or []
+                        ),
                     )
                 )
 
