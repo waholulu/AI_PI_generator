@@ -41,7 +41,7 @@ _EXPOSURE_FALLBACK: dict[str, str | None] = {
     "impervious_surface": "NLCD",
     "tree_canopy": "EPA_EnviroAtlas",
     "park_access": "EPA_EnviroAtlas",
-    "transit_access": "EPA_Smart_Location_Database",
+    "transit_access": "GTFS",
     "destination_accessibility": "EPA_Smart_Location_Database",
     "building_density": "Microsoft_Building_Footprints",
     "nighttime_lights": "VIIRS",

@@ -1,6 +1,13 @@
 from agents.source_registry import SourceRegistry
 
-_REQUIRED_FIELDS = ["roles", "machine_readable", "auth_required", "cost_required", "spatial_units"]
+_REQUIRED_FIELDS = [
+    "roles",
+    "machine_readable",
+    "auth_required",
+    "cost_required",
+    "spatial_units",
+    "variable_families",
+]
 
 
 def test_all_registry_sources_have_required_fields() -> None:

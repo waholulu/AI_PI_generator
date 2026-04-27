@@ -51,3 +51,66 @@ def validate_template_sources(
         _check_source(source)
 
     return missing
+
+
+def validate_template_role_compatibility(
+    template: dict[str, Any],
+    registry: SourceRegistry | None = None,
+) -> list[str]:
+    """Check that every preferred source in the template carries the required role.
+
+    Returns a list of error strings describing mismatches (empty = no problems).
+    This is a config-layer check: call it once at startup or in CI, not per-candidate.
+
+    Rules:
+      allowed_exposure_families.*.preferred_sources  must each have "exposure" role
+      allowed_outcome_families.*.preferred_sources   must each have "outcome" role
+      default_controls                               must each have "control" role
+      default_boundary_source                        must each have "boundary" role
+    """
+    registry = registry or SourceRegistry.load()
+    errors: list[str] = []
+
+    for family, spec in (template.get("allowed_exposure_families") or {}).items():
+        for src in (spec.get("preferred_sources") or []):
+            sid = registry.resolve(src)
+            if not sid:
+                errors.append(f"exposure_family={family}: source_not_in_registry:{src}")
+                continue
+            source_spec = registry.sources.get(sid, {})
+            if "exposure" not in (source_spec.get("roles") or []):
+                errors.append(
+                    f"exposure_family={family}: source_missing_exposure_role:{src}"
+                )
+
+    for family, spec in (template.get("allowed_outcome_families") or {}).items():
+        for src in (spec.get("preferred_sources") or []):
+            sid = registry.resolve(src)
+            if not sid:
+                errors.append(f"outcome_family={family}: source_not_in_registry:{src}")
+                continue
+            source_spec = registry.sources.get(sid, {})
+            if "outcome" not in (source_spec.get("roles") or []):
+                errors.append(
+                    f"outcome_family={family}: source_missing_outcome_role:{src}"
+                )
+
+    for src in (template.get("default_controls") or []):
+        sid = registry.resolve(src)
+        if not sid:
+            errors.append(f"default_controls: source_not_in_registry:{src}")
+            continue
+        source_spec = registry.sources.get(sid, {})
+        if "control" not in (source_spec.get("roles") or []):
+            errors.append(f"default_controls: source_missing_control_role:{src}")
+
+    for src in (template.get("default_boundary_source") or []):
+        sid = registry.resolve(src)
+        if not sid:
+            errors.append(f"default_boundary_source: source_not_in_registry:{src}")
+            continue
+        source_spec = registry.sources.get(sid, {})
+        if "boundary" not in (source_spec.get("roles") or []):
+            errors.append(f"default_boundary_source: source_missing_boundary_role:{src}")
+
+    return errors

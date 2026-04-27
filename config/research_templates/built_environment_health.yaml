@@ -23,7 +23,6 @@ allowed_exposure_families:
   street_network:
     preferred_sources:
       - OSMnx_OpenStreetMap
-      - TIGER_Lines
     allowed_units: [street_segment, tract, city]
     derived_features: [node_density, edge_density, average_circuity, intersection_density]
 
