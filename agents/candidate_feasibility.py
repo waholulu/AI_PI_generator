@@ -1,10 +1,23 @@
-"""Deterministic feasibility precheck for composed candidates.
+"""Deterministic feasibility precheck for composed candidates (role-based G3 path).
+
+This module implements the **candidate factory** data-availability gate (G3).
+It is distinct from the legacy LLM ideation G3 in ``agents/rule_engine.py``
+(``check_G3_data_availability``), which checks each topic against the catalog
+without role awareness.
+
+Two G3 paths:
+  Legacy LLM ideation path → ``rule_engine.check_G3_data_availability``
+  Candidate factory path   → ``precheck_candidate`` here (role-based G3)
+
+Always call ``validate_candidate_export_contract`` after precheck — that is the
+final strict gate that enforces claude_code_ready policy.
 
 Subchecks run in order:
   source_exists              — exposure and outcome sources resolve in source_registry
   role_coverage              — exposure source has "exposure" role; outcome has "outcome"
   machine_readable           — all declared sources are machine-readable
   spatial_join_path          — a boundary/join source is available; warns if aggregation needed
+  time_overlap               — source coverage years overlap the plan's time window
   cloud_automation_feasibility — no experimental sources with auth/cost requirements
   identification_threats     — key_threats non-empty and mitigations cover ≥ 80 %
 
@@ -159,7 +172,26 @@ def precheck_candidate(candidate: ComposedCandidate) -> dict:
         reasons.extend(agg_reasons)
         repairs.extend(agg_repairs)
 
-    # ── 5. cloud_automation_feasibility ──────────────────────────────────────
+    # ── 5. time_overlap ──────────────────────────────────────────────────────
+    # Warn when the source's declared coverage years don't include the template
+    # default time window (2016-2024).  This is a soft warning — many sources
+    # cover longer windows than listed in the registry.
+    exp_start = exp_spec.get("coverage_start_year")
+    exp_end = exp_spec.get("coverage_end_year")
+    PLAN_START, PLAN_END = 2016, 2024
+    if exp_start and exp_end:
+        try:
+            if int(exp_end) < PLAN_START or int(exp_start) > PLAN_END:
+                subchecks["time_overlap"] = "warning"
+                reasons.append("time_overlap_insufficient")
+            else:
+                subchecks["time_overlap"] = "pass"
+        except (ValueError, TypeError):
+            subchecks["time_overlap"] = "pass"
+    else:
+        subchecks["time_overlap"] = "pass"
+
+    # ── 6. cloud_automation_feasibility ──────────────────────────────────────
     all_specs: list[dict] = [exp_spec, out_spec] + boundary_specs
     for ctrl in control_sources:
         sid = registry.resolve(ctrl)
@@ -224,6 +256,8 @@ def precheck_candidate(candidate: ComposedCandidate) -> dict:
     )
 
     return {
+        "gate_id": "G3_candidate",
+        "passed": overall != "fail",
         "overall": overall,
         "subchecks": subchecks,
         "reasons": reasons,
