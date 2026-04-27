@@ -47,7 +47,13 @@ class _Module1State(ResearchState, total=False):
     cloud_constraints: dict
     enable_experimental: bool
     candidate_factory_enabled: bool
+    # Candidate factory output paths — populated by ideation node
     candidate_cards_path: str
+    feasibility_report_path: str
+    repair_history_path: str
+    development_pack_index_path: str
+    gate_trace_path: str
+    # Selection
     selected_candidate_id: str
 
 

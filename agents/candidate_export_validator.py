@@ -67,8 +67,15 @@ def validate_candidate_export_contract(
     if threats and any(t not in mitigations for t in threats):
         blocking_reasons.append("missing_threat_mitigation")
 
+    # High-risk candidates cannot be Claude Code Ready (policy guardrail).
+    # They may still be "review" for human promotion, but never auto-ready.
+    if candidate.automation_risk == "high":
+        blocking_reasons.append("high_automation_risk_blocks_ready")
+
+    # Required secrets block claude_code_ready — a prompt with secrets cannot
+    # run in a keyless cloud environment.
     if candidate.required_secrets:
-        warnings.append("required_secrets_present")
+        blocking_reasons.append("required_secrets_blocks_ready")
 
     if no_paid_api and any(bool(registry.sources.get(sid, {}).get("cost_required")) for sid in core_source_ids):
         blocking_reasons.append("paid_source_not_allowed")

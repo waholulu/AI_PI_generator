@@ -148,17 +148,21 @@ def summarize_data_access(checks: list[DataAccessCheck]) -> tuple[str, list[str]
     if not checks:
         return "fail", ["no_data_sources_declared"]
 
-    exposure_reachable = any(c.reachable and c.covers_exposure for c in checks)
-    outcome_reachable = any(c.reachable and c.covers_outcome for c in checks)
+    # Role-based aggregate check: a source covers its role if it is machine-readable
+    # and declares that role — regardless of whether a URL is pingable.  Sources
+    # like OSMnx or TIGER that have no explicit access URL are still valid because
+    # they are acquired programmatically (osmnx library) or via bulk download.
+    exposure_ok = any(c.covers_exposure and c.machine_readable for c in checks)
+    outcome_ok = any(c.covers_outcome and c.machine_readable for c in checks)
     machine_readable = any(c.machine_readable for c in checks)
     join_ok = any("missing_join_path" not in c.reasons for c in checks)
     geo_ok = any(c.geography_compatible for c in checks)
     time_ok = any(c.time_compatible for c in checks)
 
     reasons: list[str] = []
-    if not exposure_reachable:
+    if not exposure_ok:
         reasons.append("missing_exposure_role_source")
-    if not outcome_reachable:
+    if not outcome_ok:
         reasons.append("missing_outcome_role_source")
     if not machine_readable:
         reasons.append("missing_machine_readable_source")
@@ -172,9 +176,15 @@ def summarize_data_access(checks: list[DataAccessCheck]) -> tuple[str, list[str]
     if not reasons:
         return "pass", []
 
-    if all(r in {"missing_exposure_role_source", "missing_outcome_role_source"} for r in reasons):
-        if any(c.verdict == "warning" for c in checks):
-            return "warning", reasons
+    # Aggregation mismatches (e.g. block_group → tract) are warnings, not failures.
+    # They are flagged per-source with a reason like "*_to_tract_aggregation_required".
+    aggregation_only = all(
+        r in {"missing_exposure_role_source", "missing_outcome_role_source"}
+        or "aggregation" in r
+        for r in reasons
+    )
+    if aggregation_only and any(c.verdict == "warning" for c in checks):
+        return "warning", reasons
     if any(c.verdict == "warning" for c in checks) and "missing_machine_readable_source" not in reasons:
         return "warning", reasons
     return "fail", reasons

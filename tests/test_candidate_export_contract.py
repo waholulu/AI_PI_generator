@@ -30,13 +30,15 @@ def test_export_contract_ready() -> None:
     assert result["claude_code_ready"] is True
 
 
-def test_export_contract_required_secrets_forces_review() -> None:
+def test_export_contract_required_secrets_blocks_ready() -> None:
+    # required_secrets prevent claude_code_ready — no keyless cloud execution possible
     result = validate_candidate_export_contract(
         _candidate(required_secrets=["MAPILLARY_KEY"]),
         {"overall": "pass", "shortlist_status": "ready"},
     )
-    assert result["shortlist_status"] == "review"
+    assert result["shortlist_status"] == "blocked"
     assert result["claude_code_ready"] is False
+    assert "required_secrets_blocks_ready" in result["blocking_reasons"]
 
 
 def test_export_contract_missing_threats_blocked() -> None:
