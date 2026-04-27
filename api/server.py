@@ -113,6 +113,7 @@ async def _run_pipeline(
     automation_risk_tolerance: str = "low_medium",
     cloud_constraints: dict | None = None,
     enable_experimental: bool = False,
+    max_candidates: int = 40,
 ) -> None:
     """Run the pipeline phases in the background, handling HITL interrupt."""
     log_store.set_current_run(run_id)
@@ -128,6 +129,7 @@ async def _run_pipeline(
         "cloud_constraints": cloud_constraints or {},
         "enable_experimental": enable_experimental,
         "candidate_factory_enabled": bool(template_id),
+        "max_candidates": max_candidates,
     }
 
     def _stream_phase1() -> Optional[str]:
@@ -309,6 +311,7 @@ async def start_run(req: StartRunRequest, background_tasks: BackgroundTasks):
             automation_risk_tolerance=req.automation_risk_tolerance,
             cloud_constraints=req.cloud_constraints,
             enable_experimental=req.enable_experimental,
+            max_candidates=req.max_candidates,
         )
     )
     _tasks[run.run_id] = task

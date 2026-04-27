@@ -25,6 +25,9 @@ class StartRunRequest(BaseModel):
     enable_experimental: bool = Field(
         default=False, description="Whether to allow experimental high-risk candidate generation."
     )
+    max_candidates: int = Field(
+        default=40, ge=1, le=200, description="Maximum candidates to generate (default 40)."
+    )
 
 
 class RunStatus(BaseModel):

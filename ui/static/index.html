@@ -548,9 +548,15 @@
         <label class="checkbox-row"><input type="checkbox" id="ccNoManual" checked> No manual download</label>
         <label class="checkbox-row"><input type="checkbox" id="ccNoGpu" checked> No GPU</label>
         <label class="checkbox-row"><input type="checkbox" id="enableExperimental"> Enable experimental</label>
+        <label class="field-label">Number of candidates</label>
+        <select id="maxCandidates" class="input">
+          <option value="20">20</option>
+          <option value="40" selected>40 (default)</option>
+          <option value="60">60</option>
+        </select>
       </div>
       <div class="expect-box">
-        Expected output: 20-40 candidates · Sources: OSMnx/CDC PLACES/ACS/TIGER/EPA/NLCD · Development pack enabled
+        Expected output: up to 40 candidates · Sources: OSMnx/CDC PLACES/ACS/TIGER/EPA/NLCD · Development pack enabled
       </div>
       <button class="btn btn-primary" id="startBtn" onclick="startRun()">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
@@ -721,6 +727,7 @@ async function startRun() {
         no_gpu: document.getElementById('ccNoGpu').checked,
       },
       enable_experimental: document.getElementById('enableExperimental').checked,
+      max_candidates: parseInt(document.getElementById('maxCandidates').value, 10) || 40,
     });
     state.cloudConstraints = {
       no_paid_api: document.getElementById('ccNoPaidApi').checked,
