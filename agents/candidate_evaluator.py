@@ -5,6 +5,14 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
+# Reasons that represent successful normalization, not real data-availability risk.
+# These must not degrade the overall verdict or count as repairable warnings.
+_INFO_FLAGS: frozenset[str] = frozenset({
+    "source_alias_resolved",
+    "non_canonical_source_name",
+    "canonicalize_source_name",
+})
+
 from agents import settings
 from agents.data_accessibility import evaluate_data_sources, summarize_data_access
 from agents.openalex_utils import search_openalex
@@ -72,8 +80,10 @@ def _data_registry_verdict(plan: ResearchPlan, threshold: float = 0.6) -> tuple[
         verdict = "fail"
         reasons = ["source_not_in_registry"]
     else:
+        # Some sources resolved via alias lookup (success); some genuinely absent.
+        # Only the unrecognised sources are a real risk — alias resolution is info.
         verdict = "warning"
-        reasons = ["source_alias_resolved"]
+        reasons = ["partial_registry_match"]
     return verdict, reasons, {"registry_matches": match_rows}
 
 
@@ -181,7 +191,8 @@ def evaluate_candidate(
         overall = "pass"
 
     base_score = {"pass": 1.0, "warning": 0.6, "fail": 0.2}[overall]
-    score = max(0.0, min(1.0, base_score - 0.05 * len(reasons)))
+    penalty_reasons = [r for r in reasons if r not in _INFO_FLAGS]
+    score = max(0.0, min(1.0, base_score - 0.05 * len(penalty_reasons)))
 
     return CandidateEvaluation(
         candidate_id=candidate_id,

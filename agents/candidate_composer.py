@@ -21,7 +21,13 @@ _HIGH_PASS_PAIRS: list[tuple[str, str]] = [
 ]
 
 
-def _pick_source(preferred_sources: list[str], registry: SourceRegistry, req: ComposeRequest) -> str | None:
+def _pick_source(
+    preferred_sources: list[str],
+    registry: SourceRegistry,
+    req: ComposeRequest,
+    expected_role: str = "",
+    variable_family: str = "",
+) -> str | None:
     for src in preferred_sources:
         sid = registry.resolve(src)
         if sid is None:
@@ -30,6 +36,11 @@ def _pick_source(preferred_sources: list[str], registry: SourceRegistry, req: Co
         spec = registry.sources.get(sid, {})
         tier = str(spec.get("tier", "stable"))
 
+        if expected_role and expected_role not in (spec.get("roles") or []):
+            continue
+        families = spec.get("variable_families") or {}
+        if variable_family and variable_family not in families:
+            continue
         if tier == "experimental" and not req.enable_experimental:
             continue
         if tier == "tier2" and not req.enable_tier2:
@@ -78,8 +89,14 @@ def _build_candidate(
     template: dict,
 ) -> ComposedCandidate | None:
     """Build one candidate or return None if sources can't be resolved."""
-    exp_source = _pick_source(exp_spec.get("preferred_sources", []), registry, req)
-    out_source = _pick_source(out_spec.get("preferred_sources", []), registry, req)
+    exp_source = _pick_source(
+        exp_spec.get("preferred_sources", []), registry, req,
+        expected_role="exposure", variable_family=exp_name,
+    )
+    out_source = _pick_source(
+        out_spec.get("preferred_sources", []), registry, req,
+        expected_role="outcome", variable_family=out_name,
+    )
     if not exp_source or not out_source:
         return None
 

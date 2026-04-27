@@ -37,3 +37,18 @@ def fill_identification_from_method(
     merged_mitigations.update(candidate.mitigations)
 
     return merged_threats, merged_mitigations
+
+
+def ensure_identification_metadata(candidate: ComposedCandidate) -> ComposedCandidate:
+    """Guarantee ≥3 threats with full mitigation coverage before gate checks.
+
+    No-op if the candidate already has ≥3 threats and all have mitigations.
+    Otherwise merges method-template defaults so the export validator's strict
+    3-threat requirement is satisfied without LLM cost.
+    """
+    threats = list(candidate.key_threats or [])
+    mits = dict(candidate.mitigations or {})
+    if len(threats) >= 3 and all(t in mits for t in threats):
+        return candidate
+    new_threats, new_mits = fill_identification_from_method(candidate)
+    return candidate.model_copy(update={"key_threats": new_threats, "mitigations": new_mits})

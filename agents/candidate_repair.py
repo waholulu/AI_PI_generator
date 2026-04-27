@@ -37,6 +37,14 @@ logger = get_logger(__name__)
 _EXPOSURE_FALLBACK: dict[str, str | None] = {
     "walkability": "EPA_National_Walkability_Index",
     "street_network": "OSMnx_OpenStreetMap",
+    "green_space": "NLCD",
+    "impervious_surface": "NLCD",
+    "tree_canopy": "EPA_EnviroAtlas",
+    "park_access": "EPA_EnviroAtlas",
+    "transit_access": "EPA_Smart_Location_Database",
+    "destination_accessibility": "EPA_Smart_Location_Database",
+    "building_density": "Microsoft_Building_Footprints",
+    "nighttime_lights": "VIIRS",
     "streetview_built_form": None,   # experimental only; no stable fallback
     "greenery_visibility": None,     # experimental only
 }
@@ -47,6 +55,8 @@ _OUTCOME_FALLBACK: dict[str, str] = {
     "diabetes": "CDC_PLACES",
     "asthma": "CDC_PLACES",
     "poor_mental_health": "CDC_PLACES",
+    "poor_physical_health": "CDC_PLACES",
+    "cardiovascular_disease": "CDC_PLACES",
 }
 _DEFAULT_OUTCOME_FALLBACK = "CDC_PLACES"
 

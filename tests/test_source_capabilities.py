@@ -1,5 +1,14 @@
 from agents.source_registry import SourceRegistry
 
+_REQUIRED_FIELDS = ["roles", "machine_readable", "auth_required", "cost_required", "spatial_units"]
+
+
+def test_all_registry_sources_have_required_fields() -> None:
+    registry = SourceRegistry.load()
+    for sid, spec in registry.sources.items():
+        for field in _REQUIRED_FIELDS:
+            assert field in spec, f"{sid} missing required field '{field}'"
+
 
 def test_source_registry_load_and_resolve_alias() -> None:
     registry = SourceRegistry.load()

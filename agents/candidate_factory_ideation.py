@@ -23,6 +23,7 @@ from agents.candidate_output_writer import (
     write_gate_trace,
 )
 from agents.candidate_repair import repair_candidate
+from agents.identification_template_filler import ensure_identification_metadata
 from agents.development_pack_status import evaluate_development_pack_readiness
 from agents.development_pack_writer import write_development_pack
 from agents.final_ranker import rank_candidates, score_candidate
@@ -181,6 +182,7 @@ def run_candidate_factory_ideation(state: dict) -> dict:
         title = _make_title(c)
         rq = _make_research_question(c)
 
+        c = ensure_identification_metadata(c)
         gate_status = precheck_candidate(c)
         repaired_c, gate_status, repair_history = repair_candidate(c, gate_status)
         all_repair_histories.extend(repair_history)
