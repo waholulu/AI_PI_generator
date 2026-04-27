@@ -109,7 +109,7 @@ def evaluate_data_sources(plan: ResearchPlan) -> list[DataAccessCheck]:
         if source.auth_required:
             reasons.append("experimental_source_requires_key")
         if "streetview" in source.name.lower() and "no_raw_image_storage" not in source.access_notes.lower():
-            reasons.append("streetview_policy_not_satisfied")
+            reasons.append("raw_image_policy_not_satisfied")
         if not geography_compatible:
             reasons.append("geography_mismatch")
         if not time_compatible:

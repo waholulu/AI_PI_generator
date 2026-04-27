@@ -72,11 +72,11 @@ class DataAccessAgent:
                 "Prototype exposure/outcome extraction with one sample dataset.",
             ]
         steps = []
-        if "no_reachable_exposure_source" in reasons:
+        if "missing_exposure_role_source" in reasons:
             steps.append("Add at least one reachable exposure source URL.")
-        if "no_reachable_outcome_source" in reasons:
+        if "missing_outcome_role_source" in reasons:
             steps.append("Add at least one reachable outcome source URL.")
-        if "no_machine_readable_source" in reasons:
+        if "missing_machine_readable_source" in reasons:
             steps.append("Prefer CSV/JSON/Parquet data endpoints over PDFs.")
         if not steps:
             steps.append("Review source notes and align scope with geography/time window.")
