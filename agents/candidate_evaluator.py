@@ -25,6 +25,9 @@ logger = get_logger(__name__)
 
 
 def _load_registry() -> list[dict[str, Any]]:
+    # Legacy: reads prompts/data_source_registry.json (fuzzy-match JSON).
+    # The canonical source of truth is config/source_capabilities.yaml (SourceRegistry).
+    # candidate_factory pipeline uses SourceRegistry; this path serves CandidateEvaluator only.
     path = settings.data_source_registry_path()
     try:
         with open(path, "r", encoding="utf-8") as f:
