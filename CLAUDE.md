@@ -7,7 +7,7 @@ Auto-PI (AI PI Generator) is a multi-agent research automation pipeline that ass
 ## Quick Start
 
 ```bash
-# Requires Python 3.10
+# Requires Python 3.11–3.12
 uv sync            # or: pip install -e .
 cp .env.example .env
 # Fill in API keys in .env (at minimum GEMINI_API_KEY)
@@ -164,6 +164,15 @@ See `.env.example` for the full list. Key variables:
 
 ## Testing
 
+Four test tiers run in CI order:
+
+| Tier | Command | Keys needed | In CI |
+|------|---------|-------------|-------|
+| Unit/mock | `uv run pytest tests/ -m "not live_openalex and not live_llm" -q` | none | ✓ |
+| Candidate factory eval | `uv run python scripts/eval_candidate_factory.py --check-thresholds` | none | ✓ |
+| Cloud smoke test | `uv run python scripts/cloud_smoke_test.py` | none (local server) | manual |
+| Live OpenAlex | `uv run pytest tests/test_field_scan_live.py -v` | OPENALEX_API_KEY | manual |
+
 ```bash
 # Run all mock tests (no API keys required) — use uv run for correct venv
 uv run python -m pytest tests/ -m "not live_openalex and not live_llm" -q
@@ -174,12 +183,18 @@ uv run python -m pytest tests/test_topic_schema.py tests/test_settings_new_paths
   tests/test_reflection_loop.py tests/test_ideation_v2.py tests/test_hitl_helpers_v2.py \
   tests/test_integration_module1_v2.py -v
 
-# Candidate factory eval — enforces thresholds in CI
+# Candidate factory eval — enforces thresholds in CI; writes artifact to output/
 uv run python scripts/eval_candidate_factory.py \
   --template built_environment_health \
   --max-candidates 40 \
   --enable-experimental false \
   --check-thresholds
+# Enforced thresholds: candidate_count>=20, development_pack_ready_rate>=0.80,
+# score_completion_rate>=0.95, implementation_spec_completion_rate>=0.85,
+# low_or_medium_automation_risk_rate>=0.70, experimental_candidate_count==0
+
+# Cloud smoke test (requires local API server on port 8000)
+uv run python scripts/cloud_smoke_test.py
 
 # Live tests (require API keys)
 uv run python -m pytest tests/test_field_scan_live.py -v   # Live OpenAlex test

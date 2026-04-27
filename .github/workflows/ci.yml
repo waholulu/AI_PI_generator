@@ -33,7 +33,16 @@ jobs:
             --enable-experimental false \
             --enable-tier2 true \
             --no-paid-api true \
-            --output /tmp/autopi_test/eval_candidate_factory.json \
+            --output /tmp/autopi_test/eval_candidate_factory_latest.json \
             --check-thresholds
         env:
           AUTOPI_DATA_ROOT: /tmp/autopi_test
+
+      - name: Upload eval artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-candidate-factory-${{ github.sha }}
+          path: /tmp/autopi_test/eval_candidate_factory_latest.json
+          if-no-files-found: warn
+          retention-days: 30
