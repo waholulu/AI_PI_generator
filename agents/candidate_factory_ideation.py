@@ -89,86 +89,105 @@ def _to_card(
     }
 
 
-def _to_screening_candidate(
-    c,
-    title: str,
-    rq: str,
-    rank: int,
-    gate_status: dict | None = None,
-    repair_history: list[dict] | None = None,
-    readiness_summary: dict | None = None,
-) -> dict:
-    """Format a candidate for topic_screening.json.
+def _card_to_screening_entry(card: dict) -> dict:
+    """Convert a ranked candidate card to a topic_screening.json entry.
 
-    Includes all fields that apply_idea_selection_by_candidate_id() and
-    build_research_plan_from_candidate() expect, plus gate_status / repair_history
-    from the precheck + repair pipeline.
+    Called after rank_candidates() so rank is final.  Reads all data from the
+    card dict (which embeds _raw from ComposedCandidate.model_dump()) so there
+    is no need to keep a parallel screening list during the main loop.
 
-    evaluation.user_visible_reasons contains only actionable, filtered reasons
-    (blocking + review tier).  Raw gate flags live in debug.gate_reasons only.
+    evaluation.user_visible_reasons contains only actionable, filtered reasons.
+    Raw gate flags live in debug.gate_reasons only (never surfaced to UI directly).
     """
-    exp = c.exposure_family.replace("_", " ")
-    out = c.outcome_family.replace("_", " ")
-    gs = gate_status or {}
-    rs = readiness_summary or {}
+    raw = card.get("_raw") or {}
+    gs = card.get("gate_status") or {}
+    scores = card.get("scores") or {}
+    rs = card.get("readiness_summary") or {}
+    exp = card.get("exposure_label", "").replace("_", " ")
+    out = card.get("outcome_label", "").replace("_", " ")
     return {
-        "candidate_id": c.candidate_id,
-        "topic_id": c.candidate_id,
-        "title": title,
-        "rank": rank,
-        "research_question": rq,
-        "exposure_variable": c.exposure_family,
-        "outcome_variable": c.outcome_family,
+        "candidate_id": card["candidate_id"],
+        "topic_id": card["candidate_id"],
+        "title": card["title"],
+        "rank": card.get("rank", 0),
+        "research_question": card["research_question"],
+        "exposure_variable": card.get("exposure_label", ""),
+        "outcome_variable": card.get("outcome_label", ""),
         "geography": "United States",
-        "unit_of_analysis": c.unit_of_analysis,
-        "method": c.method_template,
-        "key_threats": c.key_threats,
-        "mitigations": c.mitigations,
-        "declared_sources": [c.exposure_source, c.outcome_source],
-        "exposure_source": c.exposure_source,
-        "outcome_source": c.outcome_source,
-        "exposure_family": c.exposure_family,
-        "outcome_family": c.outcome_family,
-        "join_plan": c.join_plan,
+        "unit_of_analysis": card.get("unit_of_analysis", ""),
+        "method": card.get("method", ""),
+        "key_threats": raw.get("key_threats", []),
+        "mitigations": raw.get("mitigations", {}),
+        "declared_sources": [card.get("exposure_source", ""), card.get("outcome_source", "")],
+        "exposure_source": card.get("exposure_source", ""),
+        "outcome_source": card.get("outcome_source", ""),
+        "exposure_family": card.get("exposure_label", ""),
+        "outcome_family": card.get("outcome_label", ""),
+        "join_plan": raw.get("join_plan", {}),
         "brief_rationale": (
             f"Assess whether {exp} is empirically associated with {out} "
-            f"using {c.exposure_source} and {c.outcome_source}."
+            f"using {card.get('exposure_source', '')} and {card.get('outcome_source', '')}."
         ),
-        "technology_tags": c.technology_tags,
-        "automation_risk": c.automation_risk,
-        "required_secrets": gs.get("required_secrets", []),
+        "technology_tags": card.get("technology_tags", []),
+        "automation_risk": card.get("automation_risk", "medium"),
+        "required_secrets": card.get("required_secrets", []),
         "gate_status": gs,
-        "repair_history": repair_history or [],
-        "shortlist_status": gs.get("shortlist_status", "review"),
-        "readiness": rs.get("readiness", gs.get("shortlist_status", "review")),
+        "repair_history": card.get("repair_history", []),
+        "shortlist_status": card.get("shortlist_status", "review"),
+        "readiness": card.get("readiness", "needs_review"),
         "evaluation": {
             "overall_verdict": gs.get("overall", "pending"),
-            "readiness": rs.get("readiness", gs.get("shortlist_status", "review")),
-            "user_visible_reasons": rs.get("user_visible_reasons", []),
+            "readiness": card.get("readiness", "needs_review"),
+            "user_visible_reasons": card.get("user_visible_reasons", []),
+            "score": round(float(scores.get("overall", 0.0)), 3),
         },
         "debug": {
             "gate_reasons": gs.get("reasons", []),
+            "repair_history": card.get("repair_history", []),
         },
     }
 
 
-def run_candidate_factory_ideation(state: dict) -> dict:
-    """Write candidate_cards.json, topic_screening.json, and repair_history.json.
+def _select_shortlist(ranked_cards: list[dict], shortlist_size: int = 5) -> list[dict]:
+    """Return top-k non-blocked candidates; falls back to top-k overall if needed."""
+    shortlist = [
+        c for c in ranked_cards
+        if c.get("readiness") in {"ready", "ready_after_auto_fix", "needs_review"}
+    ][:shortlist_size]
+    if len(shortlist) < shortlist_size:
+        shortlist = ranked_cards[:shortlist_size]
+    return shortlist
 
-    Pipeline:
-      compose_candidates → precheck_candidate → repair_candidate → write outputs
+
+def run_candidate_factory_ideation(state: dict) -> dict:
+    """Write candidate_cards.json (full ranked pool) and topic_screening.json (shortlist).
+
+    Pipeline (13 steps per plan §3):
+      compose_candidates → normalize/enrich → precheck → repair → export_validate
+      → compute_readiness → score → rank full pool → select shortlist → write outputs
+      → generate development packs for ready candidates
+
+    candidate_cards.json  — full pool (max_candidates entries), ranked
+    topic_screening.json  — shortlist only (shortlist_size entries, default 5)
 
     Returns file-path references for downstream pipeline nodes.
     """
     template_id = state["template_id"]
     domain_input = state["domain_input"]
+    # max_candidates controls the internal generation pool size, NOT the UI display count.
+    max_candidates = state.get("max_candidates", 40)
+    # shortlist_size controls how many candidates appear in topic_screening.json / UI.
+    shortlist_size = state.get("shortlist_size", 5)
 
-    logger.info("Candidate factory ideation — template: %s", template_id)
+    logger.info(
+        "Candidate factory ideation — template: %s  pool: %d  shortlist: %d",
+        template_id, max_candidates, shortlist_size,
+    )
 
     req = ComposeRequest(
         template_id=template_id,
         domain_input=domain_input,
-        max_candidates=state.get("max_candidates", 20),
+        max_candidates=max_candidates,
         enable_tier2=(state.get("technology_options") or {}).get("remote_sensing", True),
         enable_experimental=state.get("enable_experimental", False),
         no_paid_api=(state.get("cloud_constraints") or {}).get("no_paid_api", True),
@@ -189,92 +208,112 @@ def run_candidate_factory_ideation(state: dict) -> dict:
             "degraded_nodes": ["ideation:no_candidates_from_factory"],
         }
 
+    # Steps 4–9: per-candidate processing (no rank assigned yet — ranking happens after).
     cards: list[dict] = []
-    screening_candidates: list[dict] = []
     all_repair_histories: list[dict] = []
-
     run_id = settings.current_run_scope() or "unknown"
 
-    for rank, c in enumerate(candidates, start=1):
+    for c in candidates:
         title = _make_title(c)
         rq = _make_research_question(c)
 
+        # Step 4: normalize / enrich metadata (unconditional pre-processing).
         c = ensure_identification_metadata(c)
+        # Step 5: deterministic precheck.
         gate_status = precheck_candidate(c)
+        # Step 6: deterministic repair; all auto-fix events go to repair_history only.
         repaired_c, gate_status, repair_history = repair_candidate(c, gate_status)
         all_repair_histories.extend(repair_history)
+        # Step 7: strict export validation.
         gate_status = validate_candidate_export_contract(
             repaired_c,
             gate_status,
             no_paid_api=req.no_paid_api,
         )
-
-        scores = score_candidate(repaired_c.model_dump(), gate_status, repair_history)
-
-        # Compute structured readiness summary — single source of truth for UI display.
+        # Step 8: single translation layer — raw gate flags → user-facing readiness.
         readiness_summary = compute_candidate_readiness(
             repaired_c.model_dump(), gate_status, repair_history
         )
+        # Step 9: weighted score.
+        scores = score_candidate(repaired_c.model_dump(), gate_status, repair_history)
 
-        # Auto-generate development pack for ready candidates only.
-        shortlist = gate_status.get("shortlist_status", "blocked")
-        pack_dir = None
-        if shortlist == "ready":
-            try:
-                pack_dir = write_development_pack(run_id, repaired_c.model_dump())
-            except Exception as exc:
-                logger.warning(
-                    "development pack generation failed for %s: %s",
-                    repaired_c.candidate_id, exc
-                )
-
+        # Development packs are generated later (Step 13) after ranking, but we need
+        # pack_readiness to embed in each card.  Pass pack_dir=None here; packs are
+        # created in the post-ranking loop only for shortlisted ready candidates.
         pack_readiness = evaluate_development_pack_readiness(
-            repaired_c.model_dump(), gate_status, pack_dir
+            repaired_c.model_dump(), gate_status, pack_dir=None
         )
 
         cards.append(
-            _to_card(repaired_c, title, rq, scores, gate_status, repair_history, pack_readiness, readiness_summary)
-        )
-        screening_candidates.append(
-            _to_screening_candidate(repaired_c, title, rq, rank, gate_status, repair_history, readiness_summary)
+            _to_card(
+                repaired_c, title, rq, scores, gate_status,
+                repair_history, pack_readiness, readiness_summary,
+            )
         )
 
-    cards = rank_candidates(cards)
+    # Step 10: rank full pool (readiness → risk → score).
+    ranked_cards = rank_candidates(cards)
 
+    # Step 13: generate development packs for ready shortlist candidates.
+    shortlist_cards = _select_shortlist(ranked_cards, shortlist_size)
+    shortlist_ids = {c["candidate_id"] for c in shortlist_cards}
+    for card in ranked_cards:
+        if card["candidate_id"] not in shortlist_ids:
+            continue
+        if card.get("readiness") not in {"ready", "ready_after_auto_fix"}:
+            continue
+        raw = card.get("_raw") or {}
+        try:
+            pack_dir = write_development_pack(run_id, raw)
+            new_pack_readiness = evaluate_development_pack_readiness(raw, card.get("gate_status") or {}, pack_dir)
+            card["development_pack_status"] = new_pack_readiness.get("development_pack_status", card["development_pack_status"])
+            card["claude_code_ready"] = new_pack_readiness.get("claude_code_ready", card["claude_code_ready"])
+            card["development_pack_files"] = new_pack_readiness.get("development_pack_files", card["development_pack_files"])
+        except Exception as exc:
+            logger.warning("development pack generation failed for %s: %s", card["candidate_id"], exc)
+
+    # Step 12a: write candidate_cards.json — full ranked pool (debug/QA use).
     cards_path = settings.output_dir() / "candidate_cards.json"
-    cards_path.write_text(json.dumps(cards, indent=2, ensure_ascii=False))
-    logger.info("Wrote %d candidate cards → %s", len(cards), cards_path)
+    cards_path.write_text(json.dumps(ranked_cards, indent=2, ensure_ascii=False))
+    logger.info("Wrote %d candidate cards → %s", len(ranked_cards), cards_path)
 
-    write_feasibility_report(run_id, cards)
-    write_development_pack_index(run_id, cards)
-    write_gate_trace(run_id, cards)
+    write_feasibility_report(run_id, ranked_cards)
+    write_development_pack_index(run_id, ranked_cards)
+    write_gate_trace(run_id, ranked_cards)
 
+    # Step 12b: write topic_screening.json — shortlist only (user-visible).
+    # Convert each shortlist card to the screening entry format after ranking so
+    # rank numbers are final.  Raw gate flags are kept in debug block only.
+    shortlist_entries = [_card_to_screening_entry(c) for c in shortlist_cards]
     screening = {
         "run_id": run_id,
         "status": "pending_review",
         "ideation_mode": "candidate_factory",
         "template_id": template_id,
-        "candidates": screening_candidates,
+        "shortlist_size": len(shortlist_entries),
+        "pool_size": len(ranked_cards),
+        "candidates": shortlist_entries,
     }
     screening_path = settings.topic_screening_path()
     with open(screening_path, "w", encoding="utf-8") as fh:
         json.dump(screening, fh, indent=2, ensure_ascii=False)
-    logger.info("Wrote topic_screening.json — %d candidates", len(screening_candidates))
+    logger.info(
+        "Wrote topic_screening.json — shortlist %d of %d candidates",
+        len(shortlist_entries), len(ranked_cards),
+    )
 
     repair_history_path = settings.repair_history_path()
     with open(repair_history_path, "w", encoding="utf-8") as fh:
         json.dump(all_repair_histories, fh, indent=2, ensure_ascii=False)
-    logger.info(
-        "Wrote repair_history.json — %d entries", len(all_repair_histories)
-    )
+    logger.info("Wrote repair_history.json — %d entries", len(all_repair_histories))
 
-    first = screening_candidates[0]
+    first = shortlist_entries[0]
     minimal_plan = {
         "run_id": run_id,
         "project_title": first["title"],
         "research_question": first["research_question"],
         "template_id": template_id,
-        "candidates": screening_candidates,
+        "candidates": shortlist_entries,
     }
     plan_path = settings.research_plan_path()
     with open(plan_path, "w", encoding="utf-8") as fh:

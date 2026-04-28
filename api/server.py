@@ -550,8 +550,25 @@ def _build_candidate_detail(candidate: dict[str, Any], fallback_idx: int) -> dic
     }
 
 
+def _load_shortlist_cards(run_id: str) -> list[dict]:
+    """Load shortlist candidates from topic_screening.json (user-visible view)."""
+    token = settings.activate_run_scope(run_id)
+    try:
+        screening = Path(settings.topic_screening_path())
+        if screening.exists():
+            try:
+                payload = json.loads(screening.read_text(encoding="utf-8"))
+                candidates = payload.get("candidates", [])
+                return [_normalize_candidate_card(c, i) for i, c in enumerate(candidates, start=1)]
+            except json.JSONDecodeError:
+                pass
+        return []
+    finally:
+        settings.deactivate_run_scope(token)
+
+
 def _load_candidate_cards(run_id: str) -> list[dict]:
-    """Load candidate cards from run-scoped outputs (or fallback screening candidates)."""
+    """Load full candidate pool from candidate_cards.json (fallback to shortlist)."""
     token = settings.activate_run_scope(run_id)
     try:
         output_path = settings.output_dir() / "candidate_cards.json"
@@ -565,12 +582,8 @@ def _load_candidate_cards(run_id: str) -> list[dict]:
                     return [_normalize_candidate_card(c, i) for i, c in enumerate(candidates, start=1)]
             except json.JSONDecodeError:
                 pass
-        screening = Path(settings.topic_screening_path())
-        if screening.exists():
-            payload = json.loads(screening.read_text(encoding="utf-8"))
-            candidates = payload.get("candidates", [])
-            return [_normalize_candidate_card(c, i) for i, c in enumerate(candidates, start=1)]
-        return []
+        # Fall back to shortlist when full pool file is absent (e.g. legacy runs).
+        return _load_shortlist_cards(run_id)
     finally:
         settings.deactivate_run_scope(token)
 
@@ -694,13 +707,25 @@ async def reject_hitl(run_id: str):
 
 
 @app.get("/runs/{run_id}/candidates")
-async def list_candidates(run_id: str):
+async def list_candidates(run_id: str, view: str = "shortlist"):
+    """List candidates for a run.
+
+    Query params:
+      view=shortlist  (default) — top-k user-visible candidates from topic_screening.json
+      view=all                  — full ranked pool from candidate_cards.json
+    """
     run = run_manager.get_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found.")
-    cards = _load_candidate_cards(run_id)
+    if view == "all":
+        cards = _load_candidate_cards(run_id)
+    else:
+        cards = _load_shortlist_cards(run_id)
+        if not cards:
+            # Fallback: no shortlist file yet; return full pool (e.g. legacy runs).
+            cards = _load_candidate_cards(run_id)
     public_cards = [{k: v for k, v in c.items() if k != "_raw"} for c in cards]
-    return {"run_id": run_id, "count": len(public_cards), "candidates": public_cards}
+    return {"run_id": run_id, "view": view, "count": len(public_cards), "candidates": public_cards}
 
 
 @app.get("/runs/{run_id}/candidates/{candidate_id}")

@@ -401,17 +401,26 @@ class IdeaValidatorAgent:
 
         candidates = screening_data.get("candidates", [])
         is_candidate_factory = screening_data.get("ideation_mode") == "candidate_factory"
-        if candidates and all(isinstance(c, dict) and c.get("evaluation") for c in candidates):
+
+        # Candidate Factory mode: never run CandidateEvaluator or legacy registry matching.
+        # The factory pipeline has already computed readiness via compute_candidate_readiness()
+        # and embedded it in evaluation.user_visible_reasons.  We only write a compatibility
+        # report here so downstream nodes (literature / drafter) can read validation_report_path.
+        # Also short-circuit when legacy ideation has already embedded evaluation blocks so we
+        # don't re-run the evaluator unnecessarily.
+        if is_candidate_factory or (
+            candidates and all(isinstance(c, dict) and c.get("evaluation") for c in candidates)
+        ):
             logger.info(
-                "topic_screening already contains evaluation; writing compatibility report only "
-                "(ideation_mode=%s).", screening_data.get("ideation_mode", "unknown")
+                "Skipping CandidateEvaluator — ideation_mode=%s, evaluation pre-computed=%s.",
+                screening_data.get("ideation_mode", "unknown"),
+                bool(candidates and all(c.get("evaluation") for c in candidates)),
             )
             validated_ideas = []
             for idea in candidates:
                 eval_data = idea.get("evaluation") or {}
-                # For candidate_factory output, evaluation.user_visible_reasons contains
-                # pre-filtered actionable reasons.  For legacy output, fall back to reasons.
                 if is_candidate_factory:
+                    # §8.3: map readiness → overall_verdict; use only user_visible_reasons.
                     failure_reasons = list(eval_data.get("user_visible_reasons") or [])
                     overall_map = {
                         "ready": "passed", "ready_after_auto_fix": "passed",
@@ -434,7 +443,7 @@ class IdeaValidatorAgent:
                         rank=idea.get("rank", 0),
                         brief_rationale=idea.get("brief_rationale", ""),
                         novelty=NoveltyResult(
-                            verdict=str(eval_data.get("novelty_verdict") or "unknown"),
+                            verdict=str(eval_data.get("novelty_verdict") or "not_checked"),
                             similar_papers=[],
                             search_queries_used=[],
                             was_llm_fallback=False,

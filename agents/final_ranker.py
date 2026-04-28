@@ -180,12 +180,23 @@ def score_candidate(candidate: dict, gate_status: dict, repair_history: list[dic
 
 
 def rank_candidates(cards: list[dict]) -> list[dict]:
+    # Option A: readiness strictly before automation_risk, then by descending score.
+    # A ready card with score=0.3 outranks a needs_review card with score=0.95.
+    # "review" is kept as a legacy alias for "needs_review" (same priority bucket).
+    status_priority = {
+        "ready": 0,
+        "ready_after_auto_fix": 1,
+        "needs_review": 2,
+        "review": 2,
+        "blocked": 3,
+    }
+    risk_priority = {"low": 0, "medium": 1, "high": 2}
     ranked = sorted(
         cards,
         key=lambda c: (
+            status_priority.get(c.get("readiness") or c.get("shortlist_status"), 9),
+            risk_priority.get(c.get("automation_risk", "high"), 9),
             -float(c.get("scores", {}).get("overall", 0.0)),
-            c.get("automation_risk", "medium") != "low",
-            c.get("shortlist_status") != "ready",
         ),
     )
     for idx, card in enumerate(ranked, start=1):

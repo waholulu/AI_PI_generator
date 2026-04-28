@@ -31,14 +31,22 @@ def _shortlist(card: dict) -> str:
 def write_feasibility_report(run_id: str, cards: list[dict[str, Any]]) -> Path:
     """Write output/feasibility_report.json from candidate cards."""
     shortlist_counts: Counter = Counter(_shortlist(c) for c in cards)
+    readiness_counts: Counter = Counter(c.get("readiness", "unknown") for c in cards)
     risk_counts: Counter = Counter(c.get("automation_risk", "high") for c in cards)
     claude_ready_count = sum(1 for c in cards if c.get("claude_code_ready", False))
 
-    failure_reason_counts: Counter = Counter()
+    # Raw gate flags — for QA / gate pass-rate analysis.
+    debug_reason_counts: Counter = Counter()
     for card in cards:
         gs = card.get("gate_status", {})
         for reason in gs.get("reasons", []):
-            failure_reason_counts[reason] += 1
+            debug_reason_counts[reason] += 1
+
+    # User-visible reasons — what users actually see (blocking + review tier only).
+    user_visible_reason_counts: Counter = Counter()
+    for card in cards:
+        for reason in card.get("user_visible_reasons", []):
+            user_visible_reason_counts[reason] += 1
 
     candidate_summaries = []
     for card in cards:
@@ -48,10 +56,13 @@ def write_feasibility_report(run_id: str, cards: list[dict[str, Any]]) -> Path:
                 "candidate_id": card["candidate_id"],
                 "overall": _gate_overall(card),
                 "shortlist_status": _shortlist(card),
+                "readiness": card.get("readiness", "unknown"),
                 "claude_code_ready": card.get("claude_code_ready", False),
                 "automation_risk": card.get("automation_risk", "high"),
                 "subchecks": gs.get("subchecks", {}),
+                # Raw gate reasons for debugging — not shown in UI.
                 "reasons": gs.get("reasons", []),
+                "user_visible_reasons": card.get("user_visible_reasons", []),
             }
         )
 
@@ -67,7 +78,9 @@ def write_feasibility_report(run_id: str, cards: list[dict[str, Any]]) -> Path:
             "high_risk": risk_counts.get("high", 0),
             "claude_code_ready": claude_ready_count,
         },
-        "failure_reasons": dict(failure_reason_counts),
+        "readiness_counts": dict(readiness_counts),
+        "user_visible_reason_counts": dict(user_visible_reason_counts),
+        "debug_reason_counts": dict(debug_reason_counts),
         "candidates": candidate_summaries,
     }
 
