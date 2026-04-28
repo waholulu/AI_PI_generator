@@ -1,0 +1,80 @@
+# Seven-gate configuration for Module 1 upgrade
+# type: hard_blocker → immediate REJECTED, no LLM refine
+# type: refinable    → LLM may refine up to max_rounds
+
+gates:
+  - id: G1
+    name: mechanism_plausibility
+    type: refinable
+    judge: llm
+    threshold: 4
+    max_score: 5
+    description: >
+      LLM assesses whether a plausible causal mechanism links exposure X
+      to outcome Y in the stated geographic and demographic context.
+
+  - id: G2
+    name: scale_alignment
+    type: hard_blocker
+    judge: rule_engine
+    description: >
+      Rule engine checks that X spatial_unit and Y spatial_unit have
+      granularity_rank difference <= 4 (from spatial_units.yaml).
+    max_rank_diff: 4
+
+  - id: G3
+    name: data_availability
+    type: hard_blocker
+    judge: rule_engine
+    description: >
+      Rule engine verifies declared_sources exist in data_sources.yaml,
+      coverage_years span the temporal scope, and spatial_units match.
+      auth_required is a warning only, not a blocker.
+
+  - id: G4
+    name: identification_validity
+    type: refinable
+    judge: rule_engine_and_llm
+    threshold: 4
+    max_score: 5
+    coverage_threshold: 0.80
+    description: >
+      Rule engine checks mitigations cover >= 80% of key_threats.
+      LLM then scores substantive validity of the identification strategy.
+
+  - id: G5
+    name: novelty
+    type: refinable
+    judge: openalex_verifier_and_llm
+    threshold: 3
+    max_score: 5
+    description: >
+      OpenAlex four-tuple match count feeds into LLM novelty scoring.
+      High four-tuple match count → lower novelty score.
+
+  - id: G6
+    name: automation_feasibility
+    type: hard_blocker
+    judge: rule_engine
+    description: >
+      Rule engine checks all skills_required (inferred from data_sources +
+      identification.primary) are present with status=="available" in
+      skill_registry.yaml.
+
+  - id: G7
+    name: contribution_clarity
+    type: refinable
+    judge: llm
+    threshold: 4
+    max_score: 5
+    description: >
+      LLM assesses whether the contribution statement clearly articulates
+      the gap addressed and the incremental value over existing literature.
+
+decision_rules:
+  # Priority order (highest first)
+  hard_blocker_fail: REJECTED        # any G2/G3/G6 fail
+  all_refinable_pass: ACCEPTED       # all G1/G4/G5/G7 pass
+  one_or_two_refinable_fail: REFINE  # 1-2 refinable fail → next round
+  three_or_more_refinable_fail: TENTATIVE  # >=3 refinable fail → human review
+  max_rounds_reached: TENTATIVE      # still not ACCEPTED after max_rounds

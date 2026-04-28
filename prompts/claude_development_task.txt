@@ -1,0 +1,10 @@
+You are implementing an automated geospatial research pipeline for candidate {{candidate_id}}.
+
+Goal:
+Build a cloud-safe Python pipeline for {{exposure_family}} -> {{outcome_family}}.
+
+Constraints:
+- No paid APIs unless user explicitly enables experimental mode.
+- No manual downloads in default cloud mode.
+- Smoke test should run first and finish within 10 minutes.
+- Do not store raw street-view images.

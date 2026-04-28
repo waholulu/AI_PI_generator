@@ -1,0 +1,23 @@
+════════════════════════════════════════════════════════════════════
+ AUTO-PI  |  Level 1 Human Review Required
+════════════════════════════════════════════════════════════════════
+
+Topic   : {topic_title}
+Topic ID: {topic_id}
+Status  : {status}
+
+{failed_gates_section}
+{suggested_ops_section}
+{diff_section}
+────────────────────────────────────────────────────────────────────
+ Options
+────────────────────────────────────────────────────────────────────
+  [1]  Edit the topic YAML and re-run:
+         python main.py --mode level_1 --user-topic {topic_path}
+
+  [2]  Switch to Level 2 auto-generation (domain text → 30 seeds):
+         python main.py --mode level_2 --domain "{domain}"
+
+  [3]  Abort this run.
+
+════════════════════════════════════════════════════════════════════

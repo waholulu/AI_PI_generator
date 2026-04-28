@@ -40,7 +40,7 @@ def test_fallback_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_fallback_when_llm_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    """If the LLM call itself raises, the planner must return a fallback gracefully."""
+    """If the LLM call itself raises, the planner propagates RuntimeError."""
     monkeypatch.setenv("OPENALEX_QUERY_REWRITE_ENABLED", "true")
 
     planner = KeywordPlanner.__new__(KeywordPlanner)
@@ -51,10 +51,8 @@ def test_fallback_when_llm_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     broken_llm.with_structured_output.return_value.invoke.side_effect = RuntimeError("API error")
     planner._llm = broken_llm
 
-    result = planner.plan("GeoAI and health")
-
-    assert result["used_fallback"] is True
-    assert "GeoAI and health" in result["query_pool"]
+    with pytest.raises(RuntimeError, match="KeywordPlanner failed"):
+        planner.plan("GeoAI and health")
 
 
 # ---------------------------------------------------------------------------

@@ -10,6 +10,24 @@ from pydantic import BaseModel, Field, model_validator
 class StartRunRequest(BaseModel):
     domain_input: str = Field(..., description="Research domain description, e.g. 'GeoAI and Urban Planning'")
     thread_id: Optional[str] = Field(None, description="Optional thread ID for checkpointing/resume. Auto-generated if not provided.")
+    template_id: Optional[str] = Field(
+        default=None, description="Optional research template id, e.g. 'built_environment_health'."
+    )
+    technology_options: Optional[dict[str, bool]] = Field(
+        default=None, description="Per-run technology feature toggles."
+    )
+    automation_risk_tolerance: str = Field(
+        default="low_medium", description="One of low_only | low_medium | experimental."
+    )
+    cloud_constraints: Optional[dict[str, bool]] = Field(
+        default=None, description="Cloud runtime constraints such as no_paid_api/no_gpu."
+    )
+    enable_experimental: bool = Field(
+        default=False, description="Whether to allow experimental high-risk candidate generation."
+    )
+    max_candidates: int = Field(
+        default=40, ge=1, le=200, description="Maximum candidates to generate (default 40)."
+    )
 
 
 class RunStatus(BaseModel):
@@ -95,3 +113,44 @@ class Milestone(BaseModel):
     ts: str
     event: str    # pipeline_started | node_completed | hitl_paused | approved | completed | failed
     detail: str
+
+
+class TechnologyOptions(BaseModel):
+    osmnx: bool = True
+    remote_sensing: bool = True
+    streetview_cv: bool = False
+    deep_learning: bool = False
+
+
+class CloudConstraints(BaseModel):
+    no_paid_api: bool = True
+    no_raw_image_storage: bool = True
+    no_manual_download: bool = True
+    no_gpu: bool = True
+
+
+class CandidateCard(BaseModel):
+    candidate_id: str
+    title: str
+    research_question: str
+    exposure_label: str
+    exposure_source: str
+    outcome_label: str
+    outcome_source: str
+    unit_of_analysis: str
+    method: str
+    claim_strength: str
+    technology_tags: list[str] = Field(default_factory=list)
+    required_secrets: list[str] = Field(default_factory=list)
+    automation_risk: str = "low"
+    scores: dict[str, float] = Field(default_factory=dict)
+    gate_status: dict[str, Any] = Field(default_factory=dict)
+    repair_history: list[dict[str, Any]] = Field(default_factory=list)
+    development_pack_status: str = "not_generated"
+
+
+class DevelopmentPackFile(BaseModel):
+    filename: str
+    file_type: str
+    preview_text: str | None = None
+    download_url: str
