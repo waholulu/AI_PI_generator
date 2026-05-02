@@ -1,5 +1,5 @@
 {
-  "run_id": "20260428T114645Z-67f239",
+  "run_id": "20260502T204546Z-25cf98",
   "project_title": "GeoAI and Urban Planning: Street Connectivity and Physical Inactivity",
   "research_question": "Are more connected street networks associated with lower physical inactivity?",
   "short_rationale": "Fallback deterministic candidate when ideation LLM is unavailable.",
@@ -77,9 +77,9 @@
     {
       "name": "CDC_PLACES",
       "role": "outcome",
-      "source_type": "download",
-      "access_url": "https://www.cdc.gov/places/tools/data-portal.html",
-      "documentation_url": "",
+      "source_type": "api",
+      "access_url": "https://data.cdc.gov/resource/cwsq-ngmh.csv",
+      "documentation_url": "https://www.cdc.gov/places/about/index.html",
       "license": "",
       "expected_format": "csv_api_gis",
       "access_notes": "",
@@ -87,31 +87,26 @@
       "auth_required": false,
       "cost_required": false,
       "covers_variable_families": [
+        "physical_inactivity",
         "obesity",
         "diabetes",
-        "physical_inactivity",
         "asthma",
         "poor_mental_health",
         "poor_physical_health",
         "cardiovascular_disease"
       ],
       "spatial_units": [
-        "county",
-        "place",
-        "tract",
-        "zcta"
+        "census_tract"
       ],
-      "join_keys": [
-        "GEOID"
-      ],
+      "join_keys": [],
       "technology_tags": []
     },
     {
       "name": "ACS",
       "role": "control",
-      "source_type": "download",
-      "access_url": "",
-      "documentation_url": "",
+      "source_type": "api",
+      "access_url": "https://api.census.gov/data",
+      "documentation_url": "https://www.census.gov/programs-surveys/acs",
       "license": "",
       "expected_format": "csv_api",
       "access_notes": "",
@@ -119,25 +114,21 @@
       "auth_required": false,
       "cost_required": false,
       "covers_variable_families": [
-        "socioeconomic_controls"
+        "socioeconomic_controls",
+        "population_weights"
       ],
       "spatial_units": [
-        "tract",
-        "county",
-        "place",
-        "zcta"
+        "census_tract"
       ],
-      "join_keys": [
-        "GEOID"
-      ],
+      "join_keys": [],
       "technology_tags": []
     },
     {
       "name": "TIGER_Lines",
       "role": "control",
       "source_type": "download",
-      "access_url": "",
-      "documentation_url": "",
+      "access_url": "https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.html",
+      "documentation_url": "https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.html",
       "license": "",
       "expected_format": "shapefile",
       "access_notes": "",
@@ -148,14 +139,9 @@
         "boundaries"
       ],
       "spatial_units": [
-        "tract",
-        "county",
-        "place",
-        "zcta"
+        "census_tract"
       ],
-      "join_keys": [
-        "GEOID"
-      ],
+      "join_keys": [],
       "technology_tags": []
     }
   ],
