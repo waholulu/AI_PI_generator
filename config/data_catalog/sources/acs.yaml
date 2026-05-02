@@ -121,7 +121,7 @@ join_recipes:
     left_source: ACS
     right_source: EPA_Smart_Location_Database
     left_key: GEOID
-    right_key: GEOID10_trunc
+    right_key: GEOID10_truncated
     join_type: left
     notes: >
       Pull ACS block group population (B01003_001E) to serve as weights

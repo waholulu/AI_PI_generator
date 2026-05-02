@@ -187,7 +187,7 @@ validation_rules:
   - rule_id: no_water_only_bgs
     description: Exclude block groups with ALAND == 0 (water-only)
     severity: warning
-  - rule_id: walkind_range
+  - rule_id: natwalkind_range
     description: NatWalkInd should be between 1 and 20
     severity: warning
 

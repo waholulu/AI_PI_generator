@@ -185,3 +185,87 @@ def test_has_variable_mapping_negative():
     assert registry.has_variable_mapping("EPA_Smart_Location_Database", "nonexistent_family") is False
     # OSMnx has no data catalog profile → no variable mapping
     assert registry.has_variable_mapping("OSMnx_OpenStreetMap", "street_connectivity") is False
+
+
+def test_spatial_units_flat_contains_only_native_unit():
+    """The flat spatial_units field must contain only the native unit, not all target units.
+
+    This preserves legacy behaviour: _check_aggregation uses spatial_units to
+    determine the native grain, and must see only the native grain there.
+    Full target list is exposed via get_target_units().
+    """
+    registry = SourceRegistry.load()
+    spec = registry.get("EPA_Smart_Location_Database")
+    assert spec is not None
+    # Flat field: native only
+    assert spec["spatial_units"] == ["census_block_group"]
+    assert "census_tract" not in spec["spatial_units"]
+    assert "county" not in spec["spatial_units"]
+    # get_target_units includes census_tract
+    targets = registry.get_target_units("EPA_Smart_Location_Database")
+    assert "census_tract" in targets
+
+    # Same for EPA Walkability
+    spec_walk = registry.get("EPA_National_Walkability_Index")
+    assert spec_walk["spatial_units"] == ["census_block_group"]
+    targets_walk = registry.get_target_units("EPA_National_Walkability_Index")
+    assert "census_tract" in targets_walk
+
+
+def test_lodes_rac_wac_have_distinct_join_keys():
+    """RAC uses h_geocode (home), WAC uses w_geocode (workplace) — not interchangeable."""
+    registry = SourceRegistry.load()
+    profile = registry.get_profile("Census_LEHD_LODES")
+    assert profile is not None
+    rac = next((t for t in profile.tables if t.table_id == "RAC"), None)
+    wac = next((t for t in profile.tables if t.table_id == "WAC"), None)
+    assert rac is not None
+    assert wac is not None
+    assert rac.join_key == "h_geocode"
+    assert wac.join_key == "w_geocode"
+    assert rac.join_key != wac.join_key
+
+
+def test_epa_sld_validation_rule_ids_consistent():
+    """Validation rule IDs in EPA SLD use same naming as EPA Walkability (natwalkind_range)."""
+    registry = SourceRegistry.load()
+    sld_profile = registry.get_profile("EPA_Smart_Location_Database")
+    walk_profile = registry.get_profile("EPA_National_Walkability_Index")
+    assert sld_profile is not None and walk_profile is not None
+
+    sld_rule_ids = {r.rule_id for r in sld_profile.validation_rules}
+    walk_rule_ids = {r.rule_id for r in walk_profile.validation_rules}
+
+    # Both should have natwalkind_range (not walkind_range typo)
+    assert "natwalkind_range" in sld_rule_ids, (
+        f"Expected 'natwalkind_range' in EPA SLD rules, found: {sld_rule_ids}"
+    )
+    assert "natwalkind_range" in walk_rule_ids
+
+    # The typo must NOT be present
+    assert "walkind_range" not in sld_rule_ids
+
+
+def test_acs_join_recipe_key_naming_consistent_with_tiger():
+    """ACS and TIGER join recipes use same GEOID10_truncated naming convention."""
+    registry = SourceRegistry.load()
+    acs_profile = registry.get_profile("ACS")
+    tiger_profile = registry.get_profile("TIGER_Lines")
+    assert acs_profile is not None and tiger_profile is not None
+
+    # ACS recipe for SLD weighting uses GEOID10_truncated
+    sld_recipe = next(
+        (r for r in acs_profile.join_recipes if "sld" in r.recipe_id.lower()),
+        None,
+    )
+    # TIGER recipe that does truncation
+    tiger_recipe = next(
+        (r for r in tiger_profile.join_recipes if "truncat" in r.notes.lower()),
+        None,
+    )
+
+    if sld_recipe and tiger_recipe:
+        # Both must use "truncated" not "trunc"
+        assert "trunc" not in sld_recipe.right_key.replace("truncated", ""), (
+            f"ACS recipe right_key uses 'trunc' abbreviation: {sld_recipe.right_key}"
+        )
