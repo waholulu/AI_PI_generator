@@ -1,0 +1,199 @@
+source_id: EPA_Smart_Location_Database
+canonical_name: EPA Smart Location Database
+aliases:
+  - SLD
+  - EPA SLD
+
+# ── Backward-compatible flat fields ─────────────────────────────────────────
+roles:
+  - exposure
+  - control
+tier: stable
+cloud_safe: true
+machine_readable: true
+source_type: download
+expected_format: zip_csv
+auth_required: false
+cost_required: false
+access_url: https://www.epa.gov/smartgrowth/smart-location-mapping
+documentation_url: https://www.epa.gov/smartgrowth/smart-location-mapping
+coverage_year_min: 2021
+coverage_year_max: 2021
+spatial_units:
+  - block_group
+  - census_tract
+  - county
+
+# ── Enhanced data catalog fields ─────────────────────────────────────────────
+acquisition:
+  method: download
+  url: https://www.epa.gov/smartgrowth/smart-location-mapping
+  documentation_url: https://www.epa.gov/smartgrowth/smart-location-mapping
+  expected_format: zip_csv
+  auth_required: false
+  cost_required: false
+  expected_files:
+    - data/raw/epa_sld.csv
+  notes: >
+    Download SmartLocationDatabaseV3.zip from EPA website.
+    Contains one row per census block group (GEOID10 = 12-digit FIPS).
+
+geography:
+  native_unit: census_block_group
+  target_units_supported:
+    - census_tract
+    - county
+  aggregation_required: true
+  default_aggregation: population_weighted_mean
+  join_keys:
+    - GEOID10
+  coverage: nationwide
+
+temporal_coverage:
+  coverage_year_min: 2021
+  coverage_year_max: 2021
+  release_lag_years: 2.0
+  update_frequency: periodic
+  cross_sectional_only: true
+  notes: >
+    Single-year snapshot built on 2019 ACS + 2021 GTFS.
+    Do not use for longitudinal/panel analysis.
+    For studies spanning 2016-2024, restrict to 2021 cross-sectional design
+    or justify static-exposure assumption explicitly.
+
+variable_families:
+  density:
+    family_id: density
+    description: Residential and employment density measures
+    variables:
+      - name: D1A
+        description: Gross residential density (HU/acre) on unprotected land
+        unit: HU/acre
+        dtype: float
+      - name: D1B
+        description: Gross population density (people/acre) on unprotected land
+        unit: people/acre
+        dtype: float
+      - name: D1C
+        description: Gross employment density (jobs/acre) on unprotected land
+        unit: jobs/acre
+        dtype: float
+    aggregation_allowed_to:
+      - tract
+      - county
+
+  land_use_mix:
+    family_id: land_use_mix
+    description: Jobs-housing balance and land-use entropy
+    variables:
+      - name: D2A_JPHH
+        description: Jobs per household
+        unit: ratio
+        dtype: float
+      - name: D2B_E5MIX
+        description: Employment entropy (5-tier mix)
+        unit: index_0_to_1
+        dtype: float
+      - name: D2A_EPHHM
+        description: Employment and household entropy
+        unit: index
+        dtype: float
+    aggregation_allowed_to:
+      - tract
+      - county
+
+  destination_accessibility:
+    family_id: destination_accessibility
+    description: Access to employment and services by walk, auto, and transit
+    variables:
+      - name: D5ar
+        description: Jobs accessible within 45 min by auto (weighted)
+        unit: count
+        dtype: float
+      - name: D5br
+        description: Jobs accessible within 45 min by transit (weighted)
+        unit: count
+        dtype: float
+      - name: D5ce
+        description: Jobs accessible within 45 min by walk (weighted)
+        unit: count
+        dtype: float
+    aggregation_allowed_to:
+      - tract
+      - county
+
+  transit_access:
+    family_id: transit_access
+    description: Proximity and frequency of transit service
+    variables:
+      - name: D4A
+        description: Distance (meters) from block group centroid to nearest transit stop
+        unit: meters
+        dtype: float
+      - name: D4C
+        description: Aggregate frequency of transit service within 0.25 miles per hour
+        unit: trips/hr
+        dtype: float
+    aggregation_allowed_to:
+      - tract
+      - county
+
+  street_design:
+    family_id: street_design
+    description: Intersection density and pedestrian-oriented street design
+    variables:
+      - name: D3B
+        description: Street intersection density (intersections per square mile)
+        unit: intersections/sq_mile
+        dtype: float
+      - name: D3A
+        description: Total road network density (miles per square mile)
+        unit: miles/sq_mile
+        dtype: float
+    aggregation_allowed_to:
+      - tract
+      - county
+
+join_recipes:
+  - recipe_id: sld_bg_to_tract_popwt
+    left_source: EPA_Smart_Location_Database
+    right_source: ACS
+    left_key: GEOID10
+    right_key: GEOID_BG
+    join_type: left
+    notes: >
+      Aggregate 12-digit block group GEOID10 to 11-digit tract GEOID11
+      using ACS block group population as weights.
+      Weighted mean: sum(value_i * pop_i) / sum(pop_i) per tract.
+      Required columns from ACS: B01003_001E (total population) at block group level.
+    warnings:
+      - GEOID10 is 12 digits; GEOID11 (tract) is 11 digits — do not confuse
+      - Water-only block groups (ALAND=0) should be excluded before aggregation
+
+  - recipe_id: sld_bg_to_county_popwt
+    left_source: EPA_Smart_Location_Database
+    right_source: ACS
+    left_key: GEOID10
+    right_key: GEOID_BG
+    join_type: left
+    notes: >
+      Aggregate block groups to county (5-digit GEOID) using population weights.
+    warnings: []
+
+validation_rules:
+  - rule_id: geoid10_is_12_digits
+    description: GEOID10 must be a 12-character string (state+county+tract+bg)
+    severity: error
+  - rule_id: no_water_only_bgs
+    description: Exclude block groups with ALAND == 0 (water-only)
+    severity: warning
+  - rule_id: walkind_range
+    description: NatWalkInd should be between 1 and 20
+    severity: warning
+
+known_limitations:
+  - "Single year (2021) only — do not use for pre-2021 longitudinal analysis"
+  - "Block group native resolution requires aggregation before tract-level analysis"
+  - "Some block groups have suppressed or missing data in low-population areas"
+  - "NatWalkInd is a composite index; decompose into D-variables for mechanistic claims"
+  - "Transit access variables (D4) depend on GTFS data availability by metro area"

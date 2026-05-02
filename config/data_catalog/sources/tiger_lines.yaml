@@ -1,0 +1,135 @@
+source_id: TIGER_Lines
+canonical_name: TIGER/Line
+aliases:
+  - TIGER/Line
+  - TIGER
+
+# ── Backward-compatible flat fields ─────────────────────────────────────────
+roles:
+  - boundary
+  - control
+tier: stable
+cloud_safe: true
+machine_readable: true
+source_type: download
+expected_format: shapefile
+auth_required: false
+cost_required: false
+access_url: https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.html
+documentation_url: https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.html
+coverage_year_min: 2010
+coverage_year_max: 2023
+spatial_units:
+  - census_tract
+  - county
+  - place
+  - zcta
+  - census_block_group
+
+# ── Enhanced data catalog fields ─────────────────────────────────────────────
+acquisition:
+  method: download
+  url: https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.html
+  documentation_url: https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.html
+  expected_format: shapefile
+  auth_required: false
+  cost_required: false
+  expected_files:
+    - data/raw/tiger_tracts.geojson
+  notes: >
+    Download from Census TIGER/Line FTP or use pygris Python package.
+    Tract boundary files: tl_{year}_us_tract.zip (national) or
+    tl_{year}_{state_fips}_tract.zip (state-level).
+    Convert to GeoJSON/GeoParquet for downstream use.
+
+geography:
+  native_unit: census_tract
+  target_units_supported:
+    - census_tract
+    - county
+    - place
+    - zcta
+    - census_block_group
+  aggregation_required: false
+  default_aggregation: ""
+  join_keys:
+    - GEOID
+    - GEOID10
+    - GEOID20
+  coverage: nationwide
+
+temporal_coverage:
+  coverage_year_min: 2010
+  coverage_year_max: 2023
+  release_lag_years: 0.5
+  update_frequency: annual
+  cross_sectional_only: false
+  notes: >
+    Annual vintage files available. Census 2010 vs 2020 tract boundaries differ.
+    Match TIGER vintage to the ACS year used for analysis.
+    Post-2020, tracts use GEOID20 (11-digit); pre-2020 use GEOID10.
+
+variable_families:
+  boundaries:
+    family_id: boundaries
+    description: Census geographic boundary polygons
+    variables:
+      - name: geometry
+        description: Polygon geometry for the geographic unit
+        unit: WGS84
+        dtype: geometry
+      - name: GEOID
+        description: 11-digit FIPS code for census tract
+        unit: string
+        dtype: str
+      - name: ALAND
+        description: Land area in square meters
+        unit: sq_meters
+        dtype: int
+      - name: AWATER
+        description: Water area in square meters
+        unit: sq_meters
+        dtype: int
+    aggregation_allowed_to: []
+
+join_recipes:
+  - recipe_id: tiger_as_spatial_backbone
+    left_source: TIGER_Lines
+    right_source: ACS
+    left_key: GEOID
+    right_key: GEOID
+    join_type: left
+    notes: >
+      TIGER provides the spatial backbone for all tabular joins.
+      Join all tabular sources (CDC PLACES, ACS, EPA SLD aggregated) to
+      TIGER tract polygons on 11-digit GEOID.
+    warnings:
+      - Verify that GEOID string formats match (strip leading zeros if needed)
+
+  - recipe_id: tiger_tract_spatial_join
+    left_source: TIGER_Lines
+    right_source: EPA_Smart_Location_Database
+    left_key: GEOID
+    right_key: GEOID10_truncated
+    join_type: left
+    notes: >
+      After aggregating EPA SLD block groups to tract, join to TIGER on
+      first 11 chars of GEOID10 (i.e., GEOID10[:11] == TIGER GEOID).
+    warnings:
+      - GEOID10 is 12-char block group FIPS; truncate to 11 for tract match
+
+validation_rules:
+  - rule_id: geoid_length_check
+    description: Tract GEOID must be exactly 11 characters
+    severity: error
+  - rule_id: exclude_water_tracts
+    description: For analysis excluding water bodies, filter ALAND > 0
+    severity: warning
+  - rule_id: crs_must_be_wgs84
+    description: Reproject to EPSG:4326 before joining to tabular data
+    severity: warning
+
+known_limitations:
+  - "Tract boundaries change between decennial census years (2010 vs 2020)"
+  - "Match TIGER vintage to ACS vintage to avoid GEOID mismatch"
+  - "Some coastal tracts include large water areas that inflate area-based metrics"

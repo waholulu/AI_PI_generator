@@ -17,9 +17,15 @@ Subchecks run in order:
   role_coverage              — exposure source has "exposure" role; outcome has "outcome"
   machine_readable           — all declared sources are machine-readable
   spatial_join_path          — a boundary/join source is available; warns if aggregation needed
-  time_overlap               — source coverage years overlap the plan's time window
+  time_overlap               — source coverage_year_min/max overlaps the plan's time window
   cloud_automation_feasibility — no experimental sources with auth/cost requirements
   identification_threats     — key_threats non-empty and mitigations cover ≥ 80 %
+  variable_mapping_exists    — exposure source has concrete variables for the exposure family
+  native_grain_known         — native spatial unit of exposure source is declared
+  target_grain_reachable     — target analysis unit is reachable from native grain
+  join_recipe_exists         — a join recipe exists when aggregation is required
+  aggregation_method_defined — aggregation method declared when aggregation is required
+  time_cross_sectional_justified — warns when single-year source is used in multi-year plan
 
 Overall verdict:
   pass    → all subchecks pass   → shortlist_status = "ready"
@@ -34,6 +40,8 @@ from agents.source_registry import SourceRegistry
 from models.candidate_composer_schema import ComposedCandidate
 
 logger = get_logger(__name__)
+
+_PLAN_START, _PLAN_END = 2016, 2024
 
 
 def _normalize_unit(unit: str) -> str:
@@ -51,8 +59,6 @@ def _check_aggregation(
     indicates it has data at a fixed spatial resolution (e.g., block_group).
     Sources without this field (e.g., OSMnx, TIGER) are queryable at any scale.
     """
-    # aggregation_allowed_to may appear at the top level of the spec or nested
-    # inside variable_families.<family_name> (as in source_capabilities.yaml).
     agg_allowed_raw: list[str] = exp_spec.get("aggregation_allowed_to", [])
     if not agg_allowed_raw:
         vf = exp_spec.get("variable_families") or {}
@@ -120,9 +126,6 @@ def precheck_candidate(candidate: ComposedCandidate) -> dict:
     out_spec = registry.sources.get(out_sid, {}) if out_sid else {}
 
     # ── 2. role_coverage ─────────────────────────────────────────────────────
-    # Checks that the exposure source carries the "exposure" role and the
-    # outcome source carries the "outcome" role. Family names are template
-    # concepts and may diverge from registry keys, so only roles are checked.
     role_fails = []
     if not ("exposure" in exp_spec.get("roles", [])):
         role_fails.append("missing_exposure_role_source")
@@ -154,7 +157,6 @@ def precheck_candidate(candidate: ComposedCandidate) -> dict:
     boundary_specs = [registry.sources.get(sid, {}) for sid in boundary_sids if sid]
 
     has_explicit_boundary = any("boundary" in s.get("roles", []) for s in boundary_specs)
-    # CDC_PLACES, ACS, and TIGER carry built-in geographic keys usable as join anchors
     implicit_anchor_sids = {"TIGER_Lines", "ACS", "CDC_PLACES"}
     has_implicit_boundary = any(
         sid in implicit_anchor_sids
@@ -173,15 +175,12 @@ def precheck_candidate(candidate: ComposedCandidate) -> dict:
         repairs.extend(agg_repairs)
 
     # ── 5. time_overlap ──────────────────────────────────────────────────────
-    # Warn when the source's declared coverage years don't include the template
-    # default time window (2016-2024).  This is a soft warning — many sources
-    # cover longer windows than listed in the registry.
-    exp_start = exp_spec.get("coverage_start_year")
-    exp_end = exp_spec.get("coverage_end_year")
-    PLAN_START, PLAN_END = 2016, 2024
-    if exp_start and exp_end:
+    # Uses coverage_year_min / coverage_year_max (correct field names from registry).
+    exp_yr_min = exp_spec.get("coverage_year_min")
+    exp_yr_max = exp_spec.get("coverage_year_max")
+    if exp_yr_min and exp_yr_max:
         try:
-            if int(exp_end) < PLAN_START or int(exp_start) > PLAN_END:
+            if int(exp_yr_max) < _PLAN_START or int(exp_yr_min) > _PLAN_END:
                 subchecks["time_overlap"] = "warning"
                 reasons.append("time_overlap_insufficient")
             else:
@@ -213,7 +212,7 @@ def precheck_candidate(candidate: ComposedCandidate) -> dict:
     else:
         subchecks["cloud_automation_feasibility"] = "pass"
 
-    # ── 6. identification_threats ─────────────────────────────────────────────
+    # ── 7. identification_threats ─────────────────────────────────────────────
     threats = candidate.key_threats
     mitigations = candidate.mitigations
     if not threats:
@@ -227,6 +226,101 @@ def precheck_candidate(candidate: ComposedCandidate) -> dict:
         else:
             subchecks["identification_threats"] = "warning"
             reasons.append(f"threat_mitigation_coverage_low:{ratio:.0%}")
+
+    # ── 8–13. Implementation-level checks (data catalog required) ────────────
+    # These checks only fire when the exposure source has a rich data catalog
+    # profile. Sources without a profile (e.g. OSMnx) pass by default so that
+    # legacy candidates are not penalised before their profiles are authored.
+
+    exp_profile = registry.get_profile(exp_source) if exp_sid else None
+    target_unit_norm = _normalize_unit(candidate.unit_of_analysis)
+
+    # ── 8. variable_mapping_exists ────────────────────────────────────────────
+    if exp_profile is not None:
+        has_mapping = exp_profile.has_variable_mapping_for(candidate.exposure_family)
+        if not has_mapping:
+            subchecks["variable_mapping_exists"] = "warning"
+            reasons.append(f"no_variable_mapping_for_{candidate.exposure_family}")
+            repairs.append("add_variable_mapping_to_data_catalog")
+        else:
+            subchecks["variable_mapping_exists"] = "pass"
+    else:
+        subchecks["variable_mapping_exists"] = "pass"
+
+    # ── 9. native_grain_known ─────────────────────────────────────────────────
+    if exp_profile is not None and exp_profile.geography is not None:
+        native = exp_profile.geography.native_unit
+        if not native or native == "unknown":
+            subchecks["native_grain_known"] = "warning"
+            reasons.append("unknown_native_grain")
+        else:
+            subchecks["native_grain_known"] = "pass"
+    else:
+        subchecks["native_grain_known"] = "pass"
+
+    # ── 10. target_grain_reachable ────────────────────────────────────────────
+    if exp_profile is not None and exp_profile.geography is not None:
+        geo = exp_profile.geography
+        native_norm = _normalize_unit(geo.native_unit)
+        target_units_norm = [_normalize_unit(u) for u in geo.target_units_supported]
+        if target_unit_norm == native_norm or target_unit_norm in target_units_norm:
+            subchecks["target_grain_reachable"] = "pass"
+        else:
+            subchecks["target_grain_reachable"] = "warning"
+            reasons.append(
+                f"target_grain_not_reachable:{geo.native_unit}_to_{candidate.unit_of_analysis}"
+            )
+            repairs.append("add_target_grain_to_source_profile")
+    else:
+        subchecks["target_grain_reachable"] = "pass"
+
+    # ── 11. join_recipe_exists ────────────────────────────────────────────────
+    if exp_profile is not None and exp_profile.geography is not None:
+        agg_req = exp_profile.geography.aggregation_required
+        if agg_req:
+            has_recipe = bool(exp_profile.join_recipes)
+            if not has_recipe:
+                subchecks["join_recipe_exists"] = "fail"
+                reasons.append("missing_join_recipe")
+                repairs.append("add_join_recipe_to_data_catalog")
+            else:
+                subchecks["join_recipe_exists"] = "pass"
+        else:
+            subchecks["join_recipe_exists"] = "pass"
+    else:
+        subchecks["join_recipe_exists"] = "pass"
+
+    # ── 12. aggregation_method_defined ────────────────────────────────────────
+    if exp_profile is not None and exp_profile.geography is not None:
+        agg_req = exp_profile.geography.aggregation_required
+        if agg_req:
+            method = exp_profile.geography.default_aggregation
+            if not method:
+                subchecks["aggregation_method_defined"] = "fail"
+                reasons.append("missing_aggregation_method")
+                repairs.append("add_aggregation_method_to_data_catalog")
+            else:
+                subchecks["aggregation_method_defined"] = "pass"
+        else:
+            subchecks["aggregation_method_defined"] = "pass"
+    else:
+        subchecks["aggregation_method_defined"] = "pass"
+
+    # ── 13. time_cross_sectional_justified ────────────────────────────────────
+    if exp_profile is not None and exp_profile.temporal_coverage is not None:
+        tc = exp_profile.temporal_coverage
+        is_single_year = (tc.coverage_year_min == tc.coverage_year_max) or tc.cross_sectional_only
+        if is_single_year and (tc.coverage_year_min < _PLAN_START or tc.coverage_year_max < _PLAN_END):
+            subchecks["time_cross_sectional_justified"] = "warning"
+            reasons.append(
+                f"single_year_source_{tc.coverage_year_min}_used_in_panel_window_"
+                f"{_PLAN_START}_{_PLAN_END}:restrict_to_cross_sectional"
+            )
+            repairs.append("change_design_to_cross_sectional_or_justify_static_exposure")
+        else:
+            subchecks["time_cross_sectional_justified"] = "pass"
+    else:
+        subchecks["time_cross_sectional_justified"] = "pass"
 
     # ── Overall verdict ───────────────────────────────────────────────────────
     has_fail = any(v == "fail" for v in subchecks.values())

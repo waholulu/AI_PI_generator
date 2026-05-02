@@ -1,0 +1,204 @@
+source_id: Census_LEHD_LODES
+canonical_name: Census LEHD LODES
+aliases:
+  - LODES
+  - LEHD LODES
+  - Longitudinal Employer-Household Dynamics Origin-Destination Employment Statistics
+
+# ── Backward-compatible flat fields ─────────────────────────────────────────
+roles:
+  - exposure
+  - control
+tier: stable
+cloud_safe: true
+machine_readable: true
+source_type: download
+expected_format: csv_zip
+auth_required: false
+cost_required: false
+access_url: https://lehd.ces.census.gov/data/
+documentation_url: https://lehd.ces.census.gov/data/lodes/LODES8/
+coverage_year_min: 2002
+coverage_year_max: 2021
+spatial_units:
+  - census_block
+  - census_tract
+  - county
+
+# ── Enhanced data catalog fields ─────────────────────────────────────────────
+acquisition:
+  method: download
+  url: https://lehd.ces.census.gov/data/lodes/LODES8/
+  documentation_url: https://lehd.ces.census.gov/data/lodes/LODES8/
+  expected_format: csv_zip
+  auth_required: false
+  cost_required: false
+  expected_files:
+    - data/raw/lodes_od_main.csv
+    - data/raw/lodes_rac.csv
+    - data/raw/lodes_wac.csv
+    - data/raw/lodes_xwalk.csv
+  notes: >
+    Download per-state files from LEHD LODES portal.
+    File naming: {state}_od_main_JT00_{year}.csv.gz (Origin-Destination),
+    {state}_rac_S000_JT00_{year}.csv.gz (Residence Area Characteristics),
+    {state}_wac_S000_JT00_{year}.csv.gz (Workplace Area Characteristics),
+    {state}_xwalk.csv.gz (geographic crosswalk).
+    CRITICAL: OD files come in two parts — main (within-state) and aux
+    (out-of-state commuters). Both must be downloaded and concatenated for
+    complete origin-destination data.
+
+geography:
+  native_unit: census_block
+  target_units_supported:
+    - census_tract
+    - county
+  aggregation_required: true
+  default_aggregation: sum
+  join_keys:
+    - w_geocode
+    - h_geocode
+  coverage: nationwide
+
+temporal_coverage:
+  coverage_year_min: 2002
+  coverage_year_max: 2021
+  release_lag_years: 2.0
+  update_frequency: annual
+  cross_sectional_only: false
+  notes: >
+    Annual files available by state. Most recent release (2021) has 2-year lag.
+    Panel analysis is feasible; note that block geography changes over time.
+
+tables:
+  - table_id: OD
+    description: Origin-Destination Employment Statistics — jobs by home and work block
+    join_key: ""
+    special_join_keys:
+      home_geocode: h_geocode
+      workplace_geocode: w_geocode
+    warnings:
+      - h_geocode and w_geocode are census BLOCK GEOIDs (15 digits), NOT tract GEOIDs
+      - do_not_treat_h_geocode_and_w_geocode_as_generic_GEOID
+      - OD main and auxiliary files must be concatenated for complete data
+      - Auxiliary file covers out-of-state workers; omitting it undercounts commuters
+
+  - table_id: RAC
+    description: Residence Area Characteristics — jobs by home census block
+    join_key: h_geocode
+    special_join_keys:
+      home_geocode: h_geocode
+    warnings:
+      - h_geocode is a 15-digit block GEOID; must crosswalk to tract before analysis
+
+  - table_id: WAC
+    description: Workplace Area Characteristics — jobs by workplace census block
+    join_key: w_geocode
+    special_join_keys:
+      workplace_geocode: w_geocode
+    warnings:
+      - w_geocode is a 15-digit block GEOID; must crosswalk to tract before analysis
+
+  - table_id: XWALK
+    description: Geographic crosswalk — maps census blocks to tracts, counties, MSAs
+    join_key: tabblk2020
+    special_join_keys:
+      block_geoid: tabblk2020
+      tract_geoid: trct
+      county_geoid: cty
+    warnings: []
+
+variable_families:
+  jobs_accessibility:
+    family_id: jobs_accessibility
+    description: Employment accessibility measures derived from OD flows
+    variables:
+      - name: S000
+        description: Total number of jobs
+        unit: count
+        dtype: int
+      - name: SA01
+        description: Jobs for workers age 29 or younger
+        unit: count
+        dtype: int
+      - name: SA02
+        description: Jobs for workers age 30 to 54
+        unit: count
+        dtype: int
+      - name: SE01
+        description: Jobs with monthly earnings $1250 or less
+        unit: count
+        dtype: int
+      - name: SE02
+        description: Jobs with monthly earnings $1251 to $3333
+        unit: count
+        dtype: int
+      - name: SE03
+        description: Jobs with monthly earnings $3334 or more
+        unit: count
+        dtype: int
+    aggregation_allowed_to:
+      - tract
+      - county
+
+  commute_flows:
+    family_id: commute_flows
+    description: Origin-destination commute flow counts
+    variables:
+      - name: S000
+        description: Total OD job flows (home block → work block)
+        unit: count
+        dtype: int
+    aggregation_allowed_to:
+      - tract
+      - county
+
+join_recipes:
+  - recipe_id: lodes_block_to_tract_xwalk
+    left_source: Census_LEHD_LODES
+    right_source: Census_LEHD_LODES
+    left_key: h_geocode
+    right_key: tabblk2020
+    join_type: left
+    notes: >
+      Use XWALK table to convert 15-digit block h_geocode/w_geocode to
+      11-digit tract GEOID. Do NOT truncate block geocode — use the crosswalk.
+      Steps: (1) join OD/RAC/WAC to XWALK on h_geocode = tabblk2020,
+      (2) aggregate to tract using trct column, (3) then join to TIGER.
+    warnings:
+      - do_not_truncate_block_geocode_to_get_tract
+      - always_use_xwalk_for_block_to_tract_mapping
+      - OD_main_and_auxiliary_files_must_be_concatenated
+
+  - recipe_id: lodes_tract_to_study
+    left_source: Census_LEHD_LODES
+    right_source: TIGER_Lines
+    left_key: trct
+    right_key: GEOID
+    join_type: left
+    notes: >
+      After aggregating to tract via XWALK, join to TIGER tract boundaries
+      on trct (11-digit FIPS from XWALK) = TIGER GEOID.
+    warnings: []
+
+validation_rules:
+  - rule_id: h_geocode_is_15_digits
+    description: h_geocode and w_geocode are 15-digit block FIPS, not 11-digit tract FIPS
+    severity: error
+  - rule_id: use_xwalk_not_truncation
+    description: Use XWALK table to map blocks to tracts; do not truncate geocode strings
+    severity: error
+  - rule_id: concat_od_main_and_aux
+    description: Concatenate OD main and auxiliary files for complete commute data
+    severity: warning
+  - rule_id: year_availability
+    description: Check state-year availability; not all states have all years
+    severity: warning
+
+known_limitations:
+  - "h_geocode and w_geocode are 15-digit BLOCK GEOIDs — NOT tract or GEOID interchangeable"
+  - "OD main file only covers within-state commuters; aux file required for completeness"
+  - "Block geography changes between 2010 and 2020 decennial census; use XWALK vintage carefully"
+  - "Some states have suppressed data for confidentiality in low-employment blocks"
+  - "WAC and RAC are NOT the same: WAC = workplace characteristics, RAC = residence characteristics"
+  - "LODES is complex — implement a dedicated adapter rather than using generic GEOID logic"

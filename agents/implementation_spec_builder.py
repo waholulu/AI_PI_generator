@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from agents.feature_modules.osmnx_features import build_osmnx_feature_plan
+from agents.source_registry import SourceRegistry
 from models.candidate_composer_schema import ComposedCandidate
 from models.implementation_schema import (
     AnalysisStep,
     DataAcquisitionStep,
     FeatureEngineeringStep,
     ImplementationSpec,
+    SourceUseSpec,
 )
 
 _SMOKE_GEOGRAPHY = "Cambridge, Massachusetts"
@@ -14,7 +16,23 @@ _SMOKE_RUNTIME_MINUTES = 8
 _SMOKE_MIN_ROWS = 10
 
 
-def _acquisition_method(source_name: str) -> tuple[str, list[str]]:
+def _acquisition_method(source_name: str, registry: SourceRegistry | None = None) -> tuple[str, list[str]]:
+    """Return (method, expected_files) for a source.
+
+    Prefers the data catalog acquisition spec when available; falls back to
+    the original hard-coded mapping for sources without catalog profiles.
+    """
+    if registry:
+        profile = registry.get_profile(source_name)
+        if profile and profile.acquisition.method:
+            method = profile.acquisition.method
+            # Normalise api_download → api for the Literal field
+            if method == "api_download":
+                method = "api"
+            if profile.acquisition.expected_files:
+                return method, list(profile.acquisition.expected_files)
+
+    # Hard-coded fallback (preserves original behaviour for uncatalogued sources)
     sid = source_name.lower()
     if "osmnx" in sid:
         return "osmnx", ["data/raw/osmnx_features.parquet"]
@@ -37,7 +55,30 @@ def _acquisition_method(source_name: str) -> tuple[str, list[str]]:
     return "api", ["data/raw/source_extract.csv"]
 
 
-def _source_notes(source_name: str) -> str:
+def _source_notes(source_name: str, registry: SourceRegistry | None = None) -> str:
+    """Return implementation notes for a source.
+
+    Uses data catalog profile notes when available.
+    """
+    if registry:
+        profile = registry.get_profile(source_name)
+        if profile:
+            parts: list[str] = []
+            if profile.acquisition.notes:
+                parts.append(profile.acquisition.notes.strip())
+            if profile.geography:
+                g = profile.geography
+                if g.aggregation_required:
+                    parts.append(
+                        f"Native unit: {g.native_unit}. "
+                        f"Aggregate to {', '.join(g.target_units_supported)} "
+                        f"using {g.default_aggregation}."
+                    )
+            if profile.known_limitations:
+                parts.append("Known limitations: " + "; ".join(profile.known_limitations[:2]))
+            if parts:
+                return " ".join(parts)
+
     notes = {
         "OSMnx_OpenStreetMap": (
             "Use osmnx.graph_from_place() with network_type='walk'. "
@@ -86,19 +127,155 @@ def _source_notes(source_name: str) -> str:
     return notes.get(source_name, f"Acquire {source_name} data and join to tract GEOID.")
 
 
+def _build_source_use_spec(
+    source_name: str,
+    role: str,
+    candidate: ComposedCandidate,
+    registry: SourceRegistry,
+) -> SourceUseSpec:
+    """Build a SourceUseSpec from the data catalog profile."""
+    profile = registry.get_profile(source_name)
+    source_id = registry.resolve(source_name) or source_name
+
+    if role == "exposure":
+        raw_cols = _get_raw_columns(source_name, candidate.exposure_family, profile)
+        derived = list(candidate.exposure_variables or [])
+    elif role == "outcome":
+        raw_cols = _get_raw_columns(source_name, candidate.outcome_family, profile)
+        derived = list(candidate.outcome_variables or [f"{candidate.outcome_family}_prevalence"])
+    elif role == "control":
+        raw_cols = ["B17001_002E", "B19013_001E", "B15003_017E", "B01003_001E"]
+        derived = ["poverty_rate", "median_income", "pct_no_hs_diploma", "pop_density"]
+    else:  # boundary
+        raw_cols = ["GEOID", "geometry", "ALAND"]
+        derived = ["geometry"]
+
+    native_unit = ""
+    target_unit = candidate.unit_of_analysis
+    join_recipe: dict | None = None
+    aggregation_method = ""
+    validation_rules: list[str] = []
+    known_limitations: list[str] = []
+    acquisition_method = ""
+    acquisition_url = ""
+
+    if profile:
+        if profile.geography:
+            native_unit = profile.geography.native_unit
+            aggregation_method = profile.geography.default_aggregation
+        if profile.join_recipes:
+            join_recipe = profile.join_recipes[0].model_dump()
+        if profile.validation_rules:
+            validation_rules = [r.rule_id for r in profile.validation_rules[:3]]
+        known_limitations = list(profile.known_limitations[:3])
+        acquisition_method = profile.acquisition.method
+        acquisition_url = profile.acquisition.url
+
+    return SourceUseSpec(
+        source_id=source_id,
+        role=role,
+        native_unit=native_unit,
+        target_unit=target_unit,
+        raw_columns=raw_cols,
+        derived_features=derived,
+        acquisition_method=acquisition_method,
+        acquisition_url=acquisition_url,
+        join_recipe=join_recipe,
+        aggregation_method=aggregation_method,
+        validation_rules=validation_rules,
+        known_limitations=known_limitations,
+    )
+
+
+def _get_raw_columns(
+    source_name: str,
+    family: str,
+    profile,
+) -> list[str]:
+    """Extract concrete column names from the data catalog profile."""
+    if profile is None:
+        return []
+    vf = profile.variable_families.get(family)
+    if not vf:
+        return []
+    if isinstance(vf, dict):
+        variables = vf.get("variables", [])
+        cols: list[str] = []
+        for v in variables:
+            if isinstance(v, dict):
+                cols.append(v.get("name", ""))
+            elif isinstance(v, str):
+                cols.append(v)
+        return [c for c in cols if c]
+    return []
+
+
+def _build_data_lineage_plan(
+    candidate: ComposedCandidate,
+    source_use_specs: list[SourceUseSpec],
+) -> dict:
+    """Build a structured data lineage plan describing grain conversions."""
+    exp_spec = next((s for s in source_use_specs if s.role == "exposure"), None)
+    out_spec = next((s for s in source_use_specs if s.role == "outcome"), None)
+    ctrl_specs = [s for s in source_use_specs if s.role == "control"]
+    bnd_spec = next((s for s in source_use_specs if s.role == "boundary"), None)
+
+    steps: list[dict] = []
+
+    if exp_spec and exp_spec.native_unit and exp_spec.native_unit != exp_spec.target_unit:
+        steps.append({
+            "step": "aggregate_exposure",
+            "source": exp_spec.source_id,
+            "from_unit": exp_spec.native_unit,
+            "to_unit": exp_spec.target_unit,
+            "method": exp_spec.aggregation_method or "population_weighted_mean",
+            "weight_source": "ACS B01003_001E",
+            "join_recipe": exp_spec.join_recipe.get("recipe_id") if exp_spec.join_recipe else None,
+        })
+
+    if out_spec:
+        steps.append({
+            "step": "acquire_outcome",
+            "source": out_spec.source_id,
+            "native_unit": out_spec.native_unit or candidate.unit_of_analysis,
+            "columns": out_spec.raw_columns[:5],
+        })
+
+    for cs in ctrl_specs:
+        steps.append({
+            "step": "acquire_controls",
+            "source": cs.source_id,
+            "native_unit": cs.native_unit or candidate.unit_of_analysis,
+            "columns": cs.raw_columns[:5],
+        })
+
+    steps.append({
+        "step": "join_all_to_analysis_unit",
+        "analysis_unit": candidate.unit_of_analysis,
+        "join_key": "GEOID",
+        "boundary_source": bnd_spec.source_id if bnd_spec else "TIGER_Lines",
+    })
+
+    return {
+        "candidate_id": candidate.candidate_id,
+        "analysis_unit": candidate.unit_of_analysis,
+        "lineage_steps": steps,
+        "final_join_key": "GEOID",
+    }
+
+
 def build_implementation_spec(candidate: ComposedCandidate) -> ImplementationSpec:
+    registry = SourceRegistry.load()
     required_extras = ["geospatial"]
     if "experimental" in candidate.technology_tags:
         required_extras.append("vision")
 
-    exposure_method, exposure_files = _acquisition_method(candidate.exposure_source)
-    outcome_method, outcome_files = _acquisition_method(candidate.outcome_source)
+    exposure_method, exposure_files = _acquisition_method(candidate.exposure_source, registry)
+    outcome_method, outcome_files = _acquisition_method(candidate.outcome_source, registry)
 
-    # Default control and boundary sources from join_plan
     control_sources: list[str] = candidate.join_plan.get("controls", ["ACS"])
     boundary_sources: list[str] = candidate.join_plan.get("boundary_source", ["TIGER_Lines"])
 
-    # Attach OSMnx feature plan for candidates using OpenStreetMap street network data
     osmnx_feature_plan: dict | None = None
     if "osmnx" in candidate.technology_tags or "osmnx" in candidate.exposure_source.lower():
         osmnx_feature_plan = build_osmnx_feature_plan(
@@ -122,7 +299,6 @@ def build_implementation_spec(candidate: ComposedCandidate) -> ImplementationSpe
             "merge ACS controls and TIGER boundary geometry"
         )
 
-    # Build all 4 acquisition steps: exposure, outcome, control(s), boundary
     acquisition_steps: list[DataAcquisitionStep] = [
         DataAcquisitionStep(
             source_name=candidate.exposure_source,
@@ -141,7 +317,7 @@ def build_implementation_spec(candidate: ComposedCandidate) -> ImplementationSpe
         ),
     ]
     for ctrl in control_sources:
-        ctrl_method, ctrl_files = _acquisition_method(ctrl)
+        ctrl_method, ctrl_files = _acquisition_method(ctrl, registry)
         acquisition_steps.append(
             DataAcquisitionStep(
                 source_name=ctrl,
@@ -152,7 +328,7 @@ def build_implementation_spec(candidate: ComposedCandidate) -> ImplementationSpe
             )
         )
     for bnd in boundary_sources:
-        bnd_method, bnd_files = _acquisition_method(bnd)
+        bnd_method, bnd_files = _acquisition_method(bnd, registry)
         acquisition_steps.append(
             DataAcquisitionStep(
                 source_name=bnd,
@@ -162,6 +338,18 @@ def build_implementation_spec(candidate: ComposedCandidate) -> ImplementationSpe
                 cache_policy="cache_processed_only",
             )
         )
+
+    # Build SourceUseSpec for each role
+    source_use_specs: list[SourceUseSpec] = [
+        _build_source_use_spec(candidate.exposure_source, "exposure", candidate, registry),
+        _build_source_use_spec(candidate.outcome_source, "outcome", candidate, registry),
+    ]
+    for ctrl in control_sources:
+        source_use_specs.append(_build_source_use_spec(ctrl, "control", candidate, registry))
+    for bnd in boundary_sources:
+        source_use_specs.append(_build_source_use_spec(bnd, "boundary", candidate, registry))
+
+    data_lineage_plan = _build_data_lineage_plan(candidate, source_use_specs)
 
     smoke_plan = [
         f"Run on {_SMOKE_GEOGRAPHY} (single county, fast CI geography)",
@@ -173,9 +361,8 @@ def build_implementation_spec(candidate: ComposedCandidate) -> ImplementationSpe
         "No paid API calls; no raw image storage; no auth-required sources",
     ]
 
-    # Source-specific notes added as a structured extra in feature engineering
     source_notes = {
-        src: _source_notes(src)
+        src: _source_notes(src, registry)
         for src in (
             [candidate.exposure_source, candidate.outcome_source]
             + control_sources
@@ -225,4 +412,6 @@ def build_implementation_spec(candidate: ComposedCandidate) -> ImplementationSpe
             "output/report/technical_summary.md",
         ],
         smoke_test_plan=smoke_plan,
+        source_use_specs=source_use_specs,
+        data_lineage_plan=data_lineage_plan,
     )

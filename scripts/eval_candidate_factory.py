@@ -17,6 +17,13 @@ implementation_spec_completion_rate >= 0.85
 development_pack_ready_rate        >= 0.80
 low_or_medium_automation_risk_rate >= 0.70
 experimental_candidate_count       == 0  (when --enable-experimental false)
+
+Data catalog thresholds (v2, enforced when --check-thresholds)
+--------------------------------------------------------------
+source_profile_completion_rate     >= 0.90
+variable_mapping_completion_rate   >= 0.75
+join_recipe_completion_rate        >= 0.85
+source_aware_pack_rate             >= 0.85
 """
 from __future__ import annotations
 
@@ -33,6 +40,7 @@ from agents.candidate_feasibility import precheck_candidate
 from agents.candidate_repair import repair_candidate
 from agents.final_ranker import score_candidate
 from agents.implementation_spec_builder import build_implementation_spec
+from agents.source_registry import SourceRegistry
 from models.candidate_composer_schema import ComposeRequest
 
 
@@ -57,6 +65,7 @@ def evaluate(
         no_paid_api=no_paid_api,
     )
     candidates = compose_candidates(req)
+    registry = SourceRegistry.load()
 
     pass_count = 0
     spec_ready = 0
@@ -69,6 +78,13 @@ def evaluate(
     blocked_count = 0
     repair_success_count = 0
     repair_attempted_count = 0
+
+    # Data catalog metrics
+    source_profile_count = 0
+    variable_mapping_count = 0
+    join_recipe_count = 0
+    source_aware_spec_count = 0
+
     top_candidate_ids: list[str] = []
     scored_cards: list[dict] = []
 
@@ -125,6 +141,31 @@ def evaluate(
         elif shortlist == "blocked":
             blocked_count += 1
 
+        # ── Data catalog metrics ─────────────────────────────────────────────
+        # source_profile_completion: exposure source has a rich data catalog profile
+        exp_profile = registry.get_profile(repaired.exposure_source)
+        if exp_profile is not None:
+            source_profile_count += 1
+
+        # variable_mapping_completion: exposure family has concrete variables
+        if registry.has_variable_mapping(repaired.exposure_source, repaired.exposure_family):
+            variable_mapping_count += 1
+
+        # join_recipe_completion: no missing_join_recipe reason in gate
+        has_missing_recipe = any(
+            r == "missing_join_recipe" for r in gate.get("reasons", [])
+        )
+        if not has_missing_recipe:
+            join_recipe_count += 1
+
+        # source_aware_pack: spec contains source_use_specs
+        try:
+            spec_obj = build_implementation_spec(repaired)
+            if spec_obj.source_use_specs:
+                source_aware_spec_count += 1
+        except Exception:
+            pass
+
         scored_cards.append(
             {
                 "candidate_id": repaired.candidate_id,
@@ -161,6 +202,11 @@ def evaluate(
         "ready_candidate_count": ready_count,
         "blocked_candidate_count": blocked_count,
         "top_5_candidate_ids": top_candidate_ids,
+        # Data catalog metrics
+        "source_profile_completion_rate": round(source_profile_count / total, 3),
+        "variable_mapping_completion_rate": round(variable_mapping_count / total, 3),
+        "join_recipe_completion_rate": round(join_recipe_count / total, 3),
+        "source_aware_pack_rate": round(source_aware_spec_count / total, 3),
     }
 
 
@@ -195,6 +241,31 @@ def _check_thresholds(result: dict) -> list[str]:
         failures.append(
             f"experimental_candidate_count {result['experimental_candidate_count']} != 0 "
             f"(experimental disabled)"
+        )
+
+    # Data catalog thresholds
+    if result.get("source_profile_completion_rate", 1.0) < 0.90:
+        failures.append(
+            f"source_profile_completion_rate "
+            f"{result['source_profile_completion_rate']:.2%} < 90%"
+        )
+
+    if result.get("variable_mapping_completion_rate", 1.0) < 0.75:
+        failures.append(
+            f"variable_mapping_completion_rate "
+            f"{result['variable_mapping_completion_rate']:.2%} < 75%"
+        )
+
+    if result.get("join_recipe_completion_rate", 1.0) < 0.85:
+        failures.append(
+            f"join_recipe_completion_rate "
+            f"{result['join_recipe_completion_rate']:.2%} < 85%"
+        )
+
+    if result.get("source_aware_pack_rate", 1.0) < 0.85:
+        failures.append(
+            f"source_aware_pack_rate "
+            f"{result['source_aware_pack_rate']:.2%} < 85%"
         )
 
     return failures

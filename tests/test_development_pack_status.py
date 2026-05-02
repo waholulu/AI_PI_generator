@@ -33,6 +33,8 @@ def _populate_pack(pack_dir: Path) -> None:
         "feature_plan.yaml",
         "analysis_plan.yaml",
         "acceptance_tests.md",
+        "data_source_notes.md",
+        "data_lineage_plan.yaml",
     ]
     for fname in required:
         (pack_dir / fname).write_text("content", encoding="utf-8")
@@ -147,3 +149,72 @@ def test_warning_gate_still_ready_without_other_blockers(tmp_path: Path) -> None
     )
     assert result["claude_code_ready"] is True
     assert result["development_pack_status"] == "claude_code_ready"
+
+
+# ── Step 5 new tests: data-understanding blocking reasons ─────────────────────
+
+def test_missing_variable_mapping_blocks_claude_ready(tmp_path: Path) -> None:
+    """missing_variable_mapping in gate reasons must block claude_code_ready."""
+    pack_dir = tmp_path / "test_001"
+    pack_dir.mkdir()
+    _populate_pack(pack_dir)
+    gate = {
+        "overall": "warning",
+        "shortlist_status": "review",
+        "reasons": ["no_variable_mapping_for_some_family"],
+    }
+    result = evaluate_development_pack_readiness(_make_candidate(), gate, pack_dir)
+    assert result["claude_code_ready"] is False
+    assert "missing_variable_mapping" in result["blocking_reasons"]
+
+
+def test_missing_join_recipe_blocks_claude_ready(tmp_path: Path) -> None:
+    """missing_join_recipe in gate reasons must block claude_code_ready."""
+    pack_dir = tmp_path / "test_001"
+    pack_dir.mkdir()
+    _populate_pack(pack_dir)
+    gate = {
+        "overall": "fail",
+        "shortlist_status": "blocked",
+        "reasons": ["missing_join_recipe"],
+    }
+    result = evaluate_development_pack_readiness(_make_candidate(), gate, pack_dir)
+    assert result["claude_code_ready"] is False
+    assert "missing_join_recipe" in result["blocking_reasons"]
+
+
+def test_missing_aggregation_method_blocks_claude_ready(tmp_path: Path) -> None:
+    """missing_aggregation_method in gate reasons must block claude_code_ready."""
+    pack_dir = tmp_path / "test_001"
+    pack_dir.mkdir()
+    _populate_pack(pack_dir)
+    gate = {
+        "overall": "fail",
+        "shortlist_status": "blocked",
+        "reasons": ["missing_aggregation_method"],
+    }
+    result = evaluate_development_pack_readiness(_make_candidate(), gate, pack_dir)
+    assert result["claude_code_ready"] is False
+    assert "missing_aggregation_method" in result["blocking_reasons"]
+
+
+def test_time_window_not_justified_blocks_claude_ready(tmp_path: Path) -> None:
+    """single_year_source panel warning blocks claude_code_ready."""
+    pack_dir = tmp_path / "test_001"
+    pack_dir.mkdir()
+    _populate_pack(pack_dir)
+    gate = {
+        "overall": "warning",
+        "shortlist_status": "review",
+        "reasons": ["single_year_source_2021_used_in_panel_window_2016_2024:restrict_to_cross_sectional"],
+    }
+    result = evaluate_development_pack_readiness(_make_candidate(), gate, pack_dir)
+    assert result["claude_code_ready"] is False
+    assert "time_window_not_justified" in result["blocking_reasons"]
+
+
+def test_new_required_files_present_in_required_list() -> None:
+    """data_source_notes.md and data_lineage_plan.yaml are in _REQUIRED_FILES."""
+    from agents.development_pack_status import _REQUIRED_FILES
+    assert "data_source_notes.md" in _REQUIRED_FILES
+    assert "data_lineage_plan.yaml" in _REQUIRED_FILES

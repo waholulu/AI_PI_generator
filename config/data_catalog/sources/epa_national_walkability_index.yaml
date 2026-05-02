@@ -1,0 +1,119 @@
+source_id: EPA_National_Walkability_Index
+canonical_name: EPA National Walkability Index
+aliases:
+  - EPA Walkability Index
+  - National Walkability Index
+
+# ── Backward-compatible flat fields ─────────────────────────────────────────
+roles:
+  - exposure
+tier: stable
+cloud_safe: true
+machine_readable: true
+source_type: download
+expected_format: zip_csv_gis
+auth_required: false
+cost_required: false
+access_url: https://www.epa.gov/smartgrowth/smart-location-mapping
+documentation_url: https://www.epa.gov/smartgrowth/national-walkability-index-user-guide-and-methodology
+coverage_year_min: 2021
+coverage_year_max: 2021
+spatial_units:
+  - block_group
+  - census_tract
+  - county
+  - city
+
+# ── Enhanced data catalog fields ─────────────────────────────────────────────
+acquisition:
+  method: download
+  url: https://www.epa.gov/smartgrowth/smart-location-mapping
+  documentation_url: https://www.epa.gov/smartgrowth/national-walkability-index-user-guide-and-methodology
+  expected_format: zip_csv_gis
+  auth_required: false
+  cost_required: false
+  expected_files:
+    - data/raw/epa_walkability.csv
+  notes: >
+    Download EPA_SmartLocationDatabase_V3_Jan_2021_Final.zip.
+    The walkability index (NatWalkInd) is a sub-product of the SLD.
+    One row per census block group (GEOID10 = 12-digit FIPS).
+
+geography:
+  native_unit: census_block_group
+  target_units_supported:
+    - census_tract
+    - county
+    - city
+  aggregation_required: true
+  default_aggregation: population_weighted_mean
+  join_keys:
+    - GEOID10
+  coverage: nationwide
+
+temporal_coverage:
+  coverage_year_min: 2021
+  coverage_year_max: 2021
+  release_lag_years: 2.0
+  update_frequency: periodic
+  cross_sectional_only: true
+  notes: >
+    Single-year 2021 snapshot. Same data vintage as EPA SLD.
+    For multi-year analysis, justify static exposure assumption.
+
+variable_families:
+  walkability:
+    family_id: walkability
+    description: Composite walkability index and component scores
+    variables:
+      - name: NatWalkInd
+        description: National Walkability Index (composite, 1-20 scale)
+        unit: index_1_to_20
+        dtype: float
+      - name: D2A_EPHHM
+        description: Employment and household entropy component
+        unit: index
+        dtype: float
+      - name: D2B_E5MIX
+        description: Land use mix (5-tier employment entropy)
+        unit: index_0_to_1
+        dtype: float
+      - name: D3B
+        description: Street intersection density component
+        unit: intersections/sq_mile
+        dtype: float
+      - name: D4A
+        description: Transit proximity component (distance to nearest stop)
+        unit: meters
+        dtype: float
+    aggregation_allowed_to:
+      - tract
+      - county
+      - city
+
+join_recipes:
+  - recipe_id: walkability_bg_to_tract_popwt
+    left_source: EPA_National_Walkability_Index
+    right_source: ACS
+    left_key: GEOID10
+    right_key: GEOID_BG
+    join_type: left
+    notes: >
+      Aggregate block group NatWalkInd to census tract using ACS population weights.
+      Weighted mean: sum(NatWalkInd_i * pop_i) / sum(pop_i) per tract.
+    warnings:
+      - GEOID10 is 12 digits; census tract GEOID is 11 digits
+
+validation_rules:
+  - rule_id: natwalkind_range
+    description: NatWalkInd should be between 1 and 20
+    severity: warning
+  - rule_id: geoid10_is_12_digits
+    description: GEOID10 must be 12 characters
+    severity: error
+
+known_limitations:
+  - "Single year (2021) — not suitable for longitudinal panel analysis"
+  - "Block group native grain requires aggregation to tract before joining CDC PLACES"
+  - "NatWalkInd is a composite index; may mask heterogeneous effects"
+  - "Rural block groups may have NatWalkInd = 1 (floor effect)"

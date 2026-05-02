@@ -1,0 +1,177 @@
+source_id: CDC_PLACES
+canonical_name: CDC PLACES
+aliases:
+  - CDC Places
+  - PLACES
+
+# ── Backward-compatible flat fields ─────────────────────────────────────────
+roles:
+  - outcome
+tier: stable
+cloud_safe: true
+machine_readable: true
+source_type: api_download
+expected_format: csv_api_gis
+auth_required: false
+cost_required: false
+access_url: https://www.cdc.gov/places/tools/data-portal.html
+documentation_url: https://www.cdc.gov/places/about/index.html
+coverage_year_min: 2016
+coverage_year_max: 2024
+spatial_units:
+  - census_tract
+  - county
+  - place
+  - zcta
+
+# ── Enhanced data catalog fields ─────────────────────────────────────────────
+acquisition:
+  method: api
+  url: https://data.cdc.gov/resource/cwsq-ngmh.csv
+  documentation_url: https://www.cdc.gov/places/about/index.html
+  expected_format: csv_api_gis
+  auth_required: false
+  cost_required: false
+  expected_files:
+    - data/raw/cdc_places.csv
+  notes: >
+    Download via CDC PLACES API (Socrata endpoint) or direct CSV download.
+    Filter by LocationType='Census Tract' and StateAbbr for target state.
+    Key columns: LocationID (=GEOID 11-digit tract FIPS), MeasureId, Data_Value.
+
+geography:
+  native_unit: census_tract
+  target_units_supported:
+    - census_tract
+    - county
+    - place
+    - zcta
+  aggregation_required: false
+  default_aggregation: ""
+  join_keys:
+    - GEOID
+    - LocationID
+  coverage: nationwide
+
+temporal_coverage:
+  coverage_year_min: 2016
+  coverage_year_max: 2024
+  release_lag_years: 2.0
+  update_frequency: annual
+  cross_sectional_only: false
+  notes: >
+    Annual releases; each year's data covers model-based estimates.
+    Panel analysis is possible but note that small-area estimates have
+    changing model specifications across years.
+
+variable_families:
+  physical_inactivity:
+    family_id: physical_inactivity
+    description: Age-adjusted prevalence of physical inactivity among adults
+    variables:
+      - name: LPA
+        description: No leisure-time physical activity among adults (age-adjusted %)
+        unit: percent_age_adjusted
+        dtype: float
+      - name: LPA_CrudePrev
+        description: Crude prevalence of physical inactivity
+        unit: percent_crude
+        dtype: float
+    aggregation_allowed_to:
+      - county
+
+  obesity:
+    family_id: obesity
+    description: Age-adjusted prevalence of obesity among adults
+    variables:
+      - name: OBESITY
+        description: Obesity among adults (age-adjusted %)
+        unit: percent_age_adjusted
+        dtype: float
+    aggregation_allowed_to:
+      - county
+
+  diabetes:
+    family_id: diabetes
+    description: Age-adjusted prevalence of diagnosed diabetes among adults
+    variables:
+      - name: DIABETES
+        description: Diagnosed diabetes among adults (age-adjusted %)
+        unit: percent_age_adjusted
+        dtype: float
+    aggregation_allowed_to:
+      - county
+
+  asthma:
+    family_id: asthma
+    description: Age-adjusted prevalence of current asthma among adults
+    variables:
+      - name: CASTHMA
+        description: Current asthma among adults (age-adjusted %)
+        unit: percent_age_adjusted
+        dtype: float
+    aggregation_allowed_to:
+      - county
+
+  poor_mental_health:
+    family_id: poor_mental_health
+    description: Age-adjusted prevalence of frequent mental distress among adults
+    variables:
+      - name: MHLTH
+        description: Mental health not good for ≥14 days (age-adjusted %)
+        unit: percent_age_adjusted
+        dtype: float
+    aggregation_allowed_to:
+      - county
+
+  poor_physical_health:
+    family_id: poor_physical_health
+    description: Age-adjusted prevalence of frequent physical distress among adults
+    variables:
+      - name: PHLTH
+        description: Physical health not good for ≥14 days (age-adjusted %)
+        unit: percent_age_adjusted
+        dtype: float
+    aggregation_allowed_to:
+      - county
+
+  cardiovascular_disease:
+    family_id: cardiovascular_disease
+    description: Age-adjusted prevalence of coronary heart disease among adults
+    variables:
+      - name: CHD
+        description: Coronary heart disease among adults (age-adjusted %)
+        unit: percent_age_adjusted
+        dtype: float
+    aggregation_allowed_to:
+      - county
+
+join_recipes:
+  - recipe_id: cdc_places_tract_to_study
+    left_source: CDC_PLACES
+    right_source: TIGER_Lines
+    left_key: LocationID
+    right_key: GEOID
+    join_type: inner
+    notes: >
+      Join CDC PLACES tract-level estimates to TIGER tract boundaries on GEOID.
+      LocationID in CDC PLACES equals 11-digit census tract FIPS (same as TIGER GEOID).
+    warnings:
+      - Filter LocationType='Census Tract' before joining
+
+validation_rules:
+  - rule_id: locationid_is_11_digits
+    description: LocationID for tract level must be 11-digit census tract FIPS
+    severity: error
+  - rule_id: data_value_range
+    description: Data_Value (prevalence) should be between 0 and 100
+    severity: warning
+  - rule_id: filter_by_location_type
+    description: Always filter LocationType='Census Tract' for tract-level analysis
+    severity: error
+
+known_limitations:
+  - "Model-based small-area estimates — not direct survey measurements"
+  - "Suppressed values for small populations; check Data_Value_Footnote"
+  - "Age-adjusted rates assume 2000 US standard population"
+  - "Annual model specification changes make strict panel comparison difficult"

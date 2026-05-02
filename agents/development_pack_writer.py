@@ -224,28 +224,46 @@ def _data_contract(candidate: ComposedCandidate, spec: dict[str, Any]) -> str:
     ctrl_steps = [s for s in acq_steps if s.get("source_role") == "control"]
     bnd_steps = [s for s in acq_steps if s.get("source_role") == "boundary"]
 
-    exp_vars = candidate.exposure_variables or ["exposure_metric"]
-    out_vars = candidate.outcome_variables or [f"{candidate.outcome_family}_prevalence"]
+    # Use SourceUseSpec for richer column info when available
+    sus_list = spec.get("source_use_specs") or []
+    exp_sus = next((s for s in sus_list if s.get("role") == "exposure"), {})
+    out_sus = next((s for s in sus_list if s.get("role") == "outcome"), {})
+
+    exp_vars = exp_sus.get("raw_columns") or candidate.exposure_variables or ["exposure_metric"]
+    out_vars = out_sus.get("raw_columns") or candidate.outcome_variables or [f"{candidate.outcome_family}_prevalence"]
     ctrl_vars = ["poverty_rate", "median_income", "pct_no_hs_diploma", "pct_nonwhite", "pop_density"]
 
     ctrl_sources = ", ".join(s.get("source_name", "ACS") for s in ctrl_steps) or "ACS"
     bnd_sources = ", ".join(s.get("source_name", "TIGER_Lines") for s in bnd_steps) or "TIGER_Lines"
 
+    exp_native_unit = exp_sus.get("native_unit") or candidate.unit_of_analysis
+    exp_agg_method = exp_sus.get("aggregation_method") or ""
+    exp_join_recipe = exp_sus.get("join_recipe") or {}
+
     lines = [
         f"# Data contract for candidate: {candidate.candidate_id}",
-        "analysis_unit: census_tract",
+        f"analysis_unit: {candidate.unit_of_analysis}",
         "join_key: GEOID",
         "",
         "inputs:",
         "  exposure:",
         f"    source: {exp_step.get('source_name', candidate.exposure_source)}",
-        f"    expected_columns: [{', '.join(exp_vars)}]",
-        f"    grain: {candidate.unit_of_analysis}",
+        f"    native_grain: {exp_native_unit}",
+        f"    target_grain: {candidate.unit_of_analysis}",
+        f"    raw_columns: [{', '.join(exp_vars[:6])}]",
         f"    acquisition_method: {exp_step.get('method', 'api')}",
+    ]
+    if exp_agg_method:
+        lines.append(f"    aggregation_method: {exp_agg_method}")
+    if exp_join_recipe:
+        lines.append(f"    join_recipe: {exp_join_recipe.get('recipe_id', 'see_data_source_notes')}")
+
+    lines += [
         "  outcome:",
         f"    source: {out_step.get('source_name', candidate.outcome_source)}",
-        f"    expected_columns: [{', '.join(out_vars)}]",
-        f"    grain: {candidate.unit_of_analysis}",
+        f"    native_grain: {out_sus.get('native_unit') or candidate.unit_of_analysis}",
+        f"    target_grain: {candidate.unit_of_analysis}",
+        f"    raw_columns: [{', '.join(out_vars[:4])}]",
         f"    acquisition_method: {out_step.get('method', 'api')}",
         "  controls:",
         f"    source: {ctrl_sources}",
@@ -261,7 +279,7 @@ def _data_contract(candidate: ComposedCandidate, spec: dict[str, Any]) -> str:
         "outputs:",
         "  tract_features:",
         "    path: data/processed/tract_features.csv",
-        f"    required_columns: [GEOID, {', '.join(exp_vars[:2])}, {out_vars[0]}, poverty_rate, median_income]",
+        f"    required_columns: [GEOID, {', '.join((exp_sus.get('derived_features') or exp_vars)[:2])}, {out_vars[0]}, poverty_rate, median_income]",
         "  model_summary:",
         "    path: output/tables/model_summary.csv",
         "    required_columns: [variable, coefficient, std_error, p_value, n_obs]",
@@ -276,9 +294,21 @@ def _data_contract(candidate: ComposedCandidate, spec: dict[str, Any]) -> str:
 
 def _feature_plan(candidate: ComposedCandidate, spec: dict[str, Any]) -> str:
     osmnx_plan = spec.get("osmnx_feature_plan") or {}
-    all_features = candidate.exposure_variables or []
+
+    # Use SourceUseSpec derived features when available
+    sus_list = spec.get("source_use_specs") or []
+    exp_sus = next((s for s in sus_list if s.get("role") == "exposure"), {})
+    out_sus = next((s for s in sus_list if s.get("role") == "outcome"), {})
+
+    all_features = exp_sus.get("derived_features") or candidate.exposure_variables or []
     if osmnx_plan:
         all_features = osmnx_plan.get("expected_features", all_features)
+
+    exp_native = exp_sus.get("native_unit") or candidate.unit_of_analysis
+    exp_agg = exp_sus.get("aggregation_method") or f"mean_per_{candidate.unit_of_analysis}"
+    exp_join_recipe = exp_sus.get("join_recipe") or {}
+
+    out_cols = out_sus.get("raw_columns") or [f"{candidate.outcome_family}_prevalence"]
 
     ctrl_vars = ["poverty_rate", "median_income", "pct_no_hs_diploma", "pct_nonwhite", "pop_density"]
 
@@ -290,16 +320,27 @@ def _feature_plan(candidate: ComposedCandidate, spec: dict[str, Any]) -> str:
     for f in all_features:
         lines.append(f"  - name: {f}")
         lines.append(f"    source: {candidate.exposure_source}")
-        lines.append(f"    aggregation: mean_per_{candidate.unit_of_analysis}")
+        lines.append(f"    native_grain: {exp_native}")
+        lines.append(f"    target_grain: {candidate.unit_of_analysis}")
+        if exp_native != candidate.unit_of_analysis.replace("census_", ""):
+            lines.append(f"    aggregation_method: {exp_agg}")
+            if exp_join_recipe:
+                lines.append(f"    aggregation_recipe: {exp_join_recipe.get('recipe_id', 'see_data_source_notes')}")
         lines.append(f"    missingness_policy: drop_if_pct_missing_gt_50")
 
     lines += [
         "",
         "outcome_features:",
-        f"  - name: {candidate.outcome_family}_prevalence",
-        f"    source: {candidate.outcome_source}",
-        f"    grain: {candidate.unit_of_analysis}",
-        "    unit: age_adjusted_percent",
+    ]
+    for col in out_cols[:3]:
+        lines += [
+            f"  - name: {col}",
+            f"    source: {candidate.outcome_source}",
+            f"    grain: {out_sus.get('native_unit') or candidate.unit_of_analysis}",
+            "    unit: age_adjusted_percent",
+        ]
+
+    lines += [
         "",
         "control_features:",
     ]
@@ -495,6 +536,125 @@ def _pytest_skeleton(candidate: ComposedCandidate) -> str:
     ''').strip()
 
 
+# ── data_source_notes.md ─────────────────────────────────────────────────────
+
+def _data_source_notes(candidate: ComposedCandidate, spec: dict[str, Any]) -> str:
+    """Generate data_source_notes.md from SourceUseSpec entries in the spec."""
+    sus_list = spec.get("source_use_specs") or []
+
+    lines = [
+        f"# Data Source Notes: {candidate.candidate_id}",
+        "",
+        "This file describes exactly how each data source is used in this candidate's",
+        "pipeline — including native grain, required aggregation, join keys, concrete",
+        "column names, and known limitations.",
+        "",
+    ]
+
+    for sus in sus_list:
+        source_id = sus.get("source_id", "unknown")
+        role = sus.get("role", "unknown")
+        native_unit = sus.get("native_unit", "unknown")
+        target_unit = sus.get("target_unit", candidate.unit_of_analysis)
+        raw_cols = sus.get("raw_columns", [])
+        derived = sus.get("derived_features", [])
+        acq_method = sus.get("acquisition_method", "")
+        acq_url = sus.get("acquisition_url", "")
+        join_recipe = sus.get("join_recipe") or {}
+        agg_method = sus.get("aggregation_method", "")
+        validation = sus.get("validation_rules", [])
+        limitations = sus.get("known_limitations", [])
+
+        lines += [
+            f"## {source_id} ({role})",
+            "",
+            f"- **Native spatial unit**: `{native_unit}`",
+            f"- **Target analysis unit**: `{candidate.unit_of_analysis}`",
+        ]
+
+        if native_unit and target_unit and native_unit != target_unit.replace("census_", ""):
+            lines.append(
+                f"- **Aggregation required**: Yes — `{native_unit}` → `{target_unit}` "
+                f"via **{agg_method or 'population_weighted_mean'}**"
+            )
+        else:
+            lines.append("- **Aggregation required**: No — source native unit matches analysis unit")
+
+        if acq_method:
+            lines.append(f"- **Acquisition method**: `{acq_method}`")
+        if acq_url:
+            lines.append(f"- **Source URL**: {acq_url}")
+
+        if raw_cols:
+            lines += ["", "**Raw columns used**:", ""]
+            for col in raw_cols[:8]:
+                lines.append(f"  - `{col}`")
+
+        if derived:
+            lines += ["", "**Derived features**:", ""]
+            for feat in derived[:8]:
+                lines.append(f"  - `{feat}`")
+
+        if join_recipe:
+            recipe_id = join_recipe.get("recipe_id", "")
+            left_key = join_recipe.get("left_key", "")
+            right_key = join_recipe.get("right_key", "")
+            if recipe_id:
+                lines += [
+                    "",
+                    f"**Join recipe**: `{recipe_id}`",
+                    f"  - Left key: `{left_key}` → Right key: `{right_key}`",
+                ]
+                for w in join_recipe.get("warnings", []):
+                    lines.append(f"  - ⚠️ {w}")
+
+        if validation:
+            lines += ["", "**Validation rules**:", ""]
+            for r in validation[:4]:
+                lines.append(f"  - `{r}`")
+
+        if limitations:
+            lines += ["", "**Known limitations**:", ""]
+            for lim in limitations[:3]:
+                lines.append(f"  - {lim}")
+
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+# ── data_lineage_plan.yaml ────────────────────────────────────────────────────
+
+def _data_lineage_plan_yaml(candidate: ComposedCandidate, spec: dict[str, Any]) -> str:
+    """Serialize the data lineage plan as YAML."""
+    plan = spec.get("data_lineage_plan") or {}
+
+    lines = [
+        f"# Data lineage plan for candidate: {candidate.candidate_id}",
+        "",
+        f"candidate_id: {candidate.candidate_id}",
+        f"analysis_unit: {plan.get('analysis_unit', candidate.unit_of_analysis)}",
+        f"final_join_key: {plan.get('final_join_key', 'GEOID')}",
+        "",
+        "lineage_steps:",
+    ]
+
+    for step in plan.get("lineage_steps", []):
+        step_name = step.get("step", "unknown")
+        lines.append(f"  - step: {step_name}")
+        for k, v in step.items():
+            if k == "step":
+                continue
+            if isinstance(v, list):
+                lines.append(f"    {k}:")
+                for item in v[:6]:
+                    lines.append(f"      - {item}")
+            elif v is not None:
+                lines.append(f"    {k}: {v}")
+
+    return "\n".join(lines)
+
+
 # ── Main writer ───────────────────────────────────────────────────────────────
 
 def write_development_pack(run_id: str, candidate_payload: dict[str, Any]) -> Path:
@@ -525,11 +685,13 @@ def write_development_pack(run_id: str, candidate_payload: dict[str, Any]) -> Pa
                 | File | Description |
                 |------|-------------|
                 | `implementation_spec.json` | Full implementation contract (Pydantic-validated) |
-                | `data_contract.yaml` | Input/output column contracts per data source |
-                | `feature_plan.yaml` | Feature engineering plan with aggregation and validation rules |
+                | `data_contract.yaml` | Input/output column contracts per data source (source-aware) |
+                | `feature_plan.yaml` | Feature engineering plan with native/target grain and aggregation |
                 | `analysis_plan.yaml` | Statistical method and formula |
                 | `acceptance_tests.md` | Pytest checklist and smoke test criteria |
                 | `claude_task_prompt.md` | Task prompt to hand to Claude Code for implementation |
+                | `data_source_notes.md` | Per-source grain, join recipes, raw columns, limitations |
+                | `data_lineage_plan.yaml` | Step-by-step data lineage from raw sources to analysis unit |
 
                 An **executable pytest skeleton** is also written to
                 `tests/generated/test_{candidate.candidate_id}_contract.py`.
@@ -537,6 +699,7 @@ def write_development_pack(run_id: str, candidate_payload: dict[str, Any]) -> Pa
                 ## Quick Start
 
                 Copy `claude_task_prompt.md` and hand it to Claude Code to begin implementation.
+                Review `data_source_notes.md` for source-specific grain and join requirements.
             """).strip(),
             encoding="utf-8",
         )
@@ -603,6 +766,12 @@ def write_development_pack(run_id: str, candidate_payload: dict[str, Any]) -> Pa
         )
         (pack_dir / "claude_task_prompt.md").write_text(
             _claude_task_prompt(candidate, spec), encoding="utf-8"
+        )
+        (pack_dir / "data_source_notes.md").write_text(
+            _data_source_notes(candidate, spec), encoding="utf-8"
+        )
+        (pack_dir / "data_lineage_plan.yaml").write_text(
+            _data_lineage_plan_yaml(candidate, spec), encoding="utf-8"
         )
 
         # Executable pytest skeleton — written to tests/generated/ at repo root

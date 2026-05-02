@@ -1,0 +1,145 @@
+source_id: ACS
+canonical_name: American Community Survey
+aliases:
+  - ACS 5-year
+  - US Census ACS
+  - American Community Survey 5-Year
+
+# ── Backward-compatible flat fields ─────────────────────────────────────────
+roles:
+  - control
+tier: stable
+cloud_safe: true
+machine_readable: true
+source_type: api_download
+expected_format: csv_api
+auth_required: false
+cost_required: false
+access_url: https://api.census.gov/data
+documentation_url: https://www.census.gov/programs-surveys/acs
+coverage_year_min: 2010
+coverage_year_max: 2023
+spatial_units:
+  - census_tract
+  - county
+  - place
+  - zcta
+  - census_block_group
+
+# ── Enhanced data catalog fields ─────────────────────────────────────────────
+acquisition:
+  method: api
+  url: https://api.census.gov/data
+  documentation_url: https://www.census.gov/programs-surveys/acs
+  expected_format: csv_api
+  auth_required: false
+  cost_required: false
+  expected_files:
+    - data/raw/acs_controls.csv
+  notes: >
+    Use Census Bureau API or cenpy/census Python packages.
+    ACS 5-year estimates available at tract level.
+    Key endpoint: https://api.census.gov/data/{year}/acs/acs5
+
+geography:
+  native_unit: census_tract
+  target_units_supported:
+    - census_tract
+    - county
+    - place
+    - zcta
+    - census_block_group
+  aggregation_required: false
+  default_aggregation: ""
+  join_keys:
+    - GEOID
+  coverage: nationwide
+
+temporal_coverage:
+  coverage_year_min: 2010
+  coverage_year_max: 2023
+  release_lag_years: 1.0
+  update_frequency: annual
+  cross_sectional_only: false
+  notes: >
+    ACS 5-year estimates released annually; each release is a rolling 5-year average.
+    Use consistent vintage year across all sources in a study.
+
+variable_families:
+  socioeconomic_controls:
+    family_id: socioeconomic_controls
+    description: Standard socioeconomic control variables for built environment studies
+    variables:
+      - name: B17001_002E
+        description: Population below poverty level
+        unit: count
+        dtype: int
+      - name: B19013_001E
+        description: Median household income (past 12 months, 2019 inflation-adjusted dollars)
+        unit: USD
+        dtype: float
+      - name: B15003_017E
+        description: Population 25+ with high school diploma
+        unit: count
+        dtype: int
+      - name: B01003_001E
+        description: Total population
+        unit: count
+        dtype: int
+      - name: B03002_003E
+        description: Non-Hispanic White alone population
+        unit: count
+        dtype: int
+    aggregation_allowed_to:
+      - county
+
+  population_weights:
+    family_id: population_weights
+    description: Population denominators for spatial aggregation weights
+    variables:
+      - name: B01003_001E
+        description: Total population per block group (used as aggregation weight)
+        unit: count
+        dtype: int
+    aggregation_allowed_to:
+      - tract
+      - county
+
+join_recipes:
+  - recipe_id: acs_tract_to_study
+    left_source: ACS
+    right_source: TIGER_Lines
+    left_key: GEOID
+    right_key: GEOID
+    join_type: left
+    notes: >
+      Join ACS tract estimates to TIGER boundaries on 11-digit GEOID.
+      Ensure ACS year matches or is within 2 years of study period.
+    warnings: []
+
+  - recipe_id: acs_bg_for_sld_weights
+    left_source: ACS
+    right_source: EPA_Smart_Location_Database
+    left_key: GEOID
+    right_key: GEOID10_trunc
+    join_type: left
+    notes: >
+      Pull ACS block group population (B01003_001E) to serve as weights
+      when aggregating EPA SLD from block group to tract.
+      GEOID for block group = 12 digits; truncate to 11 for tract match.
+    warnings:
+      - Use B01003_001E at block group level (not tract level) for SLD weighting
+
+validation_rules:
+  - rule_id: geoid_is_11_digits_for_tract
+    description: Tract-level GEOID must be 11 characters
+    severity: error
+  - rule_id: use_consistent_vintage
+    description: ACS vintage year should match or be within 2 years of other sources
+    severity: warning
+
+known_limitations:
+  - "ACS 5-year estimates are rolling averages, not point-in-time snapshots"
+  - "Margin of error can be large for small tracts — check CV before using"
+  - "Derived rates (e.g., poverty rate) require dividing by universe variable"
+  - "No API key required but rate limits apply; use polite pool email"

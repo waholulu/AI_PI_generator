@@ -23,9 +23,52 @@ _REQUIRED_FILES = [
     "feature_plan.yaml",
     "analysis_plan.yaml",
     "acceptance_tests.md",
+    "data_source_notes.md",
+    "data_lineage_plan.yaml",
 ]
 
 _HIGH_RISK_TAGS = {"streetview_cv", "deep_learning", "satellite_cv", "experimental"}
+
+# Gate-level reasons that block claude_code_ready even when gate overall is "warning"
+_DATA_UNDERSTANDING_BLOCKERS = {
+    "missing_variable_mapping",
+    "missing_join_recipe",
+    "missing_aggregation_method",
+    "unknown_native_grain",
+    "time_window_not_justified",
+}
+
+
+def _find_data_understanding_blocks(gate_status: dict[str, Any]) -> list[str]:
+    """Return data-understanding blocking reasons derived from gate reasons."""
+    gate_reasons = set(gate_status.get("reasons") or [])
+    blocks: list[str] = []
+
+    # variable mapping: reason starts with "no_variable_mapping_for_"
+    for r in gate_reasons:
+        if r.startswith("no_variable_mapping_for_") or r == "missing_variable_mapping":
+            blocks.append("missing_variable_mapping")
+            break
+
+    # join recipe
+    if "missing_join_recipe" in gate_reasons:
+        blocks.append("missing_join_recipe")
+
+    # aggregation method
+    if "missing_aggregation_method" in gate_reasons:
+        blocks.append("missing_aggregation_method")
+
+    # unknown native grain
+    if "unknown_native_grain" in gate_reasons:
+        blocks.append("unknown_native_grain")
+
+    # cross-sectional / time window not justified: reason starts with "single_year_source_"
+    for r in gate_reasons:
+        if r.startswith("single_year_source_") and "panel_window" in r:
+            blocks.append("time_window_not_justified")
+            break
+
+    return blocks
 
 
 def evaluate_development_pack_readiness(
@@ -82,6 +125,9 @@ def evaluate_development_pack_readiness(
     gate_failed = gate_overall == "fail"
     shortlist_blocked = shortlist == "blocked"
 
+    # Data-understanding blockers (sourced from gate_status.reasons)
+    data_blocks = _find_data_understanding_blocks(gate_status)
+
     if gate_failed:
         blocking_reasons.append("gate_failed")
     if shortlist_blocked:
@@ -92,6 +138,7 @@ def evaluate_development_pack_readiness(
         blocking_reasons.append(f"required_secrets:{','.join(required_secrets)}")
     if has_experimental_tags:
         blocking_reasons.append(f"experimental_tags:{','.join(sorted(experimental_tags))}")
+    blocking_reasons.extend(data_blocks)
 
     claude_code_ready = len(blocking_reasons) == 0
 

@@ -29,6 +29,28 @@ class AnalysisStep(BaseModel):
     robustness_checks: list[str] = Field(default_factory=list)
 
 
+class SourceUseSpec(BaseModel):
+    """Semantic description of how one data source is used in this candidate.
+
+    Captures native grain, target grain, the aggregation recipe, the actual
+    column names, and any known limitations — giving Claude Code enough context
+    to write correct acquisition and feature-engineering code without guessing.
+    """
+
+    source_id: str
+    role: str
+    native_unit: str = ""
+    target_unit: str = ""
+    raw_columns: list[str] = Field(default_factory=list)
+    derived_features: list[str] = Field(default_factory=list)
+    acquisition_method: str = ""
+    acquisition_url: str = ""
+    join_recipe: dict | None = None
+    aggregation_method: str = ""
+    validation_rules: list[str] = Field(default_factory=list)
+    known_limitations: list[str] = Field(default_factory=list)
+
+
 class ImplementationSpec(BaseModel):
     candidate_id: str
     cloud_safe: bool
@@ -42,3 +64,6 @@ class ImplementationSpec(BaseModel):
     analysis_steps: list[AnalysisStep] = Field(default_factory=list)
     expected_outputs: list[str] = Field(default_factory=list)
     smoke_test_plan: list[str] = Field(default_factory=list)
+    # Data catalog-aware fields
+    source_use_specs: list[SourceUseSpec] = Field(default_factory=list)
+    data_lineage_plan: dict = Field(default_factory=dict)
