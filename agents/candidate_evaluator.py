@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import difflib
-import json
 from datetime import datetime, timezone
 from typing import Any
 
@@ -18,76 +17,85 @@ from agents import settings
 from agents.data_accessibility import evaluate_data_sources, summarize_data_access
 from agents.openalex_utils import search_openalex
 from agents.logging_config import get_logger
+from agents.source_registry import SourceRegistry
 from models.candidate_schema import CandidateEvaluation
 from models.research_plan_schema import ResearchPlan
 
 logger = get_logger(__name__)
 
-
-def _load_registry() -> list[dict[str, Any]]:
-    # Legacy: reads prompts/data_source_registry.json (fuzzy-match JSON).
-    # The canonical source of truth is config/source_capabilities.yaml (SourceRegistry).
-    # candidate_factory pipeline uses SourceRegistry; this path serves CandidateEvaluator only.
-    path = settings.data_source_registry_path()
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, list) else []
-    except Exception:
-        logger.warning("Data source registry unavailable at %s", path)
-        return []
+# Lazy-loaded singleton; shared across all evaluate_candidate calls within a process.
+_REGISTRY: SourceRegistry | None = None
 
 
-def _registry_match_score(source_name: str, registry_entry: dict[str, Any]) -> float:
-    candidates = [registry_entry.get("canonical_name", "")] + list(registry_entry.get("aliases", []))
-    source = (source_name or "").strip().lower()
-    best = 0.0
-    for candidate in candidates:
-        score = difflib.SequenceMatcher(None, source, str(candidate).lower()).ratio()
-        best = max(best, score)
-    return best
+def _get_registry() -> SourceRegistry:
+    global _REGISTRY
+    if _REGISTRY is None:
+        _REGISTRY = SourceRegistry.load()
+    return _REGISTRY
 
 
-def _data_registry_verdict(plan: ResearchPlan, threshold: float = 0.6) -> tuple[str, list[str], dict]:
-    registry = _load_registry()
+def _data_registry_verdict(plan: ResearchPlan) -> tuple[str, list[str], dict]:
+    """Check each declared source against SourceRegistry using priority-ordered matching.
+
+    Match priority:
+      1. Exact source_id lookup (registry.resolve)
+      2. Alias / canonical-name lookup (also via registry.resolve)
+      3. Fuzzy string match against alias_to_id keys (threshold 0.65)
+
+    Unresolved sources are flagged as data risks; alias resolutions are info-only.
+    """
+    registry = _get_registry()
+
     if not plan.data_sources:
         return "fail", ["no_data_sources_declared"], {"registry_matches": []}
-    if not registry:
-        return "warning", ["registry_unavailable"], {"registry_matches": []}
 
     match_rows: list[dict[str, Any]] = []
     matched = 0
+    alias_resolved = 0
+
     for source in plan.data_sources:
-        best_score = 0.0
-        best_name = ""
-        for entry in registry:
-            score = _registry_match_score(source.name, entry)
-            if score > best_score:
-                best_score = score
-                best_name = str(entry.get("canonical_name", ""))
-        is_match = best_score >= threshold
+        name = (source.name or "").strip()
+        canonical = registry.resolve(name)
+        is_exact = canonical == name  # exact source_id hit
+
+        if canonical is None:
+            # Fuzzy fallback against all known aliases
+            key = name.lower()
+            best_ratio = 0.0
+            best_alias: str | None = None
+            for alias in registry.alias_to_id:
+                ratio = difflib.SequenceMatcher(None, key, alias).ratio()
+                if ratio > best_ratio:
+                    best_ratio = ratio
+                    best_alias = alias
+            if best_ratio >= 0.65 and best_alias:
+                canonical = registry.alias_to_id[best_alias]
+                alias_resolved += 1
+
+        is_match = canonical is not None
         if is_match:
             matched += 1
-        match_rows.append(
-            {
-                "source_name": source.name,
-                "matched_registry_name": best_name if is_match else "",
-                "score": round(best_score, 3),
-                "matched": is_match,
-            }
-        )
 
+        match_rows.append({
+            "source_name": name,
+            "matched_registry_name": canonical or "",
+            "matched": is_match,
+            "exact": is_exact,
+        })
+
+    reasons: list[str] = []
     if matched == len(plan.data_sources):
         verdict = "pass"
-        reasons: list[str] = []
+        if alias_resolved > 0:
+            # All sources resolved but some needed alias lookup — purely informational
+            reasons = ["partial_registry_match"]
     elif matched == 0:
         verdict = "fail"
         reasons = ["source_not_in_registry"]
     else:
-        # Some sources resolved via alias lookup (success); some genuinely absent.
-        # Only the unrecognised sources are a real risk — alias resolution is info.
         verdict = "warning"
         reasons = ["partial_registry_match"]
+
     return verdict, reasons, {"registry_matches": match_rows}
 
 

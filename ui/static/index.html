@@ -302,6 +302,18 @@
     .warn-box        { background:#3b1111; border:1px solid #7f1d1d; border-radius:6px; padding:8px 12px; font-size:.8rem; color:#f87171; margin:6px 0; }
     .warn-box-orange { background:#2a1f00; border:1px solid #92400e; border-radius:6px; padding:8px 12px; font-size:.8rem; color:#fbbf24; margin:6px 0; }
 
+    /* Executability status badges */
+    .exec-ready   { display:inline-block; padding:2px 8px; border-radius:4px; font-size:.72rem; font-weight:600; background:#1a3a2a; color:#4ade80; }
+    .exec-review  { display:inline-block; padding:2px 8px; border-radius:4px; font-size:.72rem; font-weight:600; background:#3b2700; color:#fbbf24; }
+    .exec-blocked { display:inline-block; padding:2px 8px; border-radius:4px; font-size:.72rem; font-weight:600; background:#3b1111; color:#f87171; }
+    /* Reason severity colors in HITL cards */
+    .reason-blocker { font-size:.76rem; color:#f87171; }
+    .reason-review  { font-size:.76rem; color:#fbbf24; }
+    .reason-info    { font-size:.76rem; color:#64748b; }
+    /* Design row in HITL card */
+    .design-row { font-size:.78rem; color:#94a3b8; display:flex; gap:6px; flex-wrap:wrap; }
+    .design-row strong { color:#cbd5e1; }
+
     /* Confirmation modal */
     .confirm-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.65); z-index:1100; display:flex; align-items:center; justify-content:center; }
     .confirm-box { background:#1a1d27; border:1px solid #334155; border-radius:12px; padding:24px; max-width:440px; width:90%; }
@@ -1218,39 +1230,93 @@ const MAX_REGEN_ROUNDS = 3;
 // helper in agents/hitl_helpers.py: dedupe by title (substitute beats failed
 // original), fall back to non-failed only, last-resort to all entries — never
 // returns empty when the validation report has any ideas.
+// Returns enriched ideas that include fields from the screening candidate:
+//   _executability_status, _exposure_source, _outcome_source,
+//   _method, _claim_strength, _key_threats, _exposure_specific, _outcome_specific
 async function alignIdeasWithScreening(runId, allIdeas) {
   if (!Array.isArray(allIdeas) || allIdeas.length === 0) return [];
-  let screeningTitles = [];
+  let screeningCandidates = [];
   try {
     const url = `/runs/${runId}/outputs/${encodePath('output/topic_screening.json')}`;
     const res = await fetch(url);
     if (res.ok) {
       const data = await res.json();
-      const candidates = Array.isArray(data.candidates) ? data.candidates : [];
-      screeningTitles = candidates.map(c => String(c.title || ''));
+      screeningCandidates = Array.isArray(data.candidates) ? data.candidates : [];
     }
   } catch (_) { /* fall through */ }
 
-  if (screeningTitles.length) {
-    const byTitle = new Map();
-    for (const idea of allIdeas) {
-      const title = String(idea.title || '');
-      if (!title) continue;
-      const prev = byTitle.get(title);
-      if (!prev) {
-        byTitle.set(title, idea);
-      } else if (prev.overall_verdict === 'failed' && idea.overall_verdict !== 'failed') {
-        byTitle.set(title, idea);
-      }
+  // Build a map from title → screening candidate for enrichment
+  const screeningByTitle = new Map();
+  for (const c of screeningCandidates) {
+    const t = String(c.title || '');
+    if (t) screeningByTitle.set(t, c);
+  }
+
+  // Dedupe validated ideas by title (substitute beats failed original)
+  const byTitle = new Map();
+  for (const idea of allIdeas) {
+    const title = String(idea.title || '');
+    if (!title) continue;
+    const prev = byTitle.get(title);
+    if (!prev) { byTitle.set(title, idea); }
+    else if (prev.overall_verdict === 'failed' && idea.overall_verdict !== 'failed') {
+      byTitle.set(title, idea);
     }
-    const aligned = screeningTitles
-      .filter(t => byTitle.has(t))
-      .map(t => byTitle.get(t));
+  }
+
+  // Produce aligned list in screening order, enriched with screening candidate fields
+  const enrich = (idea) => {
+    const sc = screeningByTitle.get(String(idea.title || '')) || {};
+    const ev = sc.evaluation || {};
+    const reasons = Array.isArray(ev.reasons) ? ev.reasons : [];
+    return {
+      ...idea,
+      _executability_status: ev.executability_status || _deriveExecStatus(ev.overall_verdict, reasons),
+      _exposure_source: sc.exposure_source || '',
+      _outcome_source: sc.outcome_source || '',
+      _exposure_specific: sc.exposure_specific || sc.exposure_variable || '',
+      _outcome_specific: sc.outcome_specific || sc.outcome_variable || '',
+      _method: sc.method || '',
+      _claim_strength: sc.claim_strength || '',
+      _key_threats: Array.isArray(sc.key_threats) ? sc.key_threats : [],
+      _eval_reasons: reasons,
+    };
+  };
+
+  if (screeningCandidates.length) {
+    const screeningTitles = screeningCandidates.map(c => String(c.title || ''));
+    const aligned = screeningTitles.filter(t => byTitle.has(t)).map(t => enrich(byTitle.get(t)));
     if (aligned.length) return aligned;
   }
 
   const nonFailed = allIdeas.filter(idea => idea.overall_verdict !== 'failed');
-  return nonFailed.length ? nonFailed : allIdeas;
+  const base = nonFailed.length ? nonFailed : allIdeas;
+  return base.map(enrich);
+}
+
+// Derive executability status from overall_verdict + reasons when backend field is absent
+function _deriveExecStatus(overall, reasons) {
+  const BLOCKERS = new Set(['missing_exposure_role_source','missing_outcome_role_source',
+    'missing_machine_readable_source','no_data_sources_declared','missing_join_path']);
+  if (overall === 'fail' || reasons.some(r => BLOCKERS.has(r))) return 'blocked';
+  if (overall === 'warning') return 'needs_review';
+  return 'ready';
+}
+
+// Reason severity classifier
+const _BLOCKER_REASONS = new Set(['missing_exposure_role_source','missing_outcome_role_source',
+  'missing_machine_readable_source','no_data_sources_declared','missing_join_path']);
+const _REVIEW_REASONS = new Set(['missing_identification_method','missing_identification_threats',
+  'partial_literature_overlap','already_published_overlap','short_rationale_too_brief',
+  'research_question_too_brief','geography_incompatible','time_window_incompatible']);
+const _INFO_REASONS = new Set(['source_alias_resolved','non_canonical_source_name',
+  'canonicalize_source_name','partial_registry_match','novelty_evidence_limited',
+  'url_not_reachable','no_access_url']);
+
+function _reasonSeverity(r) {
+  if (_BLOCKER_REASONS.has(r)) return 'blocker';
+  if (_REVIEW_REASONS.has(r)) return 'review';
+  return 'info';
 }
 
 async function renderHitlPicker(run) {
@@ -1283,26 +1349,60 @@ async function renderHitlPicker(run) {
     return;
   }
 
-  const verdictIcon = v => ({passed:'✅', warning:'⚠️', failed:'❌'}[v] || '❓');
+  // Executability badge
+  const execBadge = status => {
+    if (status === 'ready') return '<span class="exec-ready">✓ Ready</span>';
+    if (status === 'blocked') return '<span class="exec-blocked">✗ Blocked</span>';
+    return '<span class="exec-review">⚠ Needs review</span>';
+  };
+
   const cardsHtml = ideas.map((idea, i) => {
     const title = escHtml(idea.title || '?');
+    const execStatus = idea._executability_status || 'needs_review';
+    const borderColor = execStatus === 'blocked' ? '#7f1d1d' : execStatus === 'ready' ? '#14532d' : '#78350f';
     const rationale = escHtml(idea.brief_rationale || '');
     const novelty = escHtml((idea.novelty && idea.novelty.verdict) || '?');
-    const checks = Array.isArray(idea.data_availability) ? idea.data_availability : [];
-    const verified = checks.filter(d => d.status === 'verified').length;
-    const total = checks.length;
-    const failures = Array.isArray(idea.failure_reasons) ? idea.failure_reasons : [];
+
+    // Design spec rows
+    const expSrc = idea._exposure_source ? escHtml(idea._exposure_source) : '';
+    const outSrc = idea._outcome_source ? escHtml(idea._outcome_source) : '';
+    const expSpec = idea._exposure_specific ? escHtml(idea._exposure_specific) : '';
+    const outSpec = idea._outcome_specific ? escHtml(idea._outcome_specific) : '';
+    const method = idea._method ? escHtml(idea._method) : '';
+    const claim = idea._claim_strength ? escHtml(idea._claim_strength) : '';
+    const threats = Array.isArray(idea._key_threats) ? idea._key_threats.length : 0;
+    const designHtml = (expSrc || outSrc || method) ? `
+      <div style="margin-top:8px;display:flex;flex-direction:column;gap:3px">
+        ${expSrc ? `<div class="design-row"><strong>Exposure:</strong> ${expSpec || '—'} · <em>${expSrc}</em></div>` : ''}
+        ${outSrc ? `<div class="design-row"><strong>Outcome:</strong> ${outSpec || '—'} · <em>${outSrc}</em></div>` : ''}
+        ${method ? `<div class="design-row"><strong>Method:</strong> ${method}${claim ? ` · <strong>Claim:</strong> ${claim}` : ''}${threats ? ` · ${threats} threats addressed` : ''}</div>` : ''}
+      </div>` : '';
+
+    // Reasons classified by severity
+    const reasons = Array.isArray(idea._eval_reasons) ? idea._eval_reasons : (Array.isArray(idea.failure_reasons) ? idea.failure_reasons : []);
+    const blockerReasons = reasons.filter(r => _BLOCKER_REASONS.has(r));
+    const reviewReasons = reasons.filter(r => _REVIEW_REASONS.has(r));
+    const infoReasons = reasons.filter(r => _INFO_REASONS.has(r));
+
+    const reasonsHtml = [
+      ...blockerReasons.map(r => `<div class="reason-blocker">✗ ${escHtml(r)}</div>`),
+      ...reviewReasons.map(r => `<div class="reason-review">⚠ ${escHtml(r)}</div>`),
+      ...infoReasons.map(r => `<div class="reason-info">ℹ ${escHtml(r)}</div>`),
+    ].join('');
+
     return `
-      <label class="hitl-card" style="display:block;padding:12px;margin-bottom:10px;border:1px solid #334155;border-radius:8px;cursor:pointer">
+      <label class="hitl-card" style="display:block;padding:12px;margin-bottom:10px;border:1px solid ${borderColor};border-radius:8px;cursor:pointer">
         <div style="display:flex;align-items:flex-start;gap:10px">
           <input type="radio" name="hitlChoice" value="${i}" ${i === 0 ? 'checked' : ''} style="margin-top:4px">
           <div style="flex:1">
-            <div style="font-weight:600;color:#e2e8f0">${verdictIcon(idea.overall_verdict)} 选题 ${i + 1}: ${title}</div>
-            ${rationale ? `<div style="margin-top:6px;font-size:.85rem;color:#cbd5e1"><strong>推荐理由：</strong>${rationale}</div>` : ''}
-            <div style="margin-top:6px;font-size:.8rem;color:#94a3b8">
-              原创性：${novelty}${total > 0 ? ` · 数据源：${verified}/${total} 已验证` : ''}
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              ${execBadge(execStatus)}
+              <span style="font-weight:600;color:#e2e8f0">选题 ${i + 1}: ${title}</span>
             </div>
-            ${failures.map(r => `<div style="margin-top:4px;font-size:.78rem;color:#f87171">⚠ ${escHtml(r)}</div>`).join('')}
+            ${designHtml}
+            ${rationale ? `<div style="margin-top:6px;font-size:.82rem;color:#94a3b8">${rationale}</div>` : ''}
+            <div style="margin-top:4px;font-size:.78rem;color:#64748b">原创性：${novelty}</div>
+            ${reasonsHtml ? `<div style="margin-top:6px">${reasonsHtml}</div>` : ''}
           </div>
         </div>
       </label>

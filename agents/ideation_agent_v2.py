@@ -26,6 +26,7 @@ from typing import Any, Optional
 import yaml
 
 from agents.candidate_evaluator import evaluate_candidate
+from agents.candidate_normalizer import normalize_candidate, compute_executability_status
 from agents.budget_tracker import BudgetExceededError, BudgetTracker
 from agents.logging_config import get_logger
 from agents.memory_retriever import MemoryRetriever
@@ -176,9 +177,12 @@ class IdeationAgentV2:
 
     def _evaluate_candidate_entry(self, candidate: dict, run_id: str) -> tuple[dict, dict]:
         """Build a contract-valid plan + deterministic candidate evaluation."""
+        candidate = normalize_candidate(candidate)
         bootstrap_plan = build_research_plan_from_candidate(candidate, evaluation=None, run_id=run_id)
         evaluation = evaluate_candidate(candidate, bootstrap_plan, llm=self._llm)
-        candidate["evaluation"] = evaluation.model_dump()
+        eval_dict = evaluation.model_dump()
+        eval_dict["executability_status"] = compute_executability_status(eval_dict)
+        candidate["evaluation"] = eval_dict
         final_plan = build_research_plan_from_candidate(
             candidate, evaluation=candidate["evaluation"], run_id=run_id
         )

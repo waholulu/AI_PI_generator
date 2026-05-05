@@ -251,8 +251,128 @@ def record_rejected_topics(
     )
 
 
-def regenerate_topics(state: Dict[str, Any]) -> Dict[str, Any]:
+def repair_candidate(candidate: Dict[str, Any]) -> Dict[str, Any]:
+    """Attempt targeted in-place repair of a blocked candidate.
+
+    Repair strategy (per blocker type):
+      missing_exposure_role_source  → re-run normalizer; then find alt source
+      missing_outcome_role_source   → re-run normalizer; then find alt source
+      missing_machine_readable_source → swap to a machine-readable source from same family
+      missing_identification_threats  → fill from method template (handled by normalizer)
+      partial_registry_match          → info only, no repair needed
+
+    Returns a new candidate dict with repairs applied and repair_history updated.
+    Does NOT write to disk — caller is responsible for persisting the result.
+    """
+    from agents.candidate_normalizer import normalize_candidate, _BLOCKER_REASONS
+    from agents.source_registry import SourceRegistry
+
+    reasons: List[str] = list(
+        (candidate.get("evaluation") or {}).get("reasons") or []
+    )
+    blocker_hits = [r for r in reasons if r in _BLOCKER_REASONS]
+    if not blocker_hits:
+        return candidate  # nothing to repair
+
+    repaired = dict(candidate)
+    registry = SourceRegistry.load()
+
+    # Re-run normalizer first (covers most single-field gaps)
+    repaired = normalize_candidate(repaired)
+
+    # Per-blocker targeted fixes
+    for reason in blocker_hits:
+        if reason == "missing_exposure_role_source":
+            family = str(repaired.get("exposure_family") or "").strip()
+            if family:
+                sources = registry.get_sources_by_variable_family(family)
+                mr_sources = [s for s in sources if registry.get(s) and registry.get(s).get("machine_readable")]
+                if mr_sources:
+                    repaired["exposure_source"] = mr_sources[0]
+                    logger.info("Repair: set exposure_source=%s for family=%s", mr_sources[0], family)
+
+        elif reason == "missing_outcome_role_source":
+            family = str(repaired.get("outcome_family") or "").strip()
+            if family:
+                sources = registry.get_sources_by_variable_family(family)
+                mr_sources = [s for s in sources if registry.get(s) and registry.get(s).get("machine_readable")]
+                if mr_sources:
+                    repaired["outcome_source"] = mr_sources[0]
+                    logger.info("Repair: set outcome_source=%s for family=%s", mr_sources[0], family)
+
+        elif reason == "missing_machine_readable_source":
+            # Swap declared sources to machine-readable alternatives from the same roles
+            for role_field in ("exposure_source", "outcome_source"):
+                current = repaired.get(role_field)
+                if current and not (registry.get(current) or {}).get("machine_readable"):
+                    family = repaired.get(
+                        "exposure_family" if role_field == "exposure_source" else "outcome_family", ""
+                    )
+                    candidates = [
+                        s for s in registry.get_sources_by_variable_family(family)
+                        if (registry.get(s) or {}).get("machine_readable")
+                    ]
+                    if candidates:
+                        repaired[role_field] = candidates[0]
+                        logger.info("Repair: replaced %s with machine-readable %s", current, candidates[0])
+
+    # Re-run normalizer again to propagate repaired sources into declared_sources
+    repaired = normalize_candidate(repaired)
+
+    # Record repair in history
+    history = list(repaired.get("repair_history") or [])
+    history.append({
+        "repaired_reasons": blocker_hits,
+        "repaired_at": datetime.now(timezone.utc).isoformat(),
+    })
+    repaired["repair_history"] = history
+    repaired.pop("evaluation", None)  # force re-evaluation
+
+    return repaired
+
+
+def repair_all_blocked_candidates() -> int:
+    """Load topic_screening.json, repair all blocked candidates, and write back.
+
+    Returns the number of candidates that were repaired.
+    """
+    from agents.candidate_normalizer import compute_executability_status
+
+    screening_path = settings.topic_screening_path()
+    if not os.path.exists(screening_path):
+        return 0
+
+    try:
+        with open(screening_path, "r", encoding="utf-8") as f:
+            screening = json.load(f)
+    except Exception as exc:
+        logger.warning("Could not load screening for repair: %s", exc)
+        return 0
+
+    candidates: list = screening.get("candidates", [])
+    repaired_count = 0
+    for i, candidate in enumerate(candidates):
+        eval_dict = candidate.get("evaluation") or {}
+        status = eval_dict.get("executability_status") or compute_executability_status(eval_dict)
+        if status == "blocked":
+            candidates[i] = repair_candidate(candidate)
+            repaired_count += 1
+
+    if repaired_count > 0:
+        screening["candidates"] = candidates
+        with open(screening_path, "w", encoding="utf-8") as f:
+            json.dump(screening, f, indent=2, ensure_ascii=False)
+        logger.info("Repaired %d blocked candidates in %s", repaired_count, screening_path)
+
+    return repaired_count
+
+
+def regenerate_topics(state: Dict[str, Any], repair_first: bool = True) -> Dict[str, Any]:
     """Re-run ideation + idea_validator outside the LangGraph.
+
+    When *repair_first* is True (default), attempts targeted repair of existing
+    blocked candidates before triggering a full re-generation.  This preserves
+    the research direction while fixing specific data source gaps.
 
     Expects *state* to contain at minimum ``domain_input`` and
     ``field_scan_path``.  The agents write updated files to disk
@@ -266,6 +386,21 @@ def regenerate_topics(state: Dict[str, Any]) -> Dict[str, Any]:
     from agents.idea_validator_agent import IdeaValidatorAgent
 
     logger.info("Regenerating topics for domain: %s", state.get("domain_input", "?"))
+
+    if repair_first:
+        repaired = repair_all_blocked_candidates()
+        if repaired > 0:
+            logger.info(
+                "Targeted repair fixed %d candidate(s) — skipping full re-generation", repaired
+            )
+            # Re-validate the repaired candidates (cheaper than full ideation)
+            validator = IdeaValidatorAgent()
+            merged = {**state}
+            merged["candidate_topics_path"] = settings.topic_screening_path()
+            validator_result = validator.run(merged)
+            merged.update(validator_result)
+            logger.info("Post-repair validation complete.")
+            return merged
 
     # Phase 1: Re-run ideation (via thin router so V2 / V0 routing applies)
     ideation_result = ideation_node(state)

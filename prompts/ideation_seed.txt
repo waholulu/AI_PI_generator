@@ -9,85 +9,75 @@ Memory context (avoid regenerating close variants):
 
 You MUST return JSON array only (no markdown, no explanation).
 
-Use this exact schema for each seed:
+Use this EXACT schema for each seed — no other field names are permitted:
 [
-  {
+  {{
     "topic_id": "seed_001",
-    "title": "short title",
-    "exposure_family": "<one of ExposureFamily>",
-    "exposure_specific": "specific measurable exposure",
-    "exposure_spatial_unit": "tract",
-    "exposure_proxy": "optional proxy variable",
-    "outcome_family": "<one of OutcomeFamily>",
-    "outcome_specific": "specific measurable outcome",
-    "outcome_spatial_unit": "tract",
-    "outcome_proxy": "optional proxy variable",
-    "geography": "study geography",
-    "spatial_unit": "tract",
-    "sampling_mode": "<one of SamplingMode>",
-    "start_year": 2010,
-    "end_year": 2020,
-    "frequency": "<one of Frequency>",
-    "method": "<one of IdentificationPrimary>",
-    "key_threats": ["confounding", "reverse_causality"],
-    "mitigations": {
-      "confounding": "unit and time fixed effects",
-      "reverse_causality": "lagged exposure design"
-    },
-    "contribution_type": "<one of ContributionPrimary>",
-    "contribution_statement": "specific contribution statement",
-    "gap_addressed": "specific gap in prior literature",
-    "declared_sources": ["NHGIS", "CDC_PLACES"],
-    "target_venues": ["Journal of Urban Economics", "Health & Place"]
-  }
+    "title": "short human-readable title (max 10 words)",
+    "exposure_family": "<one of ExposureFamily enum>",
+    "exposure_specific": "specific measurable exposure variable (e.g. 'NatWalkInd block-group walkability score')",
+    "exposure_source": "<EXACT source_id from Approved Sources list below>",
+    "outcome_family": "<one of OutcomeFamily enum>",
+    "outcome_specific": "specific measurable outcome variable (e.g. 'MHLTH_CrudePrev poor mental health prevalence')",
+    "outcome_source": "<EXACT source_id from Approved Sources list below>",
+    "unit_of_analysis": "tract",
+    "geography": "United States",
+    "time_window": "latest available cross-section",
+    "method": "<one of IdentificationPrimary enum>",
+    "sampling_mode": "<one of SamplingMode enum>",
+    "claim_strength": "associational",
+    "key_threats": ["confounding", "spatial_autocorrelation"],
+    "mitigations": {{
+      "confounding": "adjust for ACS race, income, education, housing age controls",
+      "spatial_autocorrelation": "use spatially-clustered standard errors or spatial-lag term"
+    }},
+    "contribution_type": "<one of ContributionPrimary enum>",
+    "contribution_statement": "one sentence: what is the specific empirical contribution",
+    "gap_addressed": "one sentence: what gap in prior literature this fills",
+    "declared_sources": ["<source_id>", "<source_id>", "ACS", "TIGER_Lines"]
+  }}
 ]
 
-Enum constraints (hard requirement):
+CRITICAL RULES:
+1. exposure_source and outcome_source MUST be EXACT source_id values from the Approved Sources list.
+   Do NOT invent source names. Do NOT use free-text descriptions.
+2. declared_sources MUST include the exposure_source, outcome_source, plus ACS (controls) and TIGER_Lines (boundary).
+3. claim_strength is always "associational" unless the method is diff_in_diff, regression_discontinuity,
+   instrumental_variable, or synthetic_control — in those cases use "quasi_causal".
+4. key_threats must include at least: confounding, spatial_autocorrelation, ecological_bias.
+5. mitigations must have one entry for every threat in key_threats.
+6. exposure_specific and outcome_specific must name concrete, operationalizable variables — not vague concepts.
+
+Approved Sources (use EXACT source_id as written):
+  EPA_National_Walkability_Index  — exposure; walkability, destination_accessibility [block_group]
+  EPA_Smart_Location_Database     — exposure/control; density, land_use_mix, transit_access, street_design [block_group]
+  CDC_PLACES                      — outcome; obesity, diabetes, physical_inactivity, asthma, poor_mental_health, poor_physical_health, cardiovascular_disease [tract, place, county]
+  OSMnx_OpenStreetMap             — exposure; street_network, street_connectivity, intersection_density, amenity_access, park_access [custom polygon]
+  TIGER_Lines                     — boundary; census tract / county / place geometries [tract, county, place]
+  ACS                             — control; socioeconomic_controls (race, income, education, housing) [tract, county]
+  NLCD                            — exposure; green_space, impervious_surface, land_cover [raster_30m → tract]
+  EPA_EnviroAtlas                 — exposure; tree_canopy, park_access, green_space [tract, block_group]
+  VIIRS                           — exposure; nighttime_lights (vacancy proxy, economic activity) [raster → tract]
+  Microsoft_Building_Footprints   — exposure; building_density, footprint_coverage [polygon → tract]
+  GTFS                            — exposure; transit_access, stop_density, service_frequency [stop → tract]
+  Mapillary_Street_Images         — exposure; greenery_visibility, sidewalk_presence, streetview_built_form [point/segment]
+
+Enum constraints (hard requirement — use EXACT values):
 {enum_block}
-You are a domain expert in GeoAI, urban planning, applied economics, and environmental health. Generate exactly 30 research topic seeds for the following domain: {domain}
-
-Field context (avoid already-saturated niches described here):
-{field_scan_context}
-
-Previously rejected or explored topics (do NOT regenerate these):
-{memory_context}
-
-Each seed must be a novel, tractable research topic suited for a peer-reviewed publication. Design each seed as a causal or quasi-experimental study using publicly available administrative, geospatial, or survey data.
-
-Return a JSON array of exactly 30 objects. Each object must have these keys:
-  "topic_id"         — string, format "seed_{i:03d}" (e.g., "seed_001")
-  "title"            — short descriptive title, max 12 words
-  "exposure"         — the independent variable: specific, measurable, not vague
-  "outcome"          — the dependent variable: specific, measurable, not vague
-  "geography"        — study area (e.g., "US cities", "EU metropolitan areas", "Chinese prefectures")
-  "method"           — identification strategy, one of:
-                         diff_in_diff | regression_discontinuity | fixed_effects |
-                         iv_instrumental_variables | synthetic_control |
-                         spatial_discontinuity | matching
-  "spatial_unit"     — unit of observation, one of:
-                         building | parcel | block | block_group | tract | zip_code |
-                         county | city | metro | state | region | grid_cell | country
-  "declared_sources" — JSON list of 1–3 data source names chosen ONLY from this approved catalog:
-                       NHGIS, ACS, TIGER_Lines, OpenStreetMap, GTFS_Feeds, EPA_AQS, CDC_PLACES,
-                       LEHD_LODES, Zillow_ZTRAX, BRFSS, NLCD, GHSL, Google_Earth_Engine,
-                       Sentinel2, Landsat, SafeGraph, Microsoft_Building_Footprints,
-                       VIIRS_Nighttime_Lights, WorldPop, OpenAlex, Twitter_API,
-                       OpenDataSoft_Urban
-                       Use exact names as listed. Do NOT invent new source names.
-  "notes"            — one sentence: the causal mechanism and what makes this novel
 
 Diversity requirements (must be satisfied across the 30 seeds):
-  - At least 6 seeds: urban form / built environment exposure (e.g., transit access, green space, street design)
-  - At least 5 seeds: environmental health (air/noise/heat exposure → health outcomes)
-  - At least 4 seeds: housing / real-estate economics
-  - At least 3 seeds: labor market / commuting outcomes
-  - At least 3 seeds: education / social equity outcomes
-  - Remaining: other plausible combinations (mobility, crime, energy, climate adaptation, etc.)
+  - At least 6 seeds: built environment / walkability / street network exposure → health outcome
+  - At least 5 seeds: green space / land cover / tree canopy exposure → health or wellbeing outcome
+  - At least 4 seeds: transit access → mobility, labor market, or equity outcome
+  - At least 3 seeds: nighttime lights or building footprints → economic or housing outcome
+  - At least 3 seeds: environmental health (air/heat/noise) → health outcome
+  - Remaining: other plausible combinations (education, crime, energy, social equity)
 
 Quality constraints:
-  - Every topic must have a plausible causal identification strategy (not just OLS regression)
-  - Exposure and outcome must be operationalizable with public data
-  - Geography and spatial_unit must match (e.g., tract-level outcome requires tract-level exposure)
-  - Do not propose topics that merely replicate a well-known flagship paper; add geographic, temporal, or methodological novelty
+  - Every seed must have a concrete, machine-readable exposure_source and outcome_source from the Approved list.
+  - exposure_specific and outcome_specific must name actual variable codes or measurement concepts, not vague labels.
+  - unit_of_analysis is always "tract" unless the method strictly requires a different unit.
+  - Do NOT generate topics where the outcome source is not CDC_PLACES unless you can name an alternative
+    machine-readable outcome source from the Approved list.
 
 Return JSON array only — no markdown fences, no prose before or after the array.
