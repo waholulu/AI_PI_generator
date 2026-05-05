@@ -370,13 +370,15 @@ def _normalize_claim_strength(candidate: dict) -> dict:
 # ── Executability classification ───────────────────────────────────────────────
 
 # Reasons that make a candidate Blocked (cannot proceed without human repair)
-_BLOCKER_REASONS = frozenset({
+# Public names are exported for use by hitl_helpers and other callers.
+BLOCKER_REASONS = frozenset({
     "missing_exposure_role_source",
     "missing_outcome_role_source",
     "missing_machine_readable_source",
     "no_data_sources_declared",
     "missing_join_path",
 })
+_BLOCKER_REASONS = BLOCKER_REASONS  # backward-compat alias
 
 # Reasons that indicate Needs review (can proceed but warrants human attention)
 _REVIEW_REASONS = frozenset({

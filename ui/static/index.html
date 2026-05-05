@@ -1311,7 +1311,7 @@ const _REVIEW_REASONS = new Set(['missing_identification_method','missing_identi
   'research_question_too_brief','geography_incompatible','time_window_incompatible']);
 const _INFO_REASONS = new Set(['source_alias_resolved','non_canonical_source_name',
   'canonicalize_source_name','partial_registry_match','novelty_evidence_limited',
-  'url_not_reachable','no_access_url']);
+  'url_not_reachable','no_access_url','experimental_source_requires_key']);
 
 function _reasonSeverity(r) {
   if (_BLOCKER_REASONS.has(r)) return 'blocker';

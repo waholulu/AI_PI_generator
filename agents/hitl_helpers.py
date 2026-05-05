@@ -264,13 +264,13 @@ def repair_candidate(candidate: Dict[str, Any]) -> Dict[str, Any]:
     Returns a new candidate dict with repairs applied and repair_history updated.
     Does NOT write to disk — caller is responsible for persisting the result.
     """
-    from agents.candidate_normalizer import normalize_candidate, _BLOCKER_REASONS
+    from agents.candidate_normalizer import normalize_candidate, BLOCKER_REASONS
     from agents.source_registry import SourceRegistry
 
-    reasons: List[str] = list(
-        (candidate.get("evaluation") or {}).get("reasons") or []
-    )
-    blocker_hits = [r for r in reasons if r in _BLOCKER_REASONS]
+    eval_dict = candidate.get("evaluation") or {}
+    raw_reasons = eval_dict.get("reasons")
+    reasons: List[str] = list(raw_reasons) if isinstance(raw_reasons, list) else []
+    blocker_hits = [r for r in reasons if r in BLOCKER_REASONS]
     if not blocker_hits:
         return candidate  # nothing to repair
 
@@ -353,7 +353,9 @@ def repair_all_blocked_candidates() -> int:
     repaired_count = 0
     for i, candidate in enumerate(candidates):
         eval_dict = candidate.get("evaluation") or {}
-        status = eval_dict.get("executability_status") or compute_executability_status(eval_dict)
+        status = eval_dict.get("executability_status")
+        if status is None:
+            status = compute_executability_status(eval_dict) if eval_dict else "blocked"
         if status == "blocked":
             candidates[i] = repair_candidate(candidate)
             repaired_count += 1

@@ -56,9 +56,13 @@ def _data_registry_verdict(plan: ResearchPlan) -> tuple[str, list[str], dict]:
     for source in plan.data_sources:
         name = (source.name or "").strip()
         canonical = registry.resolve(name)
-        is_exact = canonical == name  # exact source_id hit
+        # Exact hit: input IS the canonical source_id (e.g. "CDC_PLACES")
+        is_exact = canonical is not None and canonical == name
 
-        if canonical is None:
+        if canonical is not None and not is_exact:
+            # Resolved via alias / canonical-name lookup (not an exact source_id match)
+            alias_resolved += 1
+        elif canonical is None:
             # Fuzzy fallback against all known aliases
             key = name.lower()
             best_ratio = 0.0
@@ -87,14 +91,16 @@ def _data_registry_verdict(plan: ResearchPlan) -> tuple[str, list[str], dict]:
     if matched == len(plan.data_sources):
         verdict = "pass"
         if alias_resolved > 0:
-            # All sources resolved but some needed alias lookup — purely informational
+            # All sources resolved, some via alias — informational only, not a data risk
             reasons = ["partial_registry_match"]
     elif matched == 0:
         verdict = "fail"
         reasons = ["source_not_in_registry"]
     else:
+        # Some sources resolved, some genuinely absent from the registry.
+        # Use a distinct reason that is NOT in _INFO_FLAGS so it degrades the verdict.
         verdict = "warning"
-        reasons = ["partial_registry_match"]
+        reasons = ["source_not_in_registry"]
 
     return verdict, reasons, {"registry_matches": match_rows}
 
