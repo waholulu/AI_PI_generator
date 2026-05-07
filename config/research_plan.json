@@ -1,164 +1,480 @@
 {
-  "run_id": "20260505T015207Z-23f273",
-  "project_title": "GeoAI and Urban Planning: Street Connectivity and Physical Inactivity",
-  "research_question": "Are more connected street networks associated with lower physical inactivity?",
-  "short_rationale": "Fallback deterministic candidate when ideation LLM is unavailable.",
-  "population": "",
-  "geography": "United States",
-  "time_window": "",
-  "unit_of_analysis": "",
-  "exposure": {
-    "name": "street_connectivity",
-    "family": "street_connectivity",
-    "definition": "",
-    "measurement_proxy": "",
-    "spatial_unit": "",
-    "temporal_frequency": "",
-    "data_source_names": [
-      "OSMnx_OpenStreetMap",
-      "CDC_PLACES",
-      "ACS",
-      "TIGER_Lines"
-    ]
-  },
-  "outcome": {
-    "name": "physical_inactivity",
-    "family": "physical_inactivity",
-    "definition": "",
-    "measurement_proxy": "",
-    "spatial_unit": "",
-    "temporal_frequency": "",
-    "data_source_names": [
-      "OSMnx_OpenStreetMap",
-      "CDC_PLACES",
-      "ACS",
-      "TIGER_Lines"
-    ]
-  },
-  "identification": {
-    "primary_method": "cross_sectional_spatial_association",
-    "causal_claim_strength": "associational",
-    "key_threats": [],
-    "mitigations": {}
-  },
-  "data_sources": [
+  "run_id": "unknown",
+  "project_title": "Street Network and Asthma",
+  "research_question": "How does street network affect asthma at the census_tract level?",
+  "template_id": "built_environment_health",
+  "candidates": [
     {
-      "name": "OSMnx_OpenStreetMap",
-      "role": "exposure",
-      "source_type": "api",
-      "access_url": "",
-      "documentation_url": "",
-      "license": "",
-      "expected_format": "graph_geojson",
-      "access_notes": "",
-      "machine_readable": true,
-      "auth_required": false,
-      "cost_required": false,
-      "covers_variable_families": [
-        "street_connectivity",
-        "intersection_density",
-        "circuity",
-        "amenity_access",
-        "park_access",
-        "transit_stop_access",
-        "street_network",
-        "destination_accessibility"
+      "candidate_id": "beh_036",
+      "topic_id": "beh_036",
+      "title": "Street Network and Asthma",
+      "rank": 1,
+      "research_question": "How does street network affect asthma at the census_tract level?",
+      "exposure_variable": "street_network",
+      "outcome_variable": "asthma",
+      "geography": "United States",
+      "unit_of_analysis": "census_tract",
+      "method": "cross_sectional_spatial_association",
+      "key_threats": [
+        "socioeconomic_confounding",
+        "residential_self_selection",
+        "spatial_autocorrelation",
+        "exposure_measurement_error"
       ],
-      "spatial_units": [
-        "point",
-        "street_segment",
-        "polygon",
-        "city",
-        "tract_buffer"
+      "mitigations": {
+        "socioeconomic_confounding": "Include tract-level ACS socioeconomic controls.",
+        "residential_self_selection": "Include county/metro fixed effects and avoid causal claims.",
+        "spatial_autocorrelation": "Use clustered or spatially robust standard errors.",
+        "exposure_measurement_error": "Run sensitivity checks with alternative feature definitions."
+      },
+      "declared_sources": [
+        "OSMnx_OpenStreetMap",
+        "CDC_PLACES"
       ],
-      "join_keys": [],
-      "technology_tags": []
+      "exposure_source": "OSMnx_OpenStreetMap",
+      "outcome_source": "CDC_PLACES",
+      "exposure_family": "street_network",
+      "outcome_family": "asthma",
+      "join_plan": {
+        "boundary_source": [
+          "TIGER_Lines"
+        ],
+        "controls": [
+          "ACS"
+        ],
+        "join_key": "GEOID"
+      },
+      "brief_rationale": "Assess whether street network is empirically associated with asthma using OSMnx_OpenStreetMap and CDC_PLACES.",
+      "technology_tags": [
+        "osmnx"
+      ],
+      "automation_risk": "low",
+      "required_secrets": [],
+      "gate_status": {
+        "gate_id": "G3_candidate",
+        "passed": true,
+        "overall": "pass",
+        "subchecks": {
+          "source_exists": "pass",
+          "role_coverage": "pass",
+          "machine_readable": "pass",
+          "spatial_join_path": "pass",
+          "time_overlap": "pass",
+          "cloud_automation_feasibility": "pass",
+          "identification_threats": "pass",
+          "variable_mapping_exists": "pass",
+          "native_grain_known": "pass",
+          "target_grain_reachable": "pass",
+          "join_recipe_exists": "pass",
+          "aggregation_method_defined": "pass",
+          "time_cross_sectional_justified": "pass"
+        },
+        "reasons": [],
+        "repair_suggestions": [],
+        "shortlist_status": "ready",
+        "required_secrets": [],
+        "claude_code_ready": true,
+        "blocking_reasons": [],
+        "repairable_warnings": []
+      },
+      "repair_history": [],
+      "shortlist_status": "ready",
+      "readiness": "ready",
+      "evaluation": {
+        "overall_verdict": "pass",
+        "readiness": "ready",
+        "user_visible_reasons": [],
+        "score": 0.892
+      },
+      "debug": {
+        "gate_reasons": [],
+        "repair_history": []
+      }
     },
     {
-      "name": "CDC_PLACES",
-      "role": "outcome",
-      "source_type": "api",
-      "access_url": "https://data.cdc.gov/resource/cwsq-ngmh.csv",
-      "documentation_url": "https://www.cdc.gov/places/about/index.html",
-      "license": "",
-      "expected_format": "csv_api_gis",
-      "access_notes": "",
-      "machine_readable": true,
-      "auth_required": false,
-      "cost_required": false,
-      "covers_variable_families": [
-        "physical_inactivity",
-        "obesity",
-        "diabetes",
-        "asthma",
-        "poor_mental_health",
-        "poor_physical_health",
-        "cardiovascular_disease"
+      "candidate_id": "beh_001",
+      "topic_id": "beh_001",
+      "title": "Street Network and Physical Inactivity",
+      "rank": 2,
+      "research_question": "How does street network affect physical inactivity at the census_tract level?",
+      "exposure_variable": "street_network",
+      "outcome_variable": "physical_inactivity",
+      "geography": "United States",
+      "unit_of_analysis": "census_tract",
+      "method": "cross_sectional_spatial_association",
+      "key_threats": [
+        "socioeconomic_confounding",
+        "residential_self_selection",
+        "spatial_autocorrelation",
+        "exposure_measurement_error"
       ],
-      "spatial_units": [
-        "census_tract"
+      "mitigations": {
+        "socioeconomic_confounding": "Include tract-level ACS socioeconomic controls.",
+        "residential_self_selection": "Include county/metro fixed effects and avoid causal claims.",
+        "spatial_autocorrelation": "Use clustered or spatially robust standard errors.",
+        "exposure_measurement_error": "Run sensitivity checks with alternative feature definitions."
+      },
+      "declared_sources": [
+        "OSMnx_OpenStreetMap",
+        "CDC_PLACES"
       ],
-      "join_keys": [],
-      "technology_tags": []
+      "exposure_source": "OSMnx_OpenStreetMap",
+      "outcome_source": "CDC_PLACES",
+      "exposure_family": "street_network",
+      "outcome_family": "physical_inactivity",
+      "join_plan": {
+        "boundary_source": [
+          "TIGER_Lines"
+        ],
+        "controls": [
+          "ACS"
+        ],
+        "join_key": "GEOID"
+      },
+      "brief_rationale": "Assess whether street network is empirically associated with physical inactivity using OSMnx_OpenStreetMap and CDC_PLACES.",
+      "technology_tags": [
+        "osmnx"
+      ],
+      "automation_risk": "low",
+      "required_secrets": [],
+      "gate_status": {
+        "gate_id": "G3_candidate",
+        "passed": true,
+        "overall": "pass",
+        "subchecks": {
+          "source_exists": "pass",
+          "role_coverage": "pass",
+          "machine_readable": "pass",
+          "spatial_join_path": "pass",
+          "time_overlap": "pass",
+          "cloud_automation_feasibility": "pass",
+          "identification_threats": "pass",
+          "variable_mapping_exists": "pass",
+          "native_grain_known": "pass",
+          "target_grain_reachable": "pass",
+          "join_recipe_exists": "pass",
+          "aggregation_method_defined": "pass",
+          "time_cross_sectional_justified": "pass"
+        },
+        "reasons": [],
+        "repair_suggestions": [],
+        "shortlist_status": "ready",
+        "required_secrets": [],
+        "claude_code_ready": true,
+        "blocking_reasons": [],
+        "repairable_warnings": []
+      },
+      "repair_history": [],
+      "shortlist_status": "ready",
+      "readiness": "ready",
+      "evaluation": {
+        "overall_verdict": "pass",
+        "readiness": "ready",
+        "user_visible_reasons": [],
+        "score": 0.88
+      },
+      "debug": {
+        "gate_reasons": [],
+        "repair_history": []
+      }
     },
     {
-      "name": "ACS",
-      "role": "control",
-      "source_type": "api",
-      "access_url": "https://api.census.gov/data",
-      "documentation_url": "https://www.census.gov/programs-surveys/acs",
-      "license": "",
-      "expected_format": "csv_api",
-      "access_notes": "",
-      "machine_readable": true,
-      "auth_required": false,
-      "cost_required": false,
-      "covers_variable_families": [
-        "socioeconomic_controls",
-        "population_weights"
+      "candidate_id": "beh_012",
+      "topic_id": "beh_012",
+      "title": "Street Network and Diabetes",
+      "rank": 3,
+      "research_question": "How does street network affect diabetes at the census_tract level?",
+      "exposure_variable": "street_network",
+      "outcome_variable": "diabetes",
+      "geography": "United States",
+      "unit_of_analysis": "census_tract",
+      "method": "cross_sectional_spatial_association",
+      "key_threats": [
+        "socioeconomic_confounding",
+        "residential_self_selection",
+        "spatial_autocorrelation",
+        "exposure_measurement_error"
       ],
-      "spatial_units": [
-        "census_tract"
+      "mitigations": {
+        "socioeconomic_confounding": "Include tract-level ACS socioeconomic controls.",
+        "residential_self_selection": "Include county/metro fixed effects and avoid causal claims.",
+        "spatial_autocorrelation": "Use clustered or spatially robust standard errors.",
+        "exposure_measurement_error": "Run sensitivity checks with alternative feature definitions."
+      },
+      "declared_sources": [
+        "OSMnx_OpenStreetMap",
+        "CDC_PLACES"
       ],
-      "join_keys": [],
-      "technology_tags": []
+      "exposure_source": "OSMnx_OpenStreetMap",
+      "outcome_source": "CDC_PLACES",
+      "exposure_family": "street_network",
+      "outcome_family": "diabetes",
+      "join_plan": {
+        "boundary_source": [
+          "TIGER_Lines"
+        ],
+        "controls": [
+          "ACS"
+        ],
+        "join_key": "GEOID"
+      },
+      "brief_rationale": "Assess whether street network is empirically associated with diabetes using OSMnx_OpenStreetMap and CDC_PLACES.",
+      "technology_tags": [
+        "osmnx"
+      ],
+      "automation_risk": "low",
+      "required_secrets": [],
+      "gate_status": {
+        "gate_id": "G3_candidate",
+        "passed": true,
+        "overall": "pass",
+        "subchecks": {
+          "source_exists": "pass",
+          "role_coverage": "pass",
+          "machine_readable": "pass",
+          "spatial_join_path": "pass",
+          "time_overlap": "pass",
+          "cloud_automation_feasibility": "pass",
+          "identification_threats": "pass",
+          "variable_mapping_exists": "pass",
+          "native_grain_known": "pass",
+          "target_grain_reachable": "pass",
+          "join_recipe_exists": "pass",
+          "aggregation_method_defined": "pass",
+          "time_cross_sectional_justified": "pass"
+        },
+        "reasons": [],
+        "repair_suggestions": [],
+        "shortlist_status": "ready",
+        "required_secrets": [],
+        "claude_code_ready": true,
+        "blocking_reasons": [],
+        "repairable_warnings": []
+      },
+      "repair_history": [],
+      "shortlist_status": "ready",
+      "readiness": "ready",
+      "evaluation": {
+        "overall_verdict": "pass",
+        "readiness": "ready",
+        "user_visible_reasons": [],
+        "score": 0.877
+      },
+      "debug": {
+        "gate_reasons": [],
+        "repair_history": []
+      }
     },
     {
-      "name": "TIGER_Lines",
-      "role": "control",
-      "source_type": "download",
-      "access_url": "https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.html",
-      "documentation_url": "https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.html",
-      "license": "",
-      "expected_format": "shapefile",
-      "access_notes": "",
-      "machine_readable": true,
-      "auth_required": false,
-      "cost_required": false,
-      "covers_variable_families": [
-        "boundaries"
+      "candidate_id": "beh_002",
+      "topic_id": "beh_002",
+      "title": "Street Network and Obesity",
+      "rank": 4,
+      "research_question": "How does street network affect obesity at the census_tract level?",
+      "exposure_variable": "street_network",
+      "outcome_variable": "obesity",
+      "geography": "United States",
+      "unit_of_analysis": "census_tract",
+      "method": "cross_sectional_spatial_association",
+      "key_threats": [
+        "socioeconomic_confounding",
+        "residential_self_selection",
+        "spatial_autocorrelation",
+        "exposure_measurement_error"
       ],
-      "spatial_units": [
-        "census_tract"
+      "mitigations": {
+        "socioeconomic_confounding": "Include tract-level ACS socioeconomic controls.",
+        "residential_self_selection": "Include county/metro fixed effects and avoid causal claims.",
+        "spatial_autocorrelation": "Use clustered or spatially robust standard errors.",
+        "exposure_measurement_error": "Run sensitivity checks with alternative feature definitions."
+      },
+      "declared_sources": [
+        "OSMnx_OpenStreetMap",
+        "CDC_PLACES"
       ],
-      "join_keys": [],
-      "technology_tags": []
+      "exposure_source": "OSMnx_OpenStreetMap",
+      "outcome_source": "CDC_PLACES",
+      "exposure_family": "street_network",
+      "outcome_family": "obesity",
+      "join_plan": {
+        "boundary_source": [
+          "TIGER_Lines"
+        ],
+        "controls": [
+          "ACS"
+        ],
+        "join_key": "GEOID"
+      },
+      "brief_rationale": "Assess whether street network is empirically associated with obesity using OSMnx_OpenStreetMap and CDC_PLACES.",
+      "technology_tags": [
+        "osmnx"
+      ],
+      "automation_risk": "low",
+      "required_secrets": [],
+      "gate_status": {
+        "gate_id": "G3_candidate",
+        "passed": true,
+        "overall": "pass",
+        "subchecks": {
+          "source_exists": "pass",
+          "role_coverage": "pass",
+          "machine_readable": "pass",
+          "spatial_join_path": "pass",
+          "time_overlap": "pass",
+          "cloud_automation_feasibility": "pass",
+          "identification_threats": "pass",
+          "variable_mapping_exists": "pass",
+          "native_grain_known": "pass",
+          "target_grain_reachable": "pass",
+          "join_recipe_exists": "pass",
+          "aggregation_method_defined": "pass",
+          "time_cross_sectional_justified": "pass"
+        },
+        "reasons": [],
+        "repair_suggestions": [],
+        "shortlist_status": "ready",
+        "required_secrets": [],
+        "claude_code_ready": true,
+        "blocking_reasons": [],
+        "repairable_warnings": []
+      },
+      "repair_history": [],
+      "shortlist_status": "ready",
+      "readiness": "ready",
+      "evaluation": {
+        "overall_verdict": "pass",
+        "readiness": "ready",
+        "user_visible_reasons": [],
+        "score": 0.873
+      },
+      "debug": {
+        "gate_reasons": [],
+        "repair_history": []
+      }
+    },
+    {
+      "candidate_id": "beh_010",
+      "topic_id": "beh_010",
+      "title": "Nighttime Lights and Cardiovascular Disease",
+      "rank": 5,
+      "research_question": "How does nighttime lights affect cardiovascular disease at the census_tract level?",
+      "exposure_variable": "nighttime_lights",
+      "outcome_variable": "cardiovascular_disease",
+      "geography": "United States",
+      "unit_of_analysis": "census_tract",
+      "method": "cross_sectional_spatial_association",
+      "key_threats": [
+        "socioeconomic_confounding",
+        "residential_self_selection",
+        "spatial_autocorrelation",
+        "exposure_measurement_error"
+      ],
+      "mitigations": {
+        "socioeconomic_confounding": "Include tract-level ACS socioeconomic controls.",
+        "residential_self_selection": "Include county/metro fixed effects and avoid causal claims.",
+        "spatial_autocorrelation": "Use clustered or spatially robust standard errors.",
+        "exposure_measurement_error": "Run sensitivity checks with alternative feature definitions."
+      },
+      "declared_sources": [
+        "VIIRS",
+        "CDC_PLACES"
+      ],
+      "exposure_source": "VIIRS",
+      "outcome_source": "CDC_PLACES",
+      "exposure_family": "nighttime_lights",
+      "outcome_family": "cardiovascular_disease",
+      "join_plan": {
+        "boundary_source": [
+          "TIGER_Lines"
+        ],
+        "controls": [
+          "ACS"
+        ],
+        "join_key": "GEOID",
+        "aggregation_plan": "aggregate_from_source_resolution_to_census_tract"
+      },
+      "brief_rationale": "Assess whether nighttime lights is empirically associated with cardiovascular disease using VIIRS and CDC_PLACES.",
+      "technology_tags": [
+        "remote_sensing"
+      ],
+      "automation_risk": "low",
+      "required_secrets": [],
+      "gate_status": {
+        "gate_id": "G3_candidate",
+        "passed": true,
+        "overall": "warning",
+        "subchecks": {
+          "source_exists": "pass",
+          "role_coverage": "pass",
+          "machine_readable": "pass",
+          "spatial_join_path": "warning",
+          "time_overlap": "pass",
+          "cloud_automation_feasibility": "pass",
+          "identification_threats": "pass",
+          "variable_mapping_exists": "pass",
+          "native_grain_known": "pass",
+          "target_grain_reachable": "pass",
+          "join_recipe_exists": "pass",
+          "aggregation_method_defined": "pass",
+          "time_cross_sectional_justified": "pass"
+        },
+        "reasons": [
+          "raster_500m_to_census_tract_aggregation_required"
+        ],
+        "repair_suggestions": [
+          "add_aggregation_plan"
+        ],
+        "shortlist_status": "review",
+        "required_secrets": [],
+        "claude_code_ready": false,
+        "blocking_reasons": [],
+        "repairable_warnings": []
+      },
+      "repair_history": [
+        {
+          "candidate_id": "beh_010",
+          "round": 1,
+          "issue": "aggregation_required",
+          "action": "add_aggregation_plan",
+          "before": {
+            "aggregation_plan": null
+          },
+          "after": {
+            "aggregation_plan": "aggregate_from_source_resolution_to_census_tract"
+          },
+          "result": "warning_accepted"
+        }
+      ],
+      "shortlist_status": "review",
+      "readiness": "needs_review",
+      "evaluation": {
+        "overall_verdict": "warning",
+        "readiness": "needs_review",
+        "user_visible_reasons": [
+          "raster_500m_to_census_tract_aggregation_required"
+        ],
+        "score": 0.823
+      },
+      "debug": {
+        "gate_reasons": [
+          "raster_500m_to_census_tract_aggregation_required"
+        ],
+        "repair_history": [
+          {
+            "candidate_id": "beh_010",
+            "round": 1,
+            "issue": "aggregation_required",
+            "action": "add_aggregation_plan",
+            "before": {
+              "aggregation_plan": null
+            },
+            "after": {
+              "aggregation_plan": "aggregate_from_source_resolution_to_census_tract"
+            },
+            "result": "warning_accepted"
+          }
+        ]
+      }
     }
-  ],
-  "literature_queries": [
-    "GeoAI and Urban Planning: Street Connectivity and Physical Inactivity United States",
-    "street_connectivity physical_inactivity identification strategy",
-    "street_connectivity physical_inactivity open data United States"
-  ],
-  "hypotheses": [
-    "H1: street_connectivity is associated with physical_inactivity."
-  ],
-  "feasibility": {
-    "overall_verdict": "warning",
-    "data_verdict": "warning",
-    "novelty_verdict": "unknown",
-    "identification_verdict": "warning",
-    "main_risks": []
-  },
-  "selected_candidate_id": "fallback_001"
+  ]
 }
