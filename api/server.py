@@ -120,15 +120,16 @@ async def _run_pipeline(
     scope_token = settings.activate_run_scope(run_id)
     graph = _get_graph()
     config = {"configurable": {"thread_id": thread_id}}
+    effective_template_id = template_id or "built_environment_health"
     initial_state = {
         "domain_input": domain_input,
         "execution_status": "starting",
-        "template_id": template_id,
+        "template_id": effective_template_id,
         "technology_options": technology_options or {},
         "automation_risk_tolerance": automation_risk_tolerance,
         "cloud_constraints": cloud_constraints or {},
         "enable_experimental": enable_experimental,
-        "candidate_factory_enabled": bool(template_id),
+        "candidate_factory_enabled": True,
         "max_candidates": max_candidates,
     }
 
@@ -252,9 +253,31 @@ async def _resume_pipeline(run_id: str, thread_id: str) -> None:
 
 # ── Endpoints ─────────────────────────────────────────────────────────
 
+def _get_git_sha() -> str | None:
+    import subprocess
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip() or None
+    except Exception:
+        return None
+
+
+_BUILD_TIME: str = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+_GIT_SHA: str | None = _get_git_sha()
+
+
 @app.get("/health", response_model=HealthResponse)
 async def health():
-    return HealthResponse(status="ok")
+    return HealthResponse(
+        status="ok",
+        git_sha=_GIT_SHA,
+        build_time=_BUILD_TIME,
+        default_mode="candidate_factory",
+        default_template_id="built_environment_health",
+    )
 
 
 @app.get("/templates")
@@ -711,8 +734,11 @@ async def list_candidates(run_id: str, view: str = "shortlist"):
     """List candidates for a run.
 
     Query params:
-      view=shortlist  (default) — top-k user-visible candidates from topic_screening.json
-      view=all                  — full ranked pool from candidate_cards.json
+      view=shortlist  (default) — non-blocked shortlist from topic_screening.json
+      view=all                  — full ranked pool from candidate_cards.json (includes blocked)
+
+    Contract: shortlist view NEVER contains blocked candidates.  Blocked candidates
+    are diagnostic artifacts and are only surfaced in view=all.
     """
     run = run_manager.get_run(run_id)
     if run is None:
@@ -722,10 +748,16 @@ async def list_candidates(run_id: str, view: str = "shortlist"):
     else:
         cards = _load_shortlist_cards(run_id)
         if not cards:
-            # Fallback: no shortlist file yet; return full pool (e.g. legacy runs).
             cards = _load_candidate_cards(run_id)
+        # Enforce contract: shortlist must not contain blocked candidates.
+        cards = [c for c in cards if c.get("readiness") != "blocked"]
     public_cards = [{k: v for k, v in c.items() if k != "_raw"} for c in cards]
-    return {"run_id": run_id, "view": view, "count": len(public_cards), "candidates": public_cards}
+    return {
+        "run_id": run_id,
+        "view": view,
+        "count": len(public_cards),
+        "candidates": public_cards,
+    }
 
 
 @app.get("/runs/{run_id}/candidates/{candidate_id}")
@@ -742,7 +774,12 @@ async def get_candidate(run_id: str, candidate_id: str):
 
 @app.post("/runs/{run_id}/candidates/{candidate_id}/select", response_model=ApproveResponse)
 async def select_candidate_by_id(run_id: str, candidate_id: str):
-    """Select a candidate by candidate_id and resume the paused pipeline."""
+    """Select a candidate by candidate_id and resume the paused pipeline.
+
+    Returns 422 if the candidate is blocked — blocked candidates cannot be
+    selected for execution.  The UI must keep the Select button disabled for
+    blocked candidates.
+    """
     run = run_manager.get_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found.")
@@ -751,6 +788,17 @@ async def select_candidate_by_id(run_id: str, candidate_id: str):
             status_code=409,
             detail=f"Run is in status '{run.status}', not 'awaiting_approval'.",
         )
+
+    # Block selection of blocked candidates
+    candidates = _load_candidate_cards(run_id)
+    candidate_card = next((c for c in candidates if c.get("candidate_id") == candidate_id), None)
+    if candidate_card and candidate_card.get("readiness") == "blocked":
+        reasons = candidate_card.get("user_visible_reasons") or []
+        detail = (
+            f"候选 {candidate_id!r} 状态为 blocked，无法在当前模板约束下执行。"
+            + (f" 原因：{reasons[0]}" if reasons else "")
+        )
+        raise HTTPException(status_code=422, detail=detail)
 
     token = settings.activate_run_scope(run_id)
     try:

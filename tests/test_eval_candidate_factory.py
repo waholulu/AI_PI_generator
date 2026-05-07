@@ -111,36 +111,52 @@ def test_check_thresholds_passes_on_good_result():
         "low_or_medium_automation_risk_rate": 0.88,
         "experimental_candidate_count": 0,
         "enable_experimental": False,
+        # New E2E contract fields (required for thresholds to pass)
+        "shortlist_count": 5,
+        "shortlist_blocked_count": 0,
+        "claude_code_ready_count": 8,
+        # Data catalog fields
+        "source_profile_completion_rate": 0.95,
+        "variable_mapping_completion_rate": 0.80,
+        "join_recipe_completion_rate": 0.90,
+        "source_aware_pack_rate": 0.90,
     }
     assert _check_thresholds(good) == []
 
 
+_GOOD_FIELDS = {
+    "score_completion_rate": 1.0,
+    "implementation_spec_completion_rate": 0.92,
+    "development_pack_ready_rate": 0.85,
+    "low_or_medium_automation_risk_rate": 0.88,
+    "experimental_candidate_count": 0,
+    "enable_experimental": False,
+    "shortlist_count": 5,
+    "shortlist_blocked_count": 0,
+    "claude_code_ready_count": 8,
+    "source_profile_completion_rate": 0.95,
+    "variable_mapping_completion_rate": 0.80,
+    "join_recipe_completion_rate": 0.90,
+    "source_aware_pack_rate": 0.90,
+}
+
+
 def test_check_thresholds_catches_low_candidate_count():
-    bad = {
-        "candidate_count": 5,
-        "score_completion_rate": 1.0,
-        "implementation_spec_completion_rate": 0.92,
-        "development_pack_ready_rate": 0.85,
-        "low_or_medium_automation_risk_rate": 0.88,
-        "experimental_candidate_count": 0,
-        "enable_experimental": False,
-    }
+    bad = {**_GOOD_FIELDS, "candidate_count": 5}
     failures = _check_thresholds(bad)
     assert any("candidate_count" in f for f in failures)
 
 
 def test_check_thresholds_catches_experimental_leak():
-    leaky = {
-        "candidate_count": 25,
-        "score_completion_rate": 1.0,
-        "implementation_spec_completion_rate": 0.92,
-        "development_pack_ready_rate": 0.85,
-        "low_or_medium_automation_risk_rate": 0.88,
-        "experimental_candidate_count": 3,
-        "enable_experimental": False,
-    }
+    leaky = {**_GOOD_FIELDS, "candidate_count": 25, "experimental_candidate_count": 3}
     failures = _check_thresholds(leaky)
     assert any("experimental" in f for f in failures)
+
+
+def test_check_thresholds_catches_blocked_in_shortlist():
+    bad = {**_GOOD_FIELDS, "candidate_count": 25, "shortlist_blocked_count": 1}
+    failures = _check_thresholds(bad)
+    assert any("shortlist_blocked_count" in f for f in failures)
 
 
 # ---------------------------------------------------------------------------

@@ -94,72 +94,36 @@ def _emit_emergency_fallback_outputs(state: ResearchState) -> dict:
     }
 
 
-def ideation_node(state: ResearchState) -> dict:
-    """LangGraph node: route to legacy V0 or new V2 ideation agent."""
-    if state.get("candidate_factory_enabled") and state.get("template_id"):
-        logger.info("Routing to candidate factory ideation (template: %s)", state.get("template_id"))
-        from agents.candidate_factory_ideation import run_candidate_factory_ideation
-        return run_candidate_factory_ideation(state)
+_DEFAULT_TEMPLATE_ID = "built_environment_health"
 
+
+def ideation_node(state: ResearchState) -> dict:
+    """LangGraph node: route to Candidate Factory (default) or legacy V0.
+
+    Routing priority:
+      1. Explicit legacy mode (--legacy-ideation or LEGACY_IDEATION=1) → IdeationAgentV0
+      2. Everything else → Candidate Factory with template_id (defaults to
+         built_environment_health when not specified in state).
+
+    The V2 LLM ideation path is intentionally NOT reachable from this router.
+    Candidate Factory is the production default; V2 is only accessible directly.
+    """
     use_legacy = (
         state.get("legacy_ideation", False)
         or os.getenv("LEGACY_IDEATION", "0").strip() not in ("", "0", "false", "False")
     )
 
     if use_legacy:
-        logger.info("Routing to IdeationAgentV0 (legacy mode)")
+        logger.info("Routing to IdeationAgentV0 (explicit legacy mode)")
         from agents._legacy.ideation_agent_v0 import IdeationAgentV0
         agent = IdeationAgentV0()
         return agent.run(state)
 
-    logger.info("Routing to IdeationAgentV2")
-    from agents.ideation_agent_v2 import IdeationAgentV2
-    budget_override_usd = state.get("budget_override_usd")
-    skip_reflection = state.get("skip_reflection", False)
-    agent = IdeationAgentV2(
-        budget_override_usd=budget_override_usd,
-        skip_reflection=skip_reflection,
+    template_id = state.get("template_id") or _DEFAULT_TEMPLATE_ID
+    logger.info(
+        "Routing to Candidate Factory ideation (template: %s%s)",
+        template_id,
+        " [default]" if not state.get("template_id") else "",
     )
-    try:
-        return agent.run(state)
-    except HITLInterruption as e:
-        return {
-            "execution_status": "hitl_required",
-            "hitl_interruption": {
-                "kind": e.kind,
-                "message": e.message,
-                "failed_gates": e.failed_gates,
-                "suggested_operations": e.suggested_operations,
-                "diff_from_original": e.diff_from_original,
-                "suggested_next_operations": e.suggested_next_operations,
-            },
-        }
-    except Exception as e:
-        from agents import settings as _settings
-        cfg_path = _settings.reflection_config_path()
-        try:
-            import yaml
-            with open(cfg_path) as f:
-                cfg = yaml.safe_load(f) or {}
-            fallback_enabled = cfg.get("feature_flags", {}).get(
-                "legacy_fallback_on_error", True
-            )
-        except Exception:
-            fallback_enabled = True
-
-        if fallback_enabled:
-            logger.warning(
-                "IdeationAgentV2 failed (%s); falling back to V0 (legacy_fallback_on_error=True)",
-                e,
-            )
-            from agents._legacy.ideation_agent_v0 import IdeationAgentV0
-            try:
-                agent_v0 = IdeationAgentV0()
-                return agent_v0.run(state)
-            except Exception as legacy_exc:
-                logger.warning(
-                    "Legacy IdeationAgentV0 also failed (%s); using deterministic emergency fallback.",
-                    legacy_exc,
-                )
-                return _emit_emergency_fallback_outputs(state)
-        raise
+    from agents.candidate_factory_ideation import run_candidate_factory_ideation
+    return run_candidate_factory_ideation({**state, "template_id": template_id})

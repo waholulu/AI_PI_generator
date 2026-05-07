@@ -177,7 +177,11 @@ def test_readiness_needs_review() -> None:
         repair_history=[],
     )
     assert result["readiness"] == "needs_review"
-    assert "experimental_source_in_use" in result["user_visible_reasons"]
+    # user_visible_reasons now contains translated Chinese messages; raw flag must be absent
+    reasons_text = " ".join(result["user_visible_reasons"])
+    assert result["user_visible_reasons"], "user_visible_reasons must be non-empty"
+    # translated message for experimental_source_in_use must be present
+    assert "实验性" in reasons_text or "experimental_source_in_use" in reasons_text
 
 
 def test_readiness_blocked_by_blocking_reasons() -> None:
@@ -193,7 +197,10 @@ def test_readiness_blocked_by_blocking_reasons() -> None:
     )
     assert result["readiness"] == "blocked"
     assert result["data_status"] == "failed"
-    assert "missing_exposure_role_source" in result["user_visible_reasons"]
+    # user_visible_reasons now contains translated Chinese messages
+    reasons_text = " ".join(result["user_visible_reasons"])
+    assert result["user_visible_reasons"], "user_visible_reasons must be non-empty for blocked status"
+    assert "暴露" in reasons_text or "missing_exposure_role_source" in reasons_text
 
 
 def test_readiness_blocked_by_shortlist_status() -> None:

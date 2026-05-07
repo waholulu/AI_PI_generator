@@ -347,17 +347,24 @@ def test_ideation_node_routes_to_legacy(monkeypatch, tmp_path):
     assert result["execution_status"] == "done"
 
 
-def test_ideation_node_routes_to_v2_by_default(monkeypatch, tmp_path):
+def test_ideation_node_routes_to_candidate_factory_by_default(monkeypatch, tmp_path):
+    """Default route is Candidate Factory (not V2 LLM) — verifies the routing contract."""
     monkeypatch.setenv("AUTOPI_DATA_ROOT", str(tmp_path))
     monkeypatch.delenv("LEGACY_IDEATION", raising=False)
 
-    with patch("agents.ideation_agent_v2.IdeationAgentV2") as MockV2:
-        MockV2.return_value.run.return_value = {"execution_status": "harvesting", "degraded_nodes": []}
+    with patch(
+        "agents.candidate_factory_ideation.run_candidate_factory_ideation",
+        return_value={"execution_status": "ideation_complete"},
+    ) as mock_factory:
         from importlib import reload
         import agents.ideation_agent as ia_mod
         reload(ia_mod)
         result = ia_mod.ideation_node({"domain_input": "test", "degraded_nodes": []})
-    assert result["execution_status"] == "harvesting"
+
+    mock_factory.assert_called_once()
+    called_state = mock_factory.call_args[0][0]
+    assert called_state.get("template_id") == "built_environment_health"
+    assert result["execution_status"] == "ideation_complete"
 
 
 # ── Test 8: schema re-exports are available from ideation_agent ───────────────

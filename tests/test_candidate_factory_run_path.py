@@ -50,28 +50,29 @@ def test_factory_path_taken_when_enabled(run_scope):
     assert result["execution_status"] == "ideation_complete"
 
 
-# ── test 2: legacy path is unaffected when template_id absent ────────────────
+# ── test 2: Candidate Factory is always called (default template applied) ────
 
-def test_legacy_path_unchanged_when_no_template():
+def test_factory_called_with_default_template_when_no_template_id():
+    """ideation_node() must route to Candidate Factory even when template_id is absent.
+
+    The router applies 'built_environment_health' as the default template.
+    """
     state = {
         "domain_input": "Urban heat and health",
-        "candidate_factory_enabled": False,
         "execution_status": "starting",
     }
     factory_called = []
 
     with patch(
         "agents.candidate_factory_ideation.run_candidate_factory_ideation",
-        side_effect=lambda s: factory_called.append(True) or {},
+        side_effect=lambda s: factory_called.append(s.get("template_id")) or {"execution_status": "ideation_complete"},
     ):
-        # V2 will fail without a real LLM key — that's fine, we just confirm
-        # the factory was NOT called.
-        try:
-            ideation_node(state)
-        except Exception:
-            pass
+        ideation_node(state)
 
-    assert factory_called == [], "Factory must not be called when candidate_factory_enabled=False"
+    assert factory_called, "Candidate Factory must be called when no template_id is provided"
+    assert factory_called[0] == "built_environment_health", (
+        f"Default template should be 'built_environment_health', got {factory_called[0]!r}"
+    )
 
 
 # ── test 3: candidate_cards.json is written with ≥20 entries ──────────────────

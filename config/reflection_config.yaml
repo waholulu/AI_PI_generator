@@ -35,4 +35,4 @@ feature_flags:
   use_reflection_loop: true
   use_budget_tracker: true
   enable_tentative_pool: true
-  legacy_fallback_on_error: true
+  legacy_fallback_on_error: false

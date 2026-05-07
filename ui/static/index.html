@@ -933,14 +933,24 @@ function renderCandidateReviewTab(el, run) {
           const secretsHtml = hasSecrets
             ? `<div style="font-size:.78rem;color:#fbbf24">⚠ Required secrets: ${escHtml((c.required_secrets||[]).join(', '))}</div>`
             : '<div style="font-size:.78rem;color:#86efac">Required secrets: none</div>';
-          const noPaidApi = state.cloudConstraints.no_paid_api;
-          const selectDisabled = (noPaidApi && hasSecrets) ? 'disabled title="Paid API required — blocked by no_paid_api constraint"' : '';
+          const isBlocked = c.readiness === 'blocked';
+          const blockedReasons = (c.user_visible_reasons||[]);
+          const blockedTip = isBlocked
+            ? (blockedReasons.length ? blockedReasons[0] : '当前模板下不可执行')
+            : '';
+          const selectDisabled = isBlocked
+            ? `disabled title="${escAttr(blockedTip || '当前模板下不可执行')}"` : '';
           const copyPromptBtn = c.claude_code_ready
             ? `<button class="btn btn-primary" onclick="copyClaudePrompt('${run.run_id}','${escAttr(c.candidate_id)}')">Copy Task Prompt</button>`
             : '';
+          const blockedBannerHtml = isBlocked
+            ? `<div style="margin-top:6px;padding:6px 10px;background:#3b1111;border:1px solid #7f1d1d;border-radius:6px;font-size:.78rem;color:#f87171">
+                ✗ 不可执行：${escHtml(blockedTip || '当前模板约束下无法自动运行，仅作诊断用途')}
+               </div>`
+            : '';
           return `
-          <div class="candidate-card">
-            <div style="display:flex;gap:4px;flex-wrap:wrap">${statusBadge(c.shortlist_status)} ${riskBadge(c.automation_risk)} ${gateHtml}</div>
+          <div class="candidate-card" style="${isBlocked ? 'opacity:.65;border-color:#7f1d1d' : ''}">
+            <div style="display:flex;gap:4px;flex-wrap:wrap">${statusBadge(c.readiness || c.shortlist_status)} ${riskBadge(c.automation_risk)} ${gateHtml}</div>
             <div class="candidate-title">${escHtml(c.title)}</div>
             <div style="font-size:.8rem;color:#94a3b8">${escHtml(c.research_question)}</div>
             <div style="font-size:.8rem">X: ${escHtml(c.exposure_label||'')} · <em>${escHtml(c.exposure_source||'')}</em></div>
@@ -953,6 +963,7 @@ function renderCandidateReviewTab(el, run) {
               <span>ID: ${Math.round((c.scores?.identification_quality||0)*100)}</span>
             </div>
             ${secretsHtml}
+            ${blockedBannerHtml}
             ${tagsHtml ? `<div style="margin-top:2px">${tagsHtml}</div>` : ''}
             <div style="display:flex;gap:4px;align-items:center;margin-top:4px">${dpHtml}</div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
@@ -974,7 +985,9 @@ function renderCandidateReviewTab(el, run) {
 
 function statusBadge(status) {
   if (status === 'ready') return '<span class="badge badge-completed">Ready</span>';
+  if (status === 'ready_after_auto_fix') return '<span class="badge badge-completed">Ready (auto-fixed)</span>';
   if (status === 'blocked') return '<span class="badge badge-failed">Blocked</span>';
+  if (status === 'needs_review') return '<span class="badge badge-awaiting">Needs Review</span>';
   return '<span class="badge badge-awaiting">Review</span>';
 }
 

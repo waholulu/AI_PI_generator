@@ -149,14 +149,16 @@ def _card_to_screening_entry(card: dict) -> dict:
 
 
 def _select_shortlist(ranked_cards: list[dict], shortlist_size: int = 5) -> list[dict]:
-    """Return top-k non-blocked candidates; falls back to top-k overall if needed."""
-    shortlist = [
+    """Return top-k non-blocked candidates.
+
+    Only candidates with readiness in {ready, ready_after_auto_fix, needs_review}
+    are eligible.  Blocked candidates are never promoted to the shortlist —
+    they remain in candidate_cards.json for diagnostics only.
+    """
+    return [
         c for c in ranked_cards
         if c.get("readiness") in {"ready", "ready_after_auto_fix", "needs_review"}
     ][:shortlist_size]
-    if len(shortlist) < shortlist_size:
-        shortlist = ranked_cards[:shortlist_size]
-    return shortlist
 
 
 def run_candidate_factory_ideation(state: dict) -> dict:

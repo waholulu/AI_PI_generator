@@ -1,3 +1,10 @@
+"""Tests that CLI flags (--budget-override-usd, --skip-reflection) are threaded
+through the initial state correctly.
+
+Note: these flags are kept in state for backward compatibility and future use
+by the Candidate Factory pipeline, but ideation_node() no longer routes to
+IdeationAgentV2 by default.  The test verifies the state-passing contract.
+"""
 from __future__ import annotations
 
 import sys
@@ -5,7 +12,8 @@ import types
 from unittest.mock import patch
 
 
-def test_cli_flags_thread_to_ideation_agent_v2_constructor():
+def test_cli_flags_threaded_into_initial_state():
+    """--budget-override-usd and --skip-reflection must appear in initial_state passed to graph."""
     fake_graph_mod = types.ModuleType("langgraph.graph")
     fake_graph_mod.StateGraph = object
     fake_graph_mod.START = "START"
@@ -50,20 +58,26 @@ def test_cli_flags_thread_to_ideation_agent_v2_constructor():
     assert captured_state["budget_override_usd"] == 0.50
     assert captured_state["skip_reflection"] is True
 
+
+def test_ideation_node_routes_to_candidate_factory_not_v2():
+    """ideation_node() must call run_candidate_factory_ideation, NOT IdeationAgentV2."""
     from agents.ideation_agent import ideation_node
 
-    with patch("agents.ideation_agent_v2.IdeationAgentV2") as mock_v2:
-        mock_v2.return_value.run.return_value = {"execution_status": "harvesting"}
-        ideation_node(
-            {
-                "domain_input": "Urban Health",
-                "degraded_nodes": [],
-                "budget_override_usd": 0.50,
-                "skip_reflection": True,
-            }
-        )
+    factory_called = []
 
-    mock_v2.assert_called_once_with(
-        budget_override_usd=0.50,
-        skip_reflection=True,
-    )
+    with patch(
+        "agents.candidate_factory_ideation.run_candidate_factory_ideation",
+        side_effect=lambda s: factory_called.append(True) or {"execution_status": "ideation_complete"},
+    ):
+        with patch("agents.ideation_agent_v2.IdeationAgentV2") as mock_v2:
+            ideation_node(
+                {
+                    "domain_input": "Urban Health",
+                    "degraded_nodes": [],
+                    "budget_override_usd": 0.50,
+                    "skip_reflection": True,
+                }
+            )
+
+    assert factory_called, "Candidate Factory must be called"
+    mock_v2.assert_not_called()

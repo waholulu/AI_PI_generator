@@ -36,9 +36,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from agents.candidate_composer import compose_candidates
+from agents.candidate_export_validator import validate_candidate_export_contract
 from agents.candidate_feasibility import precheck_candidate
+from agents.candidate_flag_classifier import compute_candidate_readiness
 from agents.candidate_repair import repair_candidate
-from agents.final_ranker import score_candidate
+from agents.final_ranker import rank_candidates, score_candidate
 from agents.implementation_spec_builder import build_implementation_spec
 from agents.source_registry import SourceRegistry
 from models.candidate_composer_schema import ComposeRequest
@@ -56,6 +58,7 @@ def evaluate(
     enable_tier2: bool = True,
     no_paid_api: bool = True,
 ) -> dict:
+    """Run the full production pipeline (same steps as candidate_factory_ideation.py)."""
     req = ComposeRequest(
         template_id=template_id,
         domain_input=domain,
@@ -78,6 +81,7 @@ def evaluate(
     blocked_count = 0
     repair_success_count = 0
     repair_attempted_count = 0
+    claude_code_ready_count = 0
 
     # Data catalog metrics
     source_profile_count = 0
@@ -86,11 +90,21 @@ def evaluate(
     source_aware_spec_count = 0
 
     top_candidate_ids: list[str] = []
-    scored_cards: list[dict] = []
+    cards: list[dict] = []
 
     for c in candidates:
+        # Step 1: precheck (role-based G3)
         gate = precheck_candidate(c)
+        # Step 2: deterministic repair
         repaired, gate, history = repair_candidate(c, gate)
+        # Step 3: strict export validation (matches production)
+        gate = validate_candidate_export_contract(repaired, gate, no_paid_api=no_paid_api)
+        # Step 4: user-facing readiness classification
+        readiness_summary = compute_candidate_readiness(repaired.model_dump(), gate, history)
+        # Step 5: weighted score
+        scores = score_candidate(repaired.model_dump(), gate, history)
+        readiness = readiness_summary.get("readiness", "blocked")
+        shortlist_status = gate.get("shortlist_status", "blocked")
 
         if gate.get("overall") in {"pass", "warning"}:
             pass_count += 1
@@ -100,12 +114,10 @@ def evaluate(
             if gate.get("overall") in {"pass", "warning"}:
                 repair_success_count += 1
 
-        scores = score_candidate(repaired.model_dump(), gate, history)
-
         if scores.get("overall", 0) > 0:
             score_completed += 1
 
-        # Implementation spec completeness: can we build a non-trivial spec?
+        # Implementation spec completeness
         if (
             repaired.exposure_source
             and repaired.outcome_source
@@ -114,16 +126,22 @@ def evaluate(
         ):
             spec_complete += 1
 
-        # Development pack readiness: spec + gate pass + low/medium risk
-        is_pack_ready = (
+        # Development pack pre-qualification: would this candidate be claude_code_ready
+        # if a pack were generated?  (eval runs without writing files, so we check conditions.)
+        is_pack_prequalified = (
             repaired.exposure_source
             and repaired.outcome_source
             and repaired.method_template
             and gate.get("overall") in {"pass", "warning"}
+            and shortlist_status != "blocked"
             and repaired.automation_risk in {"low", "medium"}
+            and not repaired.required_secrets
+            and not any(t in {"experimental", "streetview_cv", "deep_learning", "satellite_cv"}
+                        for t in (repaired.technology_tags or []))
         )
-        if is_pack_ready:
+        if is_pack_prequalified:
             pack_ready += 1
+            claude_code_ready_count += 1
 
         # Implementation spec: at minimum, source + method available
         if repaired.exposure_source and repaired.outcome_source and repaired.method_template:
@@ -135,30 +153,25 @@ def evaluate(
         if "experimental" in repaired.technology_tags:
             experimental_count += 1
 
-        shortlist = gate.get("shortlist_status", "blocked")
-        if shortlist == "ready":
+        if readiness in {"ready", "ready_after_auto_fix"}:
             ready_count += 1
-        elif shortlist == "blocked":
+        if readiness == "blocked" or shortlist_status == "blocked":
             blocked_count += 1
 
-        # ── Data catalog metrics ─────────────────────────────────────────────
-        # source_profile_completion: exposure source has a rich data catalog profile
+        # Data catalog metrics
         exp_profile = registry.get_profile(repaired.exposure_source)
         if exp_profile is not None:
             source_profile_count += 1
 
-        # variable_mapping_completion: exposure family has concrete variables
         if registry.has_variable_mapping(repaired.exposure_source, repaired.exposure_family):
             variable_mapping_count += 1
 
-        # join_recipe_completion: no missing_join_recipe reason in gate
         has_missing_recipe = any(
             r == "missing_join_recipe" for r in gate.get("reasons", [])
         )
         if not has_missing_recipe:
             join_recipe_count += 1
 
-        # source_aware_pack: spec contains source_use_specs
         try:
             spec_obj = build_implementation_spec(repaired)
             if spec_obj.source_use_specs:
@@ -166,20 +179,34 @@ def evaluate(
         except Exception:
             pass
 
-        scored_cards.append(
+        cards.append(
             {
                 "candidate_id": repaired.candidate_id,
                 "overall": scores.get("overall", 0),
-                "shortlist_status": shortlist,
+                "readiness": readiness,
+                "shortlist_status": shortlist_status,
                 "automation_risk": repaired.automation_risk,
                 "technology_tags": repaired.technology_tags,
                 "scores": scores,
+                "gate_status": gate,
+                "repair_history": history,
+                "readiness_summary": readiness_summary,
             }
         )
 
     total = max(len(candidates), 1)
-    scored_cards.sort(key=lambda c: -c["overall"])
-    top_candidate_ids = [c["candidate_id"] for c in scored_cards[:5]]
+
+    # Rank full pool (same as production)
+    ranked_cards = rank_candidates(cards)
+
+    # Shortlist: top non-blocked candidates (production contract)
+    shortlist = [
+        c for c in ranked_cards
+        if c.get("readiness") in {"ready", "ready_after_auto_fix", "needs_review"}
+    ][:5]
+    shortlist_blocked_count = sum(1 for c in shortlist if c.get("readiness") == "blocked")
+
+    top_candidate_ids = [c["candidate_id"] for c in ranked_cards[:5]]
 
     repair_success_rate = (
         round(repair_success_count / repair_attempted_count, 3)
@@ -201,6 +228,9 @@ def evaluate(
         "experimental_candidate_count": experimental_count,
         "ready_candidate_count": ready_count,
         "blocked_candidate_count": blocked_count,
+        "claude_code_ready_count": claude_code_ready_count,
+        "shortlist_count": len(shortlist),
+        "shortlist_blocked_count": shortlist_blocked_count,
         "top_5_candidate_ids": top_candidate_ids,
         # Data catalog metrics
         "source_profile_completion_rate": round(source_profile_count / total, 3),
@@ -241,6 +271,23 @@ def _check_thresholds(result: dict) -> list[str]:
         failures.append(
             f"experimental_candidate_count {result['experimental_candidate_count']} != 0 "
             f"(experimental disabled)"
+        )
+
+    # E2E contract: shortlist must have ≥5 candidates and zero blocked
+    if result.get("shortlist_count", 0) < 5:
+        failures.append(
+            f"shortlist_count {result.get('shortlist_count', 0)} < 5"
+        )
+
+    if result.get("shortlist_blocked_count", 0) != 0:
+        failures.append(
+            f"shortlist_blocked_count {result.get('shortlist_blocked_count', 0)} != 0 "
+            f"(blocked candidates must not appear in shortlist)"
+        )
+
+    if result.get("claude_code_ready_count", 0) < 8:
+        failures.append(
+            f"claude_code_ready_count {result.get('claude_code_ready_count', 0)} < 8"
         )
 
     # Data catalog thresholds

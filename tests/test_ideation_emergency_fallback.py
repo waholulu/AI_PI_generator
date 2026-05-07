@@ -1,38 +1,39 @@
-import json
+"""Tests for ideation_node() failure modes.
 
-from agents import settings
+The old V2→V0 emergency fallback chain is no longer reachable: ideation_node()
+routes exclusively to the Candidate Factory (or legacy V0 in explicit legacy
+mode).  This file verifies the new failure semantics.
+"""
+from unittest.mock import patch
+
 from agents.ideation_agent import ideation_node
 
 
-class _BrokenV2:
-    def __init__(self, *args, **kwargs):
-        pass
-
-    def run(self, state):
-        raise RuntimeError("v2 failed")
-
-
-class _BrokenV0:
-    def __init__(self, *args, **kwargs):
-        raise RuntimeError("v0 init failed")
-
-
-def test_ideation_emergency_fallback_when_v2_and_v0_fail(monkeypatch, tmp_path) -> None:
+def test_ideation_node_returns_factory_failure_on_compose_error(tmp_path, monkeypatch) -> None:
+    """When compose_candidates() returns empty, factory returns execution_status=failed."""
     monkeypatch.setenv("AUTOPI_DATA_ROOT", str(tmp_path))
-    monkeypatch.setenv("LEGACY_IDEATION", "0")
+    monkeypatch.delenv("LEGACY_IDEATION", raising=False)
 
-    import agents.ideation_agent_v2 as ideation_v2_mod
-    import agents._legacy.ideation_agent_v0 as ideation_v0_mod
+    with patch("agents.candidate_factory_ideation.compose_candidates", return_value=[]):
+        out = ideation_node({"domain_input": "GeoAI test", "execution_status": "starting"})
 
-    monkeypatch.setattr(ideation_v2_mod, "IdeationAgentV2", _BrokenV2)
-    monkeypatch.setattr(ideation_v0_mod, "IdeationAgentV0", _BrokenV0)
+    assert out.get("execution_status") == "failed"
+    assert "ideation:no_candidates_from_factory" in out.get("degraded_nodes", [])
 
-    out = ideation_node({"domain_input": "GeoAI fallback", "execution_status": "starting"})
 
+def test_ideation_node_legacy_explicit_routes_to_v0(monkeypatch) -> None:
+    """Explicit legacy mode routes to IdeationAgentV0, not Candidate Factory."""
+    monkeypatch.setenv("LEGACY_IDEATION", "1")
+
+    called = []
+
+    class _DummyV0:
+        def run(self, state):
+            called.append("v0")
+            return {"execution_status": "harvesting"}
+
+    with patch("agents._legacy.ideation_agent_v0.IdeationAgentV0", return_value=_DummyV0()):
+        out = ideation_node({"domain_input": "test", "legacy_ideation": True})
+
+    assert called == ["v0"]
     assert out["execution_status"] == "harvesting"
-    assert "ideation" in out.get("degraded_nodes", [])
-
-    screening_path = settings.output_dir() / "topic_screening.json"
-    payload = json.loads(screening_path.read_text(encoding="utf-8"))
-    assert payload["fallback_reason"] == "llm_unavailable_and_legacy_fallback_failed"
-    assert payload["candidates"]

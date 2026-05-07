@@ -10,8 +10,9 @@ from pydantic import BaseModel, Field, model_validator
 class StartRunRequest(BaseModel):
     domain_input: str = Field(..., description="Research domain description, e.g. 'GeoAI and Urban Planning'")
     thread_id: Optional[str] = Field(None, description="Optional thread ID for checkpointing/resume. Auto-generated if not provided.")
-    template_id: Optional[str] = Field(
-        default=None, description="Optional research template id, e.g. 'built_environment_health'."
+    template_id: str = Field(
+        default="built_environment_health",
+        description="Research template id. Defaults to 'built_environment_health' (Candidate Factory stable template).",
     )
     technology_options: Optional[dict[str, bool]] = Field(
         default=None, description="Per-run technology feature toggles."
@@ -107,6 +108,10 @@ class ApproveResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     version: str = "2.0.0"
+    git_sha: Optional[str] = None
+    build_time: Optional[str] = None
+    default_mode: str = "candidate_factory"
+    default_template_id: str = "built_environment_health"
 
 
 class Milestone(BaseModel):

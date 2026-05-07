@@ -17,6 +17,49 @@ into a single readiness value:
 """
 from __future__ import annotations
 
+FLAG_MESSAGES: dict[str, str] = {
+    # Blocking flags
+    "source_not_in_registry": "数据源未收录于 source catalog，无法验证可用性",
+    "missing_exposure_role_source": "暴露变量未绑定可机读 exposure source（请检查数据目录）",
+    "missing_outcome_role_source": "结局变量未绑定可机读 outcome source（请检查数据目录）",
+    "missing_machine_readable_source": "未找到可机读（API 或公开下载）数据源",
+    "missing_join_path": "暴露与结局数据缺少可自动执行的空间连接路径",
+    "paid_source_not_allowed": "所用数据源需要付费 API，违反 no_paid_api 约束",
+    "required_secrets_blocks_ready": "候选依赖需鉴权的密钥，无法全自动执行",
+    "high_automation_risk_blocks_ready": "自动化风险为 high，不符合当前自动化约束",
+    "missing_threat_mitigation": "未为所有已识别的识别威胁提供缓解方案",
+    "threat_mitigation_coverage_low": "识别威胁覆盖率偏低（< 60%）",
+    # Review flags
+    "manual_download_required": "至少一个数据源需要手动下载（非全自动）",
+    "semi_automated_source": "数据源为半自动（需人工介入）",
+    "aggregation_plan_required": "数据空间聚合方案未完整记录",
+    "experimental_source_in_use": "使用了实验性数据源，稳定性未经验证",
+    "experimental_source_requires_key": "实验性数据源需要 API 密钥",
+    "causal_assumption_weak": "因果识别假设较弱，建议降为关联研究声明",
+    "time_overlap_insufficient": "数据源时间范围与目标时间窗口不完全重叠",
+    # Auto-fixable flags (shown as "already fixed")
+    "missing_default_controls": "缺少默认控制变量（已自动补充 ACS）",
+    "missing_boundary_source": "缺少边界数据源（已自动补充 TIGER_Lines）",
+    "missing_identification_threats": "识别威胁未填写（已从方法模板自动填充）",
+    "aggregation_required": "需要空间聚合步骤（已自动生成聚合方案）",
+}
+
+
+def _translate_flag(flag: str) -> str:
+    """Return human-readable Chinese message for a raw gate flag.
+
+    Falls back to the raw flag string when no translation is registered, so
+    new flags are always surfaced rather than silently dropped.
+    """
+    base = flag.split(":")[0]
+    # Include colon-suffix detail for context (e.g. "threat_mitigation_coverage_low:40%")
+    detail = flag[len(base):] if len(flag) > len(base) else ""
+    msg = FLAG_MESSAGES.get(base) or FLAG_MESSAGES.get(flag)
+    if msg:
+        return f"{msg}{detail}" if detail else msg
+    return flag
+
+
 INFO_FLAGS: frozenset[str] = frozenset({
     "source_alias_resolved",
     "non_canonical_source_name",
@@ -135,10 +178,13 @@ def compute_candidate_readiness(
     else:
         readiness = "ready"
 
-    # Classify raw reasons for the user_visible_reasons field
+    # Classify raw reasons for the user_visible_reasons field; translate to human-readable
     raw_reasons: list[str] = gate_status.get("reasons") or []
     classified = classify_flags(raw_reasons)
-    user_visible_reasons = classified["blocking_reasons"] + classified["review_reasons"]
+    user_visible_reasons = [
+        _translate_flag(f)
+        for f in classified["blocking_reasons"] + classified["review_reasons"]
+    ]
 
     # Identification quality
     claim_strength = candidate_dict.get("claim_strength", "associational")
