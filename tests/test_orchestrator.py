@@ -18,7 +18,11 @@ def test_orchestrator_graph_contains_expected_nodes() -> None:
     graph = build_orchestrator()
     # LangGraph compiled graphs expose their nodes via .nodes (mapping of node_name -> runnable)
     node_names = set(graph.nodes.keys())
-    expected = {"field_scanner", "ideation", "idea_validator", "literature", "drafter", "data_fetcher"}
+    expected = {
+        "field_scanner", "ideation",
+        "novelty_check", "novelty_review", "development_pack",
+        "literature", "drafter", "data_fetcher",
+    }
     missing = expected - node_names
     assert not missing, f"Graph is missing nodes: {missing}"
 

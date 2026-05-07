@@ -23,6 +23,7 @@ def test_ideation_node_returns_factory_failure_on_compose_error(tmp_path, monkey
 
 def test_ideation_node_legacy_explicit_routes_to_v0(monkeypatch) -> None:
     """Explicit legacy mode routes to IdeationAgentV0, not Candidate Factory."""
+    monkeypatch.setenv("AUTOPI_EXPLORATORY", "1")
     monkeypatch.setenv("LEGACY_IDEATION", "1")
 
     called = []

@@ -336,6 +336,7 @@ def test_level2_lists_tentative_when_no_accepted(tmp_path, monkeypatch):
 
 def test_ideation_node_routes_to_legacy(monkeypatch, tmp_path):
     monkeypatch.setenv("AUTOPI_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("AUTOPI_EXPLORATORY", "1")
     monkeypatch.setenv("LEGACY_IDEATION", "1")
 
     with patch("agents._legacy.ideation_agent_v0.IdeationAgentV0") as MockV0:

@@ -239,6 +239,7 @@ def test_ideation_run_summary_has_required_fields(tmp_path, monkeypatch):
 
 def test_legacy_ideation_env_routes_to_v0(monkeypatch, tmp_path):
     monkeypatch.setenv("AUTOPI_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("AUTOPI_EXPLORATORY", "1")
     monkeypatch.setenv("LEGACY_IDEATION", "1")
 
     with patch("agents._legacy.ideation_agent_v0.IdeationAgentV0") as MockV0:
