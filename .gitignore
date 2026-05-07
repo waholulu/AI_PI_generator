@@ -39,6 +39,7 @@ MANIFEST
 output/
 data/
 data_vault/
+runs/
 ui/.streamlit/
 
 # uv / virtual environments
