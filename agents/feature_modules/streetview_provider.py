@@ -16,6 +16,8 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
 
+import requests
+
 
 class StreetViewProvider(ABC):
     """Abstract base for all street view providers."""
@@ -131,11 +133,32 @@ class MapillaryProvider(StreetViewProvider):
     def get_image(self, lat: float, lon: float, heading: int) -> bytes:
         if not self._api_key:
             raise PermissionError("MAPILLARY_TOKEN not set; provider unavailable")
-        raise NotImplementedError(
-            "Mapillary image download not implemented.  "
-            "Cache policy: cache_metadata_and_extracted_features_only. "
-            "Raw images must not be stored."
+        # Bounding box ~110 m around the target point
+        delta = 0.001
+        bbox = f"{lon - delta},{lat - delta},{lon + delta},{lat + delta}"
+        resp = requests.get(
+            "https://graph.mapillary.com/images",
+            params={
+                "fields": "id,thumb_2048_url,compass_angle",
+                "bbox": bbox,
+                "access_token": self._api_key,
+                "limit": 10,
+            },
+            timeout=15,
         )
+        resp.raise_for_status()
+        images = resp.json().get("data", [])
+        if not images:
+            raise LookupError(f"No Mapillary images found near ({lat}, {lon})")
+        # Pick the image whose compass_angle is closest to the requested heading
+        def _heading_diff(img: dict) -> float:
+            angle = img.get("compass_angle") or 0.0
+            return abs((angle - heading + 180) % 360 - 180)
+        best = min(images, key=_heading_diff)
+        thumb_url = best["thumb_2048_url"]
+        img_resp = requests.get(thumb_url, timeout=30)
+        img_resp.raise_for_status()
+        return img_resp.content
 
     def cache_policy(self) -> str:
         return "cache_metadata_and_extracted_features_only"
@@ -166,11 +189,19 @@ class GoogleStreetViewProvider(StreetViewProvider):
     def get_image(self, lat: float, lon: float, heading: int) -> bytes:
         if not self._api_key:
             raise PermissionError("GOOGLE_STREET_VIEW_API_KEY not set; provider unavailable")
-        raise NotImplementedError(
-            "Google Street View image fetch not implemented.  "
-            "IMPORTANT: cache_policy is 'do_not_cache_raw_images'. "
-            "Raw images must NEVER be written to disk or object storage."
+        # Callers MUST NOT cache the returned bytes (see cache_policy()).
+        resp = requests.get(
+            "https://maps.googleapis.com/maps/api/streetview",
+            params={
+                "size": "640x640",
+                "location": f"{lat},{lon}",
+                "heading": heading,
+                "key": self._api_key,
+            },
+            timeout=15,
         )
+        resp.raise_for_status()
+        return resp.content
 
     def cache_policy(self) -> str:
         # Hard-coded per Google ToS and project policy — do not change.
