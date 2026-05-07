@@ -922,13 +922,21 @@ function renderCandidateReviewTab(el, run) {
               : '<span class="gate-ok">✓ All gates pass</span>';
           const tagsHtml = (c.technology_tags||[]).map(t => `<span class="tag">${escHtml(t)}</span>`).join('');
           const isExperimental = (c.technology_tags||[]).some(t => ['streetview_cv','deep_learning','satellite_cv','experimental'].includes(t));
+          // Stage 2 generates the dev pack only after selection.  Until then,
+          // show a neutral placeholder so the picker doesn't lie about pack
+          // readiness for unselected candidates.
           const dpHtml = c.claude_code_ready
             ? '<span class="badge badge-completed" style="font-size:.75rem">Claude Code Ready</span>'
-            : c.development_pack_status === 'review_required'
-              ? '<span class="badge badge-awaiting" style="font-size:.75rem">Review Required</span>'
-              : isExperimental
-                ? '<span class="badge badge-high" style="font-size:.75rem">Experimental Review Required</span>'
-                : '<span style="font-size:.75rem;color:#64748b">Not Claude Code Ready</span>';
+            : c.development_pack_status === 'ready'
+              ? '<span class="badge badge-completed" style="font-size:.75rem">Pack Ready</span>'
+              : c.development_pack_status === 'review_required'
+                ? '<span class="badge badge-awaiting" style="font-size:.75rem">Review Required</span>'
+                : isExperimental
+                  ? '<span class="badge badge-high" style="font-size:.75rem">Experimental Review Required</span>'
+                  : '<span style="font-size:.75rem;color:#64748b">Pack: generated after you select</span>';
+          const noveltyHtml = c.novelty_status === 'pending_literature_check'
+            ? '<span style="font-size:.78rem;color:#94a3b8">Novelty: pending literature check</span>'
+            : '';
           const hasSecrets = (c.required_secrets||[]).length > 0;
           const secretsHtml = hasSecrets
             ? `<div style="font-size:.78rem;color:#fbbf24">⚠ Required secrets: ${escHtml((c.required_secrets||[]).join(', '))}</div>`
@@ -948,14 +956,32 @@ function renderCandidateReviewTab(el, run) {
                 ✗ 不可执行：${escHtml(blockedTip || '当前模板约束下无法自动运行，仅作诊断用途')}
                </div>`
             : '';
+          // Two-layer display: research-question title (Layer 1) + folded
+          // execution_summary (Layer 2) hidden behind a <details> toggle.
+          const display = c.display || {};
+          const displayTitle = display.display_title || c.title || '';
+          const displayQuestion = display.research_question || c.research_question || '';
+          const displayRationale = display.rationale || '';
+          const displayContribution = display.contribution_angle || '';
+          const executionSummary = display.execution_summary
+            || `Sources: ${c.exposure_source||'?'} + ${c.outcome_source||'?'} · Method: ${c.method||'?'} · Grain: ${c.unit_of_analysis||'?'}`;
           return `
           <div class="candidate-card" style="${isBlocked ? 'opacity:.65;border-color:#7f1d1d' : ''}">
             <div style="display:flex;gap:4px;flex-wrap:wrap">${statusBadge(c.readiness || c.shortlist_status)} ${riskBadge(c.automation_risk)} ${gateHtml}</div>
-            <div class="candidate-title">${escHtml(c.title)}</div>
-            <div style="font-size:.8rem;color:#94a3b8">${escHtml(c.research_question)}</div>
-            <div style="font-size:.8rem">X: ${escHtml(c.exposure_label||'')} · <em>${escHtml(c.exposure_source||'')}</em></div>
-            <div style="font-size:.8rem">Y: ${escHtml(c.outcome_label||'')} · <em>${escHtml(c.outcome_source||'')}</em></div>
-            <div style="font-size:.8rem">Unit: ${escHtml(c.unit_of_analysis||'')} · Method: ${escHtml(c.method||'')}</div>
+            <div class="candidate-title">${escHtml(displayTitle)}</div>
+            ${displayQuestion ? `<div style="font-size:.8rem;color:#94a3b8">${escHtml(displayQuestion)}</div>` : ''}
+            ${displayRationale ? `<div style="font-size:.78rem;color:#cbd5e1">${escHtml(displayRationale)}</div>` : ''}
+            ${noveltyHtml}
+            <details style="margin-top:4px">
+              <summary style="cursor:pointer;font-size:.78rem;color:#94a3b8">Show execution details (sources · method · grain)</summary>
+              <div style="margin-top:6px;padding:8px;background:#0f172a;border-radius:6px;font-size:.78rem;line-height:1.45">
+                <div style="color:#cbd5e1">${escHtml(executionSummary)}</div>
+                <div style="margin-top:4px">X: ${escHtml(c.exposure_label||'')} · <em>${escHtml(c.exposure_source||'')}</em></div>
+                <div>Y: ${escHtml(c.outcome_label||'')} · <em>${escHtml(c.outcome_source||'')}</em></div>
+                <div>Unit: ${escHtml(c.unit_of_analysis||'')} · Method: ${escHtml(c.method||'')}</div>
+                ${displayContribution ? `<div style="margin-top:4px;color:#94a3b8">Angle: ${escHtml(displayContribution)}</div>` : ''}
+              </div>
+            </details>
             <div style="font-size:.8rem;display:flex;gap:10px;flex-wrap:wrap">
               <span>Overall: <strong>${Math.round((c.scores?.overall||0)*100)}</strong></span>
               <span>Data: ${Math.round((c.scores?.data_feasibility||0)*100)}</span>
@@ -1332,29 +1358,130 @@ function _reasonSeverity(r) {
   return 'info';
 }
 
+async function renderNoveltyReviewPanel(run) {
+  const container = document.getElementById('hitlPicker');
+  if (!container) return;
+  if (container.dataset.ready === '1' && container.dataset.hitlKind === 'novelty_review') return;
+  container.dataset.hitlKind = 'novelty_review';
+  container.dataset.ready = '0';
+  container.innerHTML = '<div style="color:#94a3b8">加载原创性检查结果…</div>';
+
+  let noveltyData = {};
+  try {
+    const ctxUrl = `/runs/${run.run_id}/outputs/${encodePath('output/research_context.json')}`;
+    const res = await fetch(ctxUrl);
+    if (res.ok) noveltyData = await res.json();
+  } catch (_) {}
+
+  const verdict = noveltyData.novelty_verdict || 'already_published';
+  const papers = Array.isArray(noveltyData.novelty_similar_papers) ? noveltyData.novelty_similar_papers : [];
+  const papersHtml = papers.slice(0, 3).map(p => `
+    <div style="padding:8px;background:#0f172a;border-radius:6px;margin-bottom:6px;font-size:.8rem">
+      <div style="color:#e2e8f0;font-weight:500">${escHtml(p.title || '(no title)')}</div>
+      ${p.authors ? `<div style="color:#94a3b8">${escHtml(p.authors)}</div>` : ''}
+      ${p.year ? `<span style="color:#64748b">${escHtml(String(p.year))}</span>` : ''}
+      ${p.doi ? `<a href="https://doi.org/${escHtml(p.doi)}" target="_blank" style="color:#60a5fa;margin-left:8px">DOI</a>` : ''}
+    </div>`).join('');
+
+  container.innerHTML = `
+    <div style="padding:16px;border:1px solid #78350f;border-radius:8px;background:#1c1410">
+      <h3 style="margin:0 0 8px;color:#fbbf24">⚠ 原创性检查发现高度重叠</h3>
+      <p style="font-size:.85rem;color:#cbd5e1;margin-bottom:12px">
+        系统检测到已有高度相关的已发表论文（verdict: <code>${escHtml(verdict)}</code>）。
+        请查看下方论文并决定是否继续执行，或终止本次任务。
+      </p>
+      ${papers.length ? `<div style="margin-bottom:12px"><strong style="color:#94a3b8;font-size:.8rem">最相关论文</strong>${papersHtml}</div>` : ''}
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button class="btn btn-success" onclick="proceedAfterNoveltyReview('${run.run_id}')">
+          我了解风险，继续执行 →
+        </button>
+        <button class="btn btn-danger" onclick="rejectRun('${run.run_id}')">终止任务</button>
+      </div>
+    </div>
+  `;
+  container.dataset.ready = '1';
+}
+
+async function proceedAfterNoveltyReview(runId) {
+  try {
+    await api('POST', `/runs/${runId}/approve`, { action: 'proceed' });
+    toast('已确认，继续执行：文献 → 开发包 → 初稿…', 'success');
+    await refreshDetail();
+    schedulePoll();
+  } catch(e) { toast('操作失败：' + e.message, 'error'); }
+}
+
 async function renderHitlPicker(run) {
   const container = document.getElementById('hitlPicker');
   if (!container) return;
+
+  // HITL#2: novelty overlap confirmation (different panel, no candidate picker)
+  if (run.current_node === 'novelty_review') {
+    return renderNoveltyReviewPanel(run);
+  }
+
   const round = Number(run.regeneration_round || 0);
   if (container.dataset.round === String(round) && container.dataset.ready === '1') return;
   container.dataset.round = String(round);
+  container.dataset.hitlKind = 'candidate_pick';
   container.dataset.ready = '0';
   container.innerHTML = '<div style="color:#94a3b8">加载候选选题…</div>';
 
+  // Two-stage flow: HITL#1 reads topic_screening.json directly (the
+  // candidate factory no longer writes idea_validation.json since the
+  // idea_validator node has been removed from the default graph).
+  // Fall back to idea_validation.json when present (legacy/V0 runs).
   let ideas = [];
   try {
-    const url = `/runs/${run.run_id}/outputs/${encodePath('output/idea_validation.json')}`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(res.statusText);
-    const data = await res.json();
-    const allIdeas = Array.isArray(data.validated_ideas) ? data.validated_ideas : [];
-    ideas = await alignIdeasWithScreening(run.run_id, allIdeas);
-  } catch (e) {
-    container.innerHTML = `
-      <div style="color:#f87171">加载候选选题失败：${escHtml(e.message)}</div>
-      <button class="btn btn-ghost" style="margin-top:8px" onclick="retryHitlPicker('${run.run_id}')">重试</button>
-    `;
-    return;
+    const screeningUrl = `/runs/${run.run_id}/outputs/${encodePath('output/topic_screening.json')}`;
+    const sres = await fetch(screeningUrl);
+    if (sres.ok) {
+      const sdata = await sres.json();
+      const screeningCandidates = Array.isArray(sdata.candidates) ? sdata.candidates : [];
+      ideas = screeningCandidates.map(c => ({
+        title: c.title || '',
+        brief_rationale: c.brief_rationale || (c.display && c.display.rationale) || '',
+        rank: c.rank || 0,
+        // Stage 1 has no novelty verdict yet — surface placeholder.
+        novelty: { verdict: c.novelty_status || 'pending_literature_check' },
+        failure_reasons: (c.evaluation && c.evaluation.user_visible_reasons) || [],
+        overall_verdict: (c.evaluation && c.evaluation.overall_verdict) || 'pending',
+        // Enrichment fields the renderer reads:
+        _executability_status:
+          c.readiness === 'ready' || c.readiness === 'ready_after_auto_fix' ? 'ready'
+          : c.readiness === 'blocked' ? 'blocked' : 'needs_review',
+        _exposure_source: c.exposure_source || '',
+        _outcome_source: c.outcome_source || '',
+        _exposure_specific: c.exposure_variable || c.exposure_family || '',
+        _outcome_specific: c.outcome_variable || c.outcome_family || '',
+        _method: c.method || '',
+        _claim_strength: c.claim_strength || '',
+        _key_threats: Array.isArray(c.key_threats) ? c.key_threats : [],
+        _eval_reasons: (c.evaluation && c.evaluation.user_visible_reasons) || [],
+        _candidate_id: c.candidate_id || c.topic_id || '',
+        _display: c.display || {},
+      }));
+      // Approval picker shows Ready + Needs Review only.  Blocked
+      // candidates are diagnostic-only and hidden here.
+      ideas = ideas.filter(i => i._executability_status !== 'blocked');
+    } else {
+      throw new Error('topic_screening.json missing');
+    }
+  } catch (_) {
+    try {
+      const url = `/runs/${run.run_id}/outputs/${encodePath('output/idea_validation.json')}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(res.statusText);
+      const data = await res.json();
+      const allIdeas = Array.isArray(data.validated_ideas) ? data.validated_ideas : [];
+      ideas = await alignIdeasWithScreening(run.run_id, allIdeas);
+    } catch (e) {
+      container.innerHTML = `
+        <div style="color:#f87171">加载候选选题失败：${escHtml(e.message)}</div>
+        <button class="btn btn-ghost" style="margin-top:8px" onclick="retryHitlPicker('${run.run_id}')">重试</button>
+      `;
+      return;
+    }
   }
 
   if (!ideas.length) {
@@ -1370,13 +1497,21 @@ async function renderHitlPicker(run) {
   };
 
   const cardsHtml = ideas.map((idea, i) => {
-    const title = escHtml(idea.title || '?');
+    const display = idea._display || {};
+    const layer1Title = display.display_title || idea.title || '?';
+    const researchQuestion = display.research_question || '';
+    const rationaleText = display.rationale || idea.brief_rationale || '';
+    const contributionAngle = display.contribution_angle || '';
+    const executionSummary = display.execution_summary || '';
+    const noveltyVerdict = (idea.novelty && idea.novelty.verdict) || 'pending_literature_check';
+    const noveltyLabel = noveltyVerdict === 'pending_literature_check'
+      ? '原创性：选中后再做文献核查 (pending literature check)'
+      : `原创性：${escHtml(noveltyVerdict)}`;
+
     const execStatus = idea._executability_status || 'needs_review';
     const borderColor = execStatus === 'blocked' ? '#7f1d1d' : execStatus === 'ready' ? '#14532d' : '#78350f';
-    const rationale = escHtml(idea.brief_rationale || '');
-    const novelty = escHtml((idea.novelty && idea.novelty.verdict) || '?');
 
-    // Design spec rows
+    // Design spec rows — folded into <details> as Layer 2.
     const expSrc = idea._exposure_source ? escHtml(idea._exposure_source) : '';
     const outSrc = idea._outcome_source ? escHtml(idea._outcome_source) : '';
     const expSpec = idea._exposure_specific ? escHtml(idea._exposure_specific) : '';
@@ -1385,10 +1520,12 @@ async function renderHitlPicker(run) {
     const claim = idea._claim_strength ? escHtml(idea._claim_strength) : '';
     const threats = Array.isArray(idea._key_threats) ? idea._key_threats.length : 0;
     const designHtml = (expSrc || outSrc || method) ? `
-      <div style="margin-top:8px;display:flex;flex-direction:column;gap:3px">
+      <div style="margin-top:6px;padding:8px;background:#0f172a;border-radius:6px;display:flex;flex-direction:column;gap:3px;font-size:.78rem">
+        ${executionSummary ? `<div style="color:#cbd5e1">${escHtml(executionSummary)}</div>` : ''}
         ${expSrc ? `<div class="design-row"><strong>Exposure:</strong> ${expSpec || '—'} · <em>${expSrc}</em></div>` : ''}
         ${outSrc ? `<div class="design-row"><strong>Outcome:</strong> ${outSpec || '—'} · <em>${outSrc}</em></div>` : ''}
         ${method ? `<div class="design-row"><strong>Method:</strong> ${method}${claim ? ` · <strong>Claim:</strong> ${claim}` : ''}${threats ? ` · ${threats} threats addressed` : ''}</div>` : ''}
+        ${contributionAngle ? `<div style="margin-top:4px;color:#94a3b8">Angle: ${escHtml(contributionAngle)}</div>` : ''}
       </div>` : '';
 
     // Reasons classified by severity
@@ -1396,7 +1533,6 @@ async function renderHitlPicker(run) {
     const blockerReasons = reasons.filter(r => _BLOCKER_REASONS.has(r));
     const reviewReasons = reasons.filter(r => _REVIEW_REASONS.has(r));
     const infoReasons = reasons.filter(r => _INFO_REASONS.has(r));
-
     const reasonsHtml = [
       ...blockerReasons.map(r => `<div class="reason-blocker">✗ ${escHtml(r)}</div>`),
       ...reviewReasons.map(r => `<div class="reason-review">⚠ ${escHtml(r)}</div>`),
@@ -1406,15 +1542,19 @@ async function renderHitlPicker(run) {
     return `
       <label class="hitl-card" style="display:block;padding:12px;margin-bottom:10px;border:1px solid ${borderColor};border-radius:8px;cursor:pointer">
         <div style="display:flex;align-items:flex-start;gap:10px">
-          <input type="radio" name="hitlChoice" value="${i}" ${i === 0 ? 'checked' : ''} style="margin-top:4px">
+          <input type="radio" name="hitlChoice" value="${idea._candidate_id || i}" ${i === 0 ? 'checked' : ''} style="margin-top:4px">
           <div style="flex:1">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
               ${execBadge(execStatus)}
-              <span style="font-weight:600;color:#e2e8f0">选题 ${i + 1}: ${title}</span>
+              <span style="font-weight:600;color:#e2e8f0">选题 ${i + 1}: ${escHtml(layer1Title)}</span>
             </div>
-            ${designHtml}
-            ${rationale ? `<div style="margin-top:6px;font-size:.82rem;color:#94a3b8">${rationale}</div>` : ''}
-            <div style="margin-top:4px;font-size:.78rem;color:#64748b">原创性：${novelty}</div>
+            ${researchQuestion ? `<div style="margin-top:4px;font-size:.82rem;color:#94a3b8">${escHtml(researchQuestion)}</div>` : ''}
+            ${rationaleText ? `<div style="margin-top:4px;font-size:.82rem;color:#cbd5e1">${escHtml(rationaleText)}</div>` : ''}
+            <div style="margin-top:4px;font-size:.78rem;color:#64748b">${noveltyLabel}</div>
+            <details style="margin-top:6px">
+              <summary style="cursor:pointer;font-size:.78rem;color:#94a3b8">展开执行细节 (sources · method · grain)</summary>
+              ${designHtml}
+            </details>
             ${reasonsHtml ? `<div style="margin-top:6px">${reasonsHtml}</div>` : ''}
           </div>
         </div>
@@ -1461,15 +1601,23 @@ async function confirmHitl(runId) {
   const picked = document.querySelector('input[name="hitlChoice"]:checked');
   if (!picked) { toast('请先选择一项', 'error'); return; }
   const val = picked.value;
-  const body = val === 'regenerate'
-    ? { action: 'regenerate' }
-    : { action: 'select', selected_idea_index: Number(val) };
   try {
-    await api('POST', `/runs/${runId}/approve`, body);
-    toast(val === 'regenerate' ? '正在重新构思选题…' : '已批准，继续执行', 'success');
-    // Force picker to refetch after next poll (round will advance on regenerate).
-    const container = document.getElementById('hitlPicker');
-    if (container) container.dataset.ready = '0';
+    if (val === 'regenerate') {
+      await api('POST', `/runs/${runId}/approve`, { action: 'regenerate' });
+      toast('正在重新构思选题…', 'success');
+      const container = document.getElementById('hitlPicker');
+      if (container) container.dataset.ready = '0';
+    } else {
+      // Use candidate_id-based selection endpoint (new two-stage flow).
+      // val is a candidate_id string; fall back to index-based approve for legacy runs.
+      const isLegacyIndex = /^\d+$/.test(val) && !val.startsWith('candidate_');
+      if (isLegacyIndex) {
+        await api('POST', `/runs/${runId}/approve`, { action: 'select', selected_idea_index: Number(val) });
+      } else {
+        await api('POST', `/runs/${runId}/candidates/${encodeURIComponent(val)}/select`);
+      }
+      toast('已选定候选，Stage 2 原创性检查开始…', 'success');
+    }
     await refreshDetail();
     schedulePoll();
   } catch(e) { toast('操作失败：' + e.message, 'error'); }

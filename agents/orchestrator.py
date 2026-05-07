@@ -55,6 +55,9 @@ class _Module1State(ResearchState, total=False):
     gate_trace_path: str
     # Selection
     selected_candidate_id: str
+    # Stage 2: novelty_check verdict drives the conditional second HITL
+    novelty_verdict: str          # novel | partially_overlapping | already_published | unavailable
+    novelty_search_terms: list
 
 
 def _build_checkpointer():
@@ -78,21 +81,42 @@ def _route_start(state: dict) -> str:
 
 
 def build_orchestrator():
-    """Builds and compiles the LangGraph workflow."""
+    """Builds and compiles the two-stage candidate flow.
+
+    Stage 1 (always-on, cheap): field_scanner → ideation → [HITL#1 pause]
+        - ideation is the candidate factory by default; emits a diverse
+          shortlist with research-question titles and `pending_literature_check`
+          novelty placeholders.
+        - HITL#1 fires before novelty_check.  The user picks one candidate,
+          which `apply_idea_selection_*` promotes to rank-1.
+
+    Stage 2 (after selection, on the picked candidate only):
+        novelty_check → (conditional) → novelty_review [HITL#2 if not_novel]
+                                  OR  → literature → development_pack
+                                                  → drafter → data_fetcher → END
+    """
     from agents.field_scanner_agent import field_scanner_node
     from agents.ideation_agent import ideation_node
-    from agents.idea_validator_agent import idea_validator_node
     from agents.literature_agent import literature_node
     from agents.drafter_agent import drafter_node
     from agents.data_fetcher_agent import data_fetcher_node
+    from agents.stage2_nodes import (
+        novelty_check_node,
+        novelty_review_node,
+        development_pack_node,
+        route_after_novelty,
+    )
 
     builder = StateGraph(_Module1State)
 
-    # Add actual nodes
+    # Stage 1
     builder.add_node("field_scanner", field_scanner_node)
     builder.add_node("ideation", ideation_node)
-    builder.add_node("idea_validator", idea_validator_node)
+    # Stage 2
+    builder.add_node("novelty_check", novelty_check_node)
+    builder.add_node("novelty_review", novelty_review_node)
     builder.add_node("literature", literature_node)
+    builder.add_node("development_pack", development_pack_node)
     builder.add_node("drafter", drafter_node)
     builder.add_node("data_fetcher", data_fetcher_node)
 
@@ -103,19 +127,33 @@ def build_orchestrator():
         {"field_scanner": "field_scanner", "ideation": "ideation"},
     )
 
-    # Remaining linear edges
+    # Stage 1 linear edges
     builder.add_edge("field_scanner", "ideation")
-    builder.add_edge("ideation", "idea_validator")
-    builder.add_edge("idea_validator", "literature")
-    builder.add_edge("literature", "drafter")
+    builder.add_edge("ideation", "novelty_check")
+
+    # Conditional after novelty_check: pause at novelty_review only when
+    # the verdict is `already_published` (HITL#2); otherwise continue.
+    builder.add_conditional_edges(
+        "novelty_check",
+        route_after_novelty,
+        {"novelty_review": "novelty_review", "literature": "literature"},
+    )
+    builder.add_edge("novelty_review", "literature")
+
+    # Stage 2 tail
+    builder.add_edge("literature", "development_pack")
+    builder.add_edge("development_pack", "drafter")
     builder.add_edge("drafter", "data_fetcher")
     builder.add_edge("data_fetcher", END)
 
-    # Establish Checkpointer
     memory = _build_checkpointer()
 
-    # Compile graph with HITL after ideation
-    graph = builder.compile(checkpointer=memory, interrupt_before=["literature"])
+    # HITL#1 fires before novelty_check (Stage 1 done, awaiting user pick).
+    # HITL#2 fires before novelty_review (only when already_published).
+    graph = builder.compile(
+        checkpointer=memory,
+        interrupt_before=["novelty_check", "novelty_review"],
+    )
     return graph
 
 if __name__ == "__main__":

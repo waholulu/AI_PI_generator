@@ -271,12 +271,16 @@ def _parse_args():
         metavar="PATH",
         help="Path to user-supplied structured topic YAML file (Level 1 mode)",
     )
+    # Legacy V0 ideation is an exploratory-only mode; hidden from default
+    # --help to keep the candidate factory as the single visible CLI entry.
+    # Activate by setting AUTOPI_EXPLORATORY=1 in the environment AND passing
+    # --legacy-ideation; without the env var the flag is a silent no-op.
     parser.add_argument(
         "--legacy-ideation",
         dest="legacy_ideation",
         action="store_true",
         default=False,
-        help="Use legacy IdeationAgentV0 instead of V2 (backward compatibility)",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--budget-override-usd",
@@ -320,10 +324,19 @@ def main():
         _log("未输入有效领域，程序退出。", level="ERROR")
         sys.exit(1)
 
-    # Apply --legacy-ideation as env var so IdeationAgent router picks it up
+    # Apply --legacy-ideation only when AUTOPI_EXPLORATORY=1 is also set.
+    # The candidate factory is the production default; the legacy V0 path is
+    # kept for diagnostic / exploratory use only and is not surfaced in --help.
     if args.legacy_ideation:
         import os as _os
-        _os.environ["LEGACY_IDEATION"] = "1"
+        if _os.getenv("AUTOPI_EXPLORATORY", "0").strip() in ("", "0", "false", "False"):
+            _log(
+                "忽略 --legacy-ideation：需先设置 AUTOPI_EXPLORATORY=1 才能启用 legacy V0 路径。",
+                level="WARNING",
+            )
+            args.legacy_ideation = False
+        else:
+            _os.environ["LEGACY_IDEATION"] = "1"
 
     _log(f"初始化工作流，目标领域：{domain_input!r}" if domain_input else "初始化工作流（Level 1 模式）")
 

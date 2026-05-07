@@ -1,13 +1,16 @@
-"""Deterministic candidate factory ideation path.
+"""Deterministic candidate factory ideation path (Stage 1 of two-stage flow).
 
-Called by ideation_node() when candidate_factory_enabled=True (i.e. a
-template_id was provided in the run request). Replaces LLM seed generation
-with a deterministic Cartesian-product expansion via compose_candidates().
+Called by ideation_node() as the production default. Replaces LLM seed
+generation with deterministic Cartesian-product expansion via
+compose_candidates(), then runs precheck → repair → format display cards.
 
-Step 3 upgrade: after precheck, each candidate is passed through
-repair_candidate() to apply deterministic fixes. Repair history is embedded
-in both candidate_cards.json and topic_screening.json, and the full
-per-candidate history is written to output/repair_history.json.
+Stage 1 (this file) is intentionally cheap:
+  - No OpenAlex novelty calls (cards carry novelty_status="pending_literature_check")
+  - No development pack generation (deferred to Stage 2 after user selection)
+  - Diversity selection on the shortlist so users don't see one-exposure × N-outcome variants
+
+Stage 2 (orchestrator: novelty_check → literature → development_pack → drafter →
+data_fetcher) runs only for the candidate the user picks at the HITL checkpoint.
 """
 from __future__ import annotations
 
@@ -26,7 +29,6 @@ from agents.candidate_output_writer import (
 from agents.candidate_repair import repair_candidate
 from agents.identification_template_filler import ensure_identification_metadata
 from agents.development_pack_status import evaluate_development_pack_readiness
-from agents.development_pack_writer import write_development_pack
 from agents.final_ranker import rank_candidates, score_candidate
 from agents.logging_config import get_logger
 from models.candidate_composer_schema import ComposeRequest
@@ -34,7 +36,59 @@ from models.candidate_composer_schema import ComposeRequest
 logger = get_logger(__name__)
 
 
+# ── Display title templates ─────────────────────────────────────────────────
+# Maps (exposure_family, outcome_family) → research-question-style template.
+# Templates use {exposure_phrase} / {outcome_phrase} placeholders.  Fallback
+# generic template kicks in for combinations not listed here.  Polish is
+# scoped to built_environment_health_us_tract for now per the two-stage plan.
+DISPLAY_TITLE_TEMPLATES: dict[tuple[str, str], str] = {
+    ("street_network", "respiratory"):
+        "Can {exposure_phrase} Help Explain Neighborhood {outcome_phrase} Burden?",
+    ("street_network", "cardiometabolic"):
+        "Does {exposure_phrase} Shape Cardiometabolic Risk Across US Census Tracts?",
+    ("street_network", "physical_activity"):
+        "How Does {exposure_phrase} Relate to {outcome_phrase} at the Census-Tract Level?",
+    ("greenspace", "respiratory"):
+        "Is Neighborhood {exposure_phrase} Protective Against {outcome_phrase}?",
+    ("greenspace", "mental_health"):
+        "Does Neighborhood {exposure_phrase} Influence {outcome_phrase} Outcomes?",
+    ("greenspace", "cardiometabolic"):
+        "Can {exposure_phrase} Reduce Cardiometabolic Risk in Urban Tracts?",
+    ("walkability", "physical_activity"):
+        "How Strongly Does {exposure_phrase} Predict Tract-Level {outcome_phrase}?",
+    ("walkability", "obesity"):
+        "Is {exposure_phrase} Associated with Lower Tract-Level {outcome_phrase} Prevalence?",
+    ("air_pollution", "respiratory"):
+        "How Much of Neighborhood {outcome_phrase} Burden Tracks {exposure_phrase} Exposure?",
+    ("food_environment", "obesity"):
+        "Does the {exposure_phrase} Predict {outcome_phrase} Across Census Tracts?",
+}
+
+_GENERIC_TITLE_TEMPLATE = (
+    "How Does {exposure_phrase} Relate to {outcome_phrase} at the {unit} Level?"
+)
+
+
+def _humanize(token: str) -> str:
+    return token.replace("_", " ").strip()
+
+
+def _humanize_unit(unit: str) -> str:
+    mapping = {
+        "us_census_tract": "Census-Tract",
+        "us_county": "County",
+        "us_state": "State",
+        "us_zcta": "ZCTA",
+    }
+    return mapping.get(unit, _humanize(unit).title())
+
+
 def _make_title(c) -> str:
+    """Legacy contract-style title (e.g. 'Street Network and Respiratory').
+
+    Retained on the card for backward compatibility; the user-visible label
+    is `display.display_title` produced by `format_display_card()`.
+    """
     exp = c.exposure_family.replace("_", " ").title()
     out = c.outcome_family.replace("_", " ").title()
     return f"{exp} and {out}"
@@ -46,6 +100,82 @@ def _make_research_question(c) -> str:
     return f"How does {exp} affect {out} at the {c.unit_of_analysis} level?"
 
 
+def format_display_card(candidate, gate_status: dict | None = None) -> dict:
+    """Convert a composed candidate contract into a research-question-style card.
+
+    Returns a dict with keys:
+      display_title       — research-question phrasing the user sees first
+      research_question   — full sentence with geography + unit_of_analysis
+      rationale           — why this matters (1–2 sentences)
+      contribution_angle  — what's new about this combination
+      execution_summary   — folded layer-2 string (sources + method + grain)
+
+    Pure function — no I/O, no LLM calls.  Lives here (not a separate agent)
+    so display formatting stays close to the contract that produced it.
+    """
+    gs = gate_status or {}
+    exposure_family = getattr(candidate, "exposure_family", "")
+    outcome_family = getattr(candidate, "outcome_family", "")
+    exposure_source = getattr(candidate, "exposure_source", "") or ""
+    outcome_source = getattr(candidate, "outcome_source", "") or ""
+    method_template = getattr(candidate, "method_template", "") or ""
+    unit_of_analysis = getattr(candidate, "unit_of_analysis", "") or ""
+    claim_strength = getattr(candidate, "claim_strength", "") or "associational"
+
+    exposure_phrase = _humanize(exposure_family).title() + " Connectivity" \
+        if exposure_family == "street_network" \
+        else _humanize(exposure_family).title()
+    outcome_phrase = _humanize(outcome_family).title()
+    unit_phrase = _humanize_unit(unit_of_analysis)
+
+    template = DISPLAY_TITLE_TEMPLATES.get(
+        (exposure_family, outcome_family), _GENERIC_TITLE_TEMPLATE
+    )
+    display_title = template.format(
+        exposure_phrase=exposure_phrase,
+        outcome_phrase=outcome_phrase,
+        unit=unit_phrase,
+    )
+
+    research_question = (
+        f"At the US {unit_phrase.lower()} level, is {exposure_phrase.lower()} "
+        f"associated with {outcome_phrase.lower()} outcomes after controlling "
+        f"for sociodemographic confounders?"
+    )
+
+    rationale = (
+        f"Linking {exposure_phrase.lower()} to {outcome_phrase.lower()} at the "
+        f"{unit_phrase.lower()} grain offers a policy-actionable lens: small-area "
+        f"variation in built-environment features is hypothesized to drive measurable "
+        f"differences in population health, and both inputs are publicly available."
+    )
+
+    contribution_angle = (
+        f"Combines {exposure_source or 'a public exposure dataset'} with "
+        f"{outcome_source or 'a public outcome dataset'} at a finer grain than most "
+        f"prior work, using a {_humanize(method_template).lower() or 'cross-sectional'} "
+        f"design with a {claim_strength} claim."
+    )
+
+    execution_summary = (
+        f"Sources: {exposure_source or '(exposure source TBD)'} + "
+        f"{outcome_source or '(outcome source TBD)'}. "
+        f"Method: {_humanize(method_template).lower() or 'cross-sectional regression'}. "
+        f"Grain: {unit_phrase.lower()}."
+    )
+
+    return {
+        "display_title": display_title,
+        "research_question": research_question,
+        "rationale": rationale,
+        "contribution_angle": contribution_angle,
+        "execution_summary": execution_summary,
+        # Surface the generic placeholder novelty status so UI can label it
+        # consistently while Stage 2 has not yet run.
+        "novelty_status": "pending_literature_check",
+    }
+
+
 def _to_card(
     c,
     title: str,
@@ -55,6 +185,7 @@ def _to_card(
     repair_history: list[dict] | None = None,
     pack_readiness: dict | None = None,
     readiness_summary: dict | None = None,
+    display: dict | None = None,
 ) -> dict:
     gs = gate_status or {}
     pr = pack_readiness or {}
@@ -63,6 +194,10 @@ def _to_card(
         "candidate_id": c.candidate_id,
         "title": title,
         "research_question": rq,
+        # Layer 1 / Layer 2 display block — UI consumes this; raw contract
+        # fields (exposure_source, method, …) are still present for the
+        # folded "Layer 2" view and for backward compatibility.
+        "display": display or {},
         "exposure_label": c.exposure_family,
         "exposure_source": c.exposure_source,
         "outcome_label": c.outcome_family,
@@ -82,6 +217,10 @@ def _to_card(
         "readiness": rs.get("readiness", gs.get("shortlist_status", "review")),
         "user_visible_reasons": rs.get("user_visible_reasons", []),
         "debug_flags": rs.get("debug_flags", []),
+        # Stage 1 never runs novelty checks — UI shows a neutral placeholder.
+        "novelty_status": "pending_literature_check",
+        # Stage 1 does NOT generate development packs.  Stage 2's
+        # development_pack node populates these for the selected candidate.
         "development_pack_status": pr.get("development_pack_status", "not_generated"),
         "claude_code_ready": pr.get("claude_code_ready", False),
         "development_pack_files": pr.get("development_pack_files", []),
@@ -103,14 +242,17 @@ def _card_to_screening_entry(card: dict) -> dict:
     gs = card.get("gate_status") or {}
     scores = card.get("scores") or {}
     rs = card.get("readiness_summary") or {}
+    display = card.get("display") or {}
     exp = card.get("exposure_label", "").replace("_", " ")
     out = card.get("outcome_label", "").replace("_", " ")
     return {
         "candidate_id": card["candidate_id"],
         "topic_id": card["candidate_id"],
         "title": card["title"],
+        "display": display,
         "rank": card.get("rank", 0),
         "research_question": card["research_question"],
+        "novelty_status": card.get("novelty_status", "pending_literature_check"),
         "exposure_variable": card.get("exposure_label", ""),
         "outcome_variable": card.get("outcome_label", ""),
         "geography": "United States",
@@ -148,29 +290,84 @@ def _card_to_screening_entry(card: dict) -> dict:
     }
 
 
-def _select_shortlist(ranked_cards: list[dict], shortlist_size: int = 5) -> list[dict]:
-    """Return top-k non-blocked candidates.
+_ELIGIBLE_READINESS = {"ready", "ready_after_auto_fix", "needs_review"}
 
-    Only candidates with readiness in {ready, ready_after_auto_fix, needs_review}
-    are eligible.  Blocked candidates are never promoted to the shortlist —
-    they remain in candidate_cards.json for diagnostics only.
-    """
+
+def _select_shortlist(ranked_cards: list[dict], shortlist_size: int = 5) -> list[dict]:
+    """Return top-k non-blocked candidates (legacy non-diverse helper)."""
     return [
         c for c in ranked_cards
-        if c.get("readiness") in {"ready", "ready_after_auto_fix", "needs_review"}
+        if c.get("readiness") in _ELIGIBLE_READINESS
     ][:shortlist_size]
 
 
-def run_candidate_factory_ideation(state: dict) -> dict:
-    """Write candidate_cards.json (full ranked pool) and topic_screening.json (shortlist).
+def select_diverse_shortlist(
+    ranked_cards: list[dict],
+    shortlist_size: int = 5,
+    max_per_exposure: int = 2,
+    max_per_outcome: int = 2,
+) -> list[dict]:
+    """Greedy diverse shortlist selection.
 
-    Pipeline (13 steps per plan §3):
+    Walks ranked_cards in score-desc order and admits each candidate iff its
+    exposure_family and outcome_family quotas are not yet full.  Blocked
+    candidates are never eligible.  When the quota-respecting pool is smaller
+    than ``shortlist_size``, falls back to fill the remaining slots from the
+    same eligible pool ignoring quotas — better to surface near-duplicates
+    than under-fill the picker.
+    """
+    eligible = [c for c in ranked_cards if c.get("readiness") in _ELIGIBLE_READINESS]
+    if not eligible:
+        return []
+
+    selected: list[dict] = []
+    selected_ids: set[str] = set()
+    exposure_count: dict[str, int] = {}
+    outcome_count: dict[str, int] = {}
+
+    for card in eligible:
+        if len(selected) >= shortlist_size:
+            break
+        exp = str(card.get("exposure_label") or "")
+        out = str(card.get("outcome_label") or "")
+        if exposure_count.get(exp, 0) >= max_per_exposure:
+            continue
+        if outcome_count.get(out, 0) >= max_per_outcome:
+            continue
+        selected.append(card)
+        selected_ids.add(str(card.get("candidate_id")))
+        exposure_count[exp] = exposure_count.get(exp, 0) + 1
+        outcome_count[out] = outcome_count.get(out, 0) + 1
+
+    if len(selected) < shortlist_size:
+        # Fill remaining slots ignoring quotas (still excluding blocked).
+        for card in eligible:
+            if len(selected) >= shortlist_size:
+                break
+            cid = str(card.get("candidate_id"))
+            if cid in selected_ids:
+                continue
+            selected.append(card)
+            selected_ids.add(cid)
+
+    return selected
+
+
+def run_candidate_factory_ideation(state: dict) -> dict:
+    """Stage 1 of the two-stage candidate flow.
+
+    Pipeline:
       compose_candidates → normalize/enrich → precheck → repair → export_validate
-      → compute_readiness → score → rank full pool → select shortlist → write outputs
-      → generate development packs for ready candidates
+      → compute_readiness → score → rank full pool → diverse-select shortlist
+      → format display cards → write outputs
+
+    Stage 1 deliberately does NOT run novelty checks (cards carry
+    novelty_status="pending_literature_check") and does NOT generate
+    development packs.  Both are deferred to Stage 2 nodes that run after
+    the user picks one candidate at the HITL checkpoint.
 
     candidate_cards.json  — full pool (max_candidates entries), ranked
-    topic_screening.json  — shortlist only (shortlist_size entries, default 5)
+    topic_screening.json  — diverse shortlist (≤ shortlist_size entries)
 
     Returns file-path references for downstream pipeline nodes.
     """
@@ -242,40 +439,33 @@ def run_candidate_factory_ideation(state: dict) -> dict:
         # Step 9: weighted score.
         scores = score_candidate(repaired_c.model_dump(), gate_status, repair_history)
 
-        # Development packs are generated later (Step 13) after ranking, but we need
-        # pack_readiness to embed in each card.  Pass pack_dir=None here; packs are
-        # created in the post-ranking loop only for shortlisted ready candidates.
+        # Stage 1 placeholder for pack readiness — every card starts as
+        # not_generated.  Stage 2 generates a real pack only for the
+        # candidate the user picks.
         pack_readiness = evaluate_development_pack_readiness(
             repaired_c.model_dump(), gate_status, pack_dir=None
         )
+
+        # Layer 1 / Layer 2 display formatting (research-question style title
+        # + folded execution_summary).  Pure function, no I/O.
+        display = format_display_card(repaired_c, gate_status)
 
         cards.append(
             _to_card(
                 repaired_c, title, rq, scores, gate_status,
                 repair_history, pack_readiness, readiness_summary,
+                display=display,
             )
         )
 
-    # Step 10: rank full pool (readiness → risk → score).
+    # Rank full pool (readiness → risk → score).
     ranked_cards = rank_candidates(cards)
 
-    # Step 13: generate development packs for ready shortlist candidates.
-    shortlist_cards = _select_shortlist(ranked_cards, shortlist_size)
-    shortlist_ids = {c["candidate_id"] for c in shortlist_cards}
-    for card in ranked_cards:
-        if card["candidate_id"] not in shortlist_ids:
-            continue
-        if card.get("readiness") not in {"ready", "ready_after_auto_fix"}:
-            continue
-        raw = card.get("_raw") or {}
-        try:
-            pack_dir = write_development_pack(run_id, raw)
-            new_pack_readiness = evaluate_development_pack_readiness(raw, card.get("gate_status") or {}, pack_dir)
-            card["development_pack_status"] = new_pack_readiness.get("development_pack_status", card["development_pack_status"])
-            card["claude_code_ready"] = new_pack_readiness.get("claude_code_ready", card["claude_code_ready"])
-            card["development_pack_files"] = new_pack_readiness.get("development_pack_files", card["development_pack_files"])
-        except Exception as exc:
-            logger.warning("development pack generation failed for %s: %s", card["candidate_id"], exc)
+    # Diverse shortlist selection: max 2 per exposure_family, max 2 per
+    # outcome_family.  Blocked candidates are never eligible — they live in
+    # candidate_cards.json as diagnostics only.  No development pack
+    # generation in Stage 1.
+    shortlist_cards = select_diverse_shortlist(ranked_cards, shortlist_size)
 
     # Step 12a: write candidate_cards.json — full ranked pool (debug/QA use).
     cards_path = settings.output_dir() / "candidate_cards.json"

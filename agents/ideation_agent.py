@@ -98,23 +98,28 @@ _DEFAULT_TEMPLATE_ID = "built_environment_health"
 
 
 def ideation_node(state: ResearchState) -> dict:
-    """LangGraph node: route to Candidate Factory (default) or legacy V0.
+    """LangGraph node: route to Candidate Factory (production default).
 
-    Routing priority:
-      1. Explicit legacy mode (--legacy-ideation or LEGACY_IDEATION=1) → IdeationAgentV0
-      2. Everything else → Candidate Factory with template_id (defaults to
-         built_environment_health when not specified in state).
-
-    The V2 LLM ideation path is intentionally NOT reachable from this router.
-    Candidate Factory is the production default; V2 is only accessible directly.
+    Candidate Factory is the only path surfaced through the default CLI/UI.
+    Legacy V0 and V2 LLM ideation remain in the codebase as exploratory-only
+    backends and are reachable ONLY when ``AUTOPI_EXPLORATORY=1`` AND either
+    ``state["legacy_ideation"]`` or ``LEGACY_IDEATION=1``.  Without the
+    AUTOPI_EXPLORATORY gate, those flags are silently ignored.
     """
-    use_legacy = (
+    exploratory = os.getenv("AUTOPI_EXPLORATORY", "0").strip() not in ("", "0", "false", "False")
+    legacy_signal = (
         state.get("legacy_ideation", False)
         or os.getenv("LEGACY_IDEATION", "0").strip() not in ("", "0", "false", "False")
     )
+    use_legacy = exploratory and legacy_signal
+    if legacy_signal and not exploratory:
+        logger.info(
+            "legacy_ideation requested but AUTOPI_EXPLORATORY is unset — falling "
+            "back to candidate factory (production default)."
+        )
 
     if use_legacy:
-        logger.info("Routing to IdeationAgentV0 (explicit legacy mode)")
+        logger.info("Routing to IdeationAgentV0 (exploratory legacy mode)")
         from agents._legacy.ideation_agent_v0 import IdeationAgentV0
         agent = IdeationAgentV0()
         return agent.run(state)

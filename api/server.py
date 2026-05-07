@@ -216,28 +216,57 @@ async def _regenerate_and_pause(run_id: str, thread_id: str) -> None:
 
 
 async def _resume_pipeline(run_id: str, thread_id: str) -> None:
-    """Resume a HITL-paused pipeline."""
+    """Resume a HITL-paused pipeline.
+
+    Handles two HITL interrupt points:
+      - HITL#1 (before novelty_check): user picked a candidate.
+      - HITL#2 (before novelty_review): novelty_check returned
+        ``already_published``; user must confirm or pick again.
+    On resume, if the graph re-pauses (snapshot.next non-empty), re-mark
+    the run as ``awaiting_approval`` so the UI can render HITL#2.
+    """
     log_store.set_current_run(run_id)
     scope_token = settings.activate_run_scope(run_id)
     graph = _get_graph()
     config = {"configurable": {"thread_id": thread_id}}
 
-    def _stream_phase2() -> None:
+    def _stream_phase2() -> Optional[str]:
         for output in graph.stream(None, config):
             for node_key in output:
                 run_manager.update_status(run_id, "running", current_node=node_key)
                 logger.info("Node completed: %s", node_key)
                 run_manager.record_milestone(run_id, "node_completed", f"完成节点: {node_key}")
+        snapshot = graph.get_state(config)
+        if snapshot.next:
+            return list(snapshot.next)[0]
+        return None
 
     try:
-        run_manager.update_status(run_id, "running", current_node="literature")
-        run_manager.record_milestone(run_id, "approved", "已批准，继续执行文献收集 → 初稿撰写 → 数据获取")
+        run_manager.update_status(run_id, "running", current_node="novelty_check")
+        run_manager.record_milestone(
+            run_id, "approved",
+            "已批准，开始执行：原创性检查 → 文献收集 → 开发包 → 初稿 → 数据获取",
+        )
 
-        await asyncio.to_thread(_stream_phase2)
+        pending_node = await asyncio.to_thread(_stream_phase2)
 
-        run_manager.update_status(run_id, "completed")
-        run_manager.record_milestone(run_id, "completed", "流水线执行完毕")
-        logger.info("Run %s completed successfully.", run_id)
+        if pending_node == "novelty_review":
+            run_manager.update_status(run_id, "awaiting_approval", current_node=pending_node)
+            run_manager.record_milestone(
+                run_id, "hitl_paused",
+                "原创性检查发现高度重叠论文，请在状态页面确认是否继续或重新选择候选",
+            )
+            logger.info("Run %s paused at HITL#2 (novelty_review).", run_id)
+        elif pending_node:
+            run_manager.update_status(run_id, "awaiting_approval", current_node=pending_node)
+            run_manager.record_milestone(
+                run_id, "hitl_paused", f"流水线在 {pending_node} 节点暂停，等待人工操作",
+            )
+            logger.info("Run %s paused at unexpected node %s.", run_id, pending_node)
+        else:
+            run_manager.update_status(run_id, "completed")
+            run_manager.record_milestone(run_id, "completed", "流水线执行完毕")
+            logger.info("Run %s completed successfully.", run_id)
 
     except asyncio.CancelledError:
         run_manager.update_status(run_id, "aborted")
@@ -455,9 +484,15 @@ def _normalize_candidate_card(candidate: dict[str, Any], fallback_idx: int) -> d
             "ready" if overall_gate == "pass" else "blocked" if overall_gate == "fail" else "review"
         )
 
+    display = candidate.get("display") or {}
     return {
         "candidate_id": candidate.get("candidate_id") or candidate.get("topic_id") or f"legacy_{fallback_idx:03d}",
         "title": candidate.get("title", ""),
+        # Layer 1 / Layer 2 display block produced by format_display_card().
+        # UI consumes display.display_title and display.execution_summary;
+        # falls back to title/research_question for legacy/V0 candidates.
+        "display": display,
+        "novelty_status": candidate.get("novelty_status", "pending_literature_check"),
         "research_question": candidate.get("research_question", ""),
         "exposure_label": candidate.get("exposure_label") or candidate.get("exposure_variable") or candidate.get("exposure_family", ""),
         "exposure_source": candidate.get("exposure_source")
@@ -672,6 +707,22 @@ async def approve_hitl(run_id: str, req: ApproveRequest = ApproveRequest()):
             status="regenerating",
             message=f"Regenerating topics (round {new_round})...",
             regeneration_round=new_round,
+        )
+
+    # ── Branch: proceed (HITL#2 novelty confirmation — resume without re-selection) ──
+    if req.action == "proceed":
+        run_manager.update_status(run_id, "running", current_node="novelty_review")
+        run_manager.record_milestone(
+            run_id, "approved",
+            "用户确认继续（已知重叠论文），恢复执行：文献 → 开发包 → 初稿 → 数据获取",
+        )
+        logger.info("HITL#2 proceed confirmed for run %s. Resuming...", run_id)
+        task = asyncio.create_task(_resume_pipeline(run_id, run.thread_id))
+        _tasks[run_id] = task
+        return ApproveResponse(
+            run_id=run_id,
+            status="running",
+            message="Pipeline resumed (novelty overlap confirmed by user).",
         )
 
     # ── Branch: select ───────────────────────────────────────────────

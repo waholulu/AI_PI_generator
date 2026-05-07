@@ -90,9 +90,9 @@ class ApproveRequest(BaseModel):
 
     @model_validator(mode="after")
     def _validate_action(self):
-        if self.action not in ("select", "regenerate"):
+        if self.action not in ("select", "regenerate", "proceed"):
             raise ValueError(
-                f"action must be 'select' or 'regenerate', got {self.action!r}"
+                f"action must be 'select', 'regenerate', or 'proceed', got {self.action!r}"
             )
         return self
 
