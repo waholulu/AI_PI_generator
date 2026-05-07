@@ -1,0 +1,127 @@
+source_id: EPA_EnviroAtlas
+canonical_name: EPA EnviroAtlas
+aliases:
+  - EnviroAtlas
+  - EPA Enviro Atlas
+
+# ── Backward-compatible flat fields ─────────────────────────────────────────
+roles:
+  - exposure
+tier: stable
+cloud_safe: true
+machine_readable: true
+source_type: api_download
+expected_format: geojson_csv
+auth_required: false
+cost_required: false
+access_url: https://www.epa.gov/enviroatlas
+documentation_url: https://www.epa.gov/enviroatlas/enviroatlas-data
+coverage_year_min: 2010
+coverage_year_max: 2023
+spatial_units:
+  - block_group
+  - census_tract
+
+# ── Enhanced data catalog fields ─────────────────────────────────────────────
+acquisition:
+  method: download
+  url: https://gaftp.epa.gov/EPADataCommons/ORD/EnviroAtlas
+  documentation_url: https://www.epa.gov/enviroatlas/enviroatlas-data
+  expected_format: geojson_csv
+  auth_required: false
+  cost_required: false
+  expected_files:
+    - data/raw/enviroatlas_tree_canopy_bg.csv
+    - data/raw/enviroatlas_park_access_bg.csv
+  notes: >
+    EPA EnviroAtlas exposes block-group-level community indicators via
+    file download (FTP) and a REST GIS service. Download the relevant
+    indicator (e.g. "Percentage of land area within 500m of a park" or
+    "Tree canopy cover").
+
+geography:
+  native_unit: block_group
+  target_units_supported:
+    - block_group
+    - census_tract
+  aggregation_required: false
+  default_aggregation: ""
+  join_keys:
+    - GEOID
+    - bgrp_code
+  coverage: continental_us
+
+temporal_coverage:
+  coverage_year_min: 2010
+  coverage_year_max: 2023
+  release_lag_years: 3.0
+  update_frequency: irregular
+  cross_sectional_only: true
+  notes: >
+    EnviroAtlas community indicators are typically static (single snapshot
+    per metro area). Treat as cross-sectional and pair with study-year
+    outcomes; do not use for panel analysis.
+
+variable_families:
+  tree_canopy:
+    family_id: tree_canopy
+    description: Tree-canopy share per block group
+    variables:
+      - name: tree_canopy_share
+        description: Percentage of block-group land area covered by tree canopy
+        unit: fraction
+        dtype: float
+    aggregation_allowed_to:
+      - census_tract
+      - county
+
+  park_access:
+    family_id: park_access
+    description: Walk-shed access to parks within 500m
+    variables:
+      - name: park_access_index
+        description: Share of population within 500m walk of a public park
+        unit: fraction
+        dtype: float
+    aggregation_allowed_to:
+      - census_tract
+
+  green_space:
+    family_id: green_space
+    description: Green-space share derived from EnviroAtlas land-cover summary
+    variables:
+      - name: green_space_share
+        description: Share of block-group area classified as green space
+        unit: fraction
+        dtype: float
+    aggregation_allowed_to:
+      - census_tract
+      - block_group
+
+join_recipes:
+  - recipe_id: enviroatlas_bg_to_tract
+    left_source: EPA_EnviroAtlas
+    right_source: TIGER_Lines
+    left_key: GEOID
+    right_key: GEOID
+    join_type: left
+    notes: >
+      EnviroAtlas indicators come at block-group level (12-digit GEOID).
+      Aggregate to tract by population-weighted mean using ACS B01003_001E
+      block-group population as weight, then truncate GEOID to 11 digits.
+    warnings:
+      - Use ACS block-group population to weight when aggregating to tract
+      - Indicator coverage is typically metro-area-only — check coverage map
+
+validation_rules:
+  - rule_id: bg_geoid_is_12_digits
+    description: Block-group GEOID must be 12 characters
+    severity: error
+  - rule_id: cross_sectional_only
+    description: Do not use for longitudinal/panel analysis (single snapshot)
+    severity: warning
+
+known_limitations:
+  - "Indicators are typically single-vintage snapshots (cross-sectional)"
+  - "Coverage is metro-area-focused — not all tracts have data"
+  - "Documentation describes methodology per indicator — read carefully"

@@ -1,0 +1,110 @@
+source_id: Microsoft_Building_Footprints
+canonical_name: Microsoft Building Footprints
+aliases:
+  - MS Buildings
+  - Microsoft Buildings
+  - Microsoft US Building Footprints
+
+# ── Backward-compatible flat fields ─────────────────────────────────────────
+roles:
+  - exposure
+tier: stable
+cloud_safe: true
+machine_readable: true
+source_type: download
+expected_format: geojson_parquet
+auth_required: false
+cost_required: false
+access_url: https://github.com/microsoft/USBuildingFootprints
+documentation_url: https://github.com/microsoft/GlobalMLBuildingFootprints
+coverage_year_min: 2018
+coverage_year_max: 2024
+spatial_units:
+  - polygon
+  - census_tract
+  - block_group
+
+# ── Enhanced data catalog fields ─────────────────────────────────────────────
+acquisition:
+  method: download
+  url: https://minedbuildings.blob.core.windows.net/global-buildings
+  documentation_url: https://github.com/microsoft/GlobalMLBuildingFootprints
+  expected_format: geojson_parquet
+  auth_required: false
+  cost_required: false
+  expected_files:
+    - data/raw/ms_buildings_state.geojson
+  notes: >
+    Microsoft publishes ML-derived building footprints as GeoJSON / Parquet
+    per country and state. Use geopandas to load and spatially join with
+    TIGER tract polygons. Partition by state for memory-efficient loads.
+
+geography:
+  native_unit: polygon
+  target_units_supported:
+    - polygon
+    - census_tract
+    - block_group
+    - county
+  aggregation_required: true
+  default_aggregation: count_or_area_per_tract
+  join_keys:
+    - geometry
+  coverage: continental_us
+
+temporal_coverage:
+  coverage_year_min: 2018
+  coverage_year_max: 2024
+  release_lag_years: 1.0
+  update_frequency: irregular
+  cross_sectional_only: true
+  notes: >
+    Footprints are derived from Bing imagery snapshots; treat as a single
+    point-in-time inventory. Multiple releases exist (2018, 2022, etc.).
+    Some footprints lack height/floor information.
+
+variable_families:
+  building_density:
+    family_id: building_density
+    description: Building footprint counts and area share per tract
+    variables:
+      - name: building_density
+        description: Number of building footprints per square km
+        unit: count_per_km2
+        dtype: float
+      - name: floor_area_proxy
+        description: Total footprint area / tract area (proxy for floor area without height)
+        unit: fraction
+        dtype: float
+    aggregation_allowed_to:
+      - census_tract
+      - block_group
+      - county
+
+join_recipes:
+  - recipe_id: ms_buildings_to_tract
+    left_source: Microsoft_Building_Footprints
+    right_source: TIGER_Lines
+    left_key: geometry
+    right_key: geometry
+    join_type: spatial
+    notes: >
+      Spatial join building polygons with TIGER tract polygons. Use
+      sjoin(predicate='intersects') and compute count + sum(area) per
+      tract. Reproject both layers to EPSG:5070 first.
+    warnings:
+      - Use a projected CRS (EPSG:5070) before computing area
+      - Buildings spanning tract boundaries should be split or weighted
+
+validation_rules:
+  - rule_id: projected_crs_required
+    description: Reproject to EPSG:5070 before area / density calculations
+    severity: error
+  - rule_id: snapshot_year_recorded
+    description: Record the MS footprints release year for reproducibility
+    severity: error
+
+known_limitations:
+  - "ML-derived — small detection errors (false positives/negatives) are present"
+  - "No building height / floor count — floor_area is an area proxy only"
+  - "Treat as cross-sectional; year-over-year changes are noisy"

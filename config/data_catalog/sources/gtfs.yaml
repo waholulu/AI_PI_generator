@@ -1,0 +1,113 @@
+source_id: GTFS
+canonical_name: General Transit Feed Specification
+aliases:
+  - GTFS Feeds
+  - Transit Feeds
+  - TransitLand
+  - Mobility Database
+
+# ── Backward-compatible flat fields ─────────────────────────────────────────
+roles:
+  - exposure
+tier: stable
+cloud_safe: true
+machine_readable: true
+source_type: api_download
+expected_format: gtfs_zip_csv
+auth_required: false
+cost_required: false
+access_url: https://database.mobilitydata.org
+documentation_url: https://gtfs.org/schedule/
+coverage_year_min: 2014
+coverage_year_max: 2025
+spatial_units:
+  - stop
+  - census_tract
+  - city
+
+# ── Enhanced data catalog fields ─────────────────────────────────────────────
+acquisition:
+  method: download
+  url: https://database.mobilitydata.org
+  documentation_url: https://gtfs.org/schedule/
+  expected_format: gtfs_zip_csv
+  auth_required: false
+  cost_required: false
+  expected_files:
+    - data/raw/gtfs_feed.zip
+    - data/raw/gtfs_stops.csv
+    - data/raw/gtfs_stop_times.csv
+  notes: >
+    Use the Mobility Database to discover regional GTFS feeds. Use gtfs-kit
+    or partridge Python packages to load and compute service-frequency
+    indicators per stop. For multi-agency coverage, merge stops from all
+    feeds in the study region.
+
+geography:
+  native_unit: stop
+  target_units_supported:
+    - stop
+    - census_tract
+    - city
+  aggregation_required: true
+  default_aggregation: count_or_density_per_tract
+  join_keys:
+    - geometry
+  coverage: regional_per_feed
+
+temporal_coverage:
+  coverage_year_min: 2014
+  coverage_year_max: 2025
+  release_lag_years: 0.0
+  update_frequency: continuous
+  cross_sectional_only: false
+  notes: >
+    GTFS feeds are updated by each agency; use a snapshot from the study
+    period. Historical GTFS archives are available via the Mobility
+    Database / TransitLand. Pin the feed timestamp for reproducibility.
+
+variable_families:
+  transit_access:
+    family_id: transit_access
+    description: Transit-stop density and service-frequency indicators
+    variables:
+      - name: transit_stop_density
+        description: Number of transit stops per square km
+        unit: count_per_km2
+        dtype: float
+      - name: frequent_service_access
+        description: Share of population within 400m of a stop with ≥4 trips/peak hour
+        unit: fraction
+        dtype: float
+    aggregation_allowed_to:
+      - census_tract
+      - city
+
+join_recipes:
+  - recipe_id: gtfs_stops_to_tract
+    left_source: GTFS
+    right_source: TIGER_Lines
+    left_key: geometry
+    right_key: geometry
+    join_type: spatial
+    notes: >
+      Spatial join GTFS stop point geometries with TIGER tract polygons.
+      For frequent_service_access, pre-compute stop-level peak-hour trips
+      from stop_times.txt before the spatial join.
+    warnings:
+      - Use a projected CRS (EPSG:5070) for distance/density calculations
+      - "Multi-feed regions: dedupe stops within ~25m to avoid overcounting"
+
+validation_rules:
+  - rule_id: feed_snapshot_date_recorded
+    description: GTFS feed snapshot timestamp must be recorded
+    severity: error
+  - rule_id: projected_crs_required
+    description: Use projected CRS for distance/density computations
+    severity: error
+
+known_limitations:
+  - "Feed coverage is per-agency — rural areas often have no feed"
+  - "Schedules ≠ realized service; on-time performance not modeled"
+  - "Each feed has its own coordinate system (typically WGS84) — reproject"
+  - "Demand-responsive transit and microtransit are poorly represented"

@@ -216,9 +216,6 @@ def run_candidate_factory_ideation(state: dict) -> dict:
     run_id = settings.current_run_scope() or "unknown"
 
     for c in candidates:
-        title = _make_title(c)
-        rq = _make_research_question(c)
-
         # Step 4: normalize / enrich metadata (unconditional pre-processing).
         c = ensure_identification_metadata(c)
         # Step 5: deterministic precheck.
@@ -232,6 +229,12 @@ def run_candidate_factory_ideation(state: dict) -> dict:
             gate_status,
             no_paid_api=req.no_paid_api,
         )
+        # ── Contract-first: title and research question are derived ONLY from
+        # the structured fields after the contract has been validated, so
+        # candidates that fail the contract are not given a polished title
+        # that masks data-availability problems.
+        title = _make_title(repaired_c)
+        rq = _make_research_question(repaired_c)
         # Step 8: single translation layer — raw gate flags → user-facing readiness.
         readiness_summary = compute_candidate_readiness(
             repaired_c.model_dump(), gate_status, repair_history

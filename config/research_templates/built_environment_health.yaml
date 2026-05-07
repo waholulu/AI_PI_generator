@@ -79,13 +79,11 @@ allowed_exposure_families:
     allowed_units: [raster, tract]
     derived_features: [night_lights_mean, night_lights_variance]
 
-  streetview_built_form:
-    preferred_sources:
-      - Mapillary_Street_Images
-      - Google_Street_View_Static_API
-    tier: experimental
-    allowed_units: [street_segment, tract]
-    derived_features: [greenery_visibility_index, sidewalk_presence_score]
+# NOTE: streetview_built_form has been moved to
+# config/research_templates/built_environment_health_experimental.yaml
+# to enforce a stable / experimental template split.  Run with
+# --template built_environment_health_experimental --enable-experimental
+# to access street-view CV candidates.
 
 allowed_outcome_families:
   physical_inactivity:
@@ -135,7 +133,5 @@ technology_options:
   remote_sensing:
     default_enabled: true
     cloud_safe: true
-  streetview_cv:
-    default_enabled: false
-    cloud_safe: conditional
-    requires: [api_key_or_open_provider, image_policy_check]
+  # streetview_cv intentionally excluded from the stable template — see
+  # built_environment_health_experimental.yaml for the experimental variant.

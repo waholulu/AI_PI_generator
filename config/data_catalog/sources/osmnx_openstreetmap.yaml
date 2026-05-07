@@ -1,0 +1,180 @@
+source_id: OSMnx_OpenStreetMap
+canonical_name: OSMnx (OpenStreetMap)
+aliases:
+  - OSMnx
+  - OpenStreetMap
+  - OSM
+
+# ── Backward-compatible flat fields ─────────────────────────────────────────
+roles:
+  - exposure
+tier: stable
+cloud_safe: true
+machine_readable: true
+source_type: api
+expected_format: graphml_geojson
+auth_required: false
+cost_required: false
+access_url: https://www.openstreetmap.org
+documentation_url: https://osmnx.readthedocs.io
+coverage_year_min: 2014
+coverage_year_max: 2025
+spatial_units:
+  - street_segment
+  - census_tract
+  - city
+  - block_group
+
+# ── Enhanced data catalog fields ─────────────────────────────────────────────
+acquisition:
+  method: api
+  url: https://overpass-api.de/api/interpreter
+  documentation_url: https://osmnx.readthedocs.io
+  expected_format: graphml_geojson
+  auth_required: false
+  cost_required: false
+  expected_files:
+    - data/raw/osmnx_streets.graphml
+    - data/raw/osmnx_amenities.geojson
+  notes: >
+    Use osmnx Python package (graph_from_place / features_from_place).
+    Cache aggressively to respect Overpass API rate limits (use a local cache).
+    For large areas, query bounding boxes in tiles and merge.
+
+geography:
+  # OSMnx is typically used by querying *within* a polygon (tract / city) and
+  # computing per-polygon metrics directly via graph_from_polygon /
+  # features_from_polygon. The "native unit" of the produced features is
+  # therefore the polygon (census_tract by default), not the underlying
+  # street segment. No additional aggregation step is required.
+  native_unit: census_tract
+  target_units_supported:
+    - census_tract
+    - block_group
+    - city
+    - street_segment
+  aggregation_required: false
+  default_aggregation: ""
+  join_keys:
+    - GEOID
+  coverage: global
+
+temporal_coverage:
+  coverage_year_min: 2014
+  coverage_year_max: 2025
+  release_lag_years: 0.0
+  update_frequency: continuous
+  cross_sectional_only: false
+  notes: >
+    OSM is a continuously edited dataset. For reproducible studies, use a
+    pinned snapshot (e.g. Geofabrik weekly extract) and document the
+    snapshot date. Historical snapshots are available via OSM history dumps.
+
+variable_families:
+  street_connectivity:
+    family_id: street_connectivity
+    description: Per-polygon street network connectivity metrics derived from OSM
+    variables:
+      - name: intersection_density
+        description: Number of intersections per square km within polygon
+        unit: count_per_km2
+        dtype: float
+      - name: average_circuity
+        description: Mean ratio of network distance to straight-line distance
+        unit: ratio
+        dtype: float
+      - name: connected_node_ratio
+        description: Share of nodes in the giant connected component
+        unit: ratio
+        dtype: float
+    aggregation_allowed_to:
+      - census_tract
+      - block_group
+      - city
+
+  walkability:
+    family_id: walkability
+    description: Pedestrian-network-derived walkability indicators
+    variables:
+      - name: intersection_density
+        description: Number of intersections per square km
+        unit: count_per_km2
+        dtype: float
+      - name: street_density
+        description: Total street length per square km
+        unit: km_per_km2
+        dtype: float
+    aggregation_allowed_to:
+      - census_tract
+      - block_group
+
+  street_network:
+    family_id: street_network
+    description: Topological metrics of the local street network
+    variables:
+      - name: node_density
+        description: Network nodes per square km
+        unit: count_per_km2
+        dtype: float
+      - name: edge_density
+        description: Network edges per square km
+        unit: count_per_km2
+        dtype: float
+      - name: average_circuity
+        description: Mean ratio of network distance to straight-line distance
+        unit: ratio
+        dtype: float
+    aggregation_allowed_to:
+      - census_tract
+      - city
+
+  destination_accessibility:
+    family_id: destination_accessibility
+    description: Network-distance accessibility to amenities
+    variables:
+      - name: amenity_density
+        description: Number of amenities (food, retail, parks) per square km
+        unit: count_per_km2
+        dtype: float
+    aggregation_allowed_to:
+      - census_tract
+      - block_group
+
+  park_access:
+    family_id: park_access
+    description: Network-distance access to parks (OSM leisure=park)
+    variables:
+      - name: avg_distance_to_park
+        description: Mean network distance to nearest park polygon centroid
+        unit: meters
+        dtype: float
+    aggregation_allowed_to:
+      - census_tract
+
+join_recipes:
+  - recipe_id: osmnx_features_to_tract
+    left_source: OSMnx_OpenStreetMap
+    right_source: TIGER_Lines
+    left_key: geometry
+    right_key: geometry
+    join_type: spatial
+    notes: >
+      Spatial join of OSMnx graph nodes/edges with TIGER tract polygons,
+      then aggregate to per-tract counts/lengths/densities using sjoin.
+    warnings:
+      - Use a projected CRS (e.g. EPSG:5070) for accurate distance/area
+      - Edge lengths must be in meters before aggregating
+
+validation_rules:
+  - rule_id: snapshot_date_recorded
+    description: OSM snapshot date must be recorded for reproducibility
+    severity: error
+  - rule_id: projected_crs_required
+    description: Must use a projected CRS for distance/density calculations
+    severity: error
+
+known_limitations:
+  - "OSM completeness varies by region — sparse in rural areas"
+  - "Tagging quality is non-uniform; amenity classification may need cleaning"
+  - "Continuously edited — pin snapshot date for reproducibility"
+  - "Overpass API rate-limited; cache locally and use polite usage"

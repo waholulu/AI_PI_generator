@@ -1,0 +1,63 @@
+template_id: built_environment_health_experimental_v1
+description: >
+  EXPERIMENTAL extension of built_environment_health: street-view CV exposure
+  and other high-risk experimental data sources. Run only with
+  --enable-experimental and explicit reviewer approval. NOT a default-stable
+  template.
+default_geography: United States
+default_unit_of_analysis: census_tract
+default_time_window: 2018-2024
+default_claim_strength: associational
+tier: experimental
+
+required_roles:
+  exposure: true
+  outcome: true
+  control: true
+  boundary: true
+
+allowed_exposure_families:
+  streetview_built_form:
+    preferred_sources:
+      - Mapillary_Street_Images
+      - Google_Street_View_Static_API
+    tier: experimental
+    allowed_units: [street_segment, census_tract]
+    derived_features: [greenery_visibility_index, sidewalk_presence_score]
+
+allowed_outcome_families:
+  physical_inactivity:
+    preferred_sources: [CDC_PLACES]
+    allowed_units: [census_tract, county, place, zcta]
+  obesity:
+    preferred_sources: [CDC_PLACES]
+    allowed_units: [census_tract, county, place, zcta]
+  poor_mental_health:
+    preferred_sources: [CDC_PLACES]
+    allowed_units: [census_tract, county, place, zcta]
+
+default_controls: [ACS]
+default_boundary_source: [TIGER_Lines]
+
+allowed_methods:
+  cross_sectional_spatial_association:
+    claim_strength: associational
+    required_controls: [ACS]
+    key_threats:
+      - socioeconomic_confounding
+      - residential_self_selection
+      - spatial_autocorrelation
+      - exposure_measurement_error
+      - image_sampling_bias
+    mitigations:
+      socioeconomic_confounding: Include tract-level ACS socioeconomic controls.
+      residential_self_selection: Include county/metro fixed effects and avoid causal claims.
+      spatial_autocorrelation: Use clustered or spatially robust standard errors.
+      exposure_measurement_error: Run sensitivity checks with alternative feature definitions.
+      image_sampling_bias: Check image coverage / age and exclude tracts below a minimum sampling threshold.
+
+technology_options:
+  streetview_cv:
+    default_enabled: true
+    cloud_safe: conditional
+    requires: [api_key_or_open_provider, image_policy_check]

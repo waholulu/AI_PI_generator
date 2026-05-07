@@ -1,0 +1,106 @@
+source_id: VIIRS
+canonical_name: VIIRS Day/Night Band Nighttime Lights
+aliases:
+  - VIIRS DNB
+  - NOAA VIIRS
+  - VIIRS Nighttime Lights
+
+# ── Backward-compatible flat fields ─────────────────────────────────────────
+roles:
+  - exposure
+tier: tier2  # remote-sensing — requires raster zonal stats workflow
+cloud_safe: true
+machine_readable: true
+source_type: download
+expected_format: geotiff
+auth_required: false
+cost_required: false
+access_url: https://eogdata.mines.edu/products/vnl/
+documentation_url: https://eogdata.mines.edu/nighttime_light/annual/v22/
+coverage_year_min: 2014
+coverage_year_max: 2024
+spatial_units:
+  - raster_500m
+  - census_tract
+
+# ── Enhanced data catalog fields ─────────────────────────────────────────────
+acquisition:
+  method: download
+  url: https://eogdata.mines.edu/products/vnl/
+  documentation_url: https://eogdata.mines.edu/nighttime_light/annual/v22/
+  expected_format: geotiff
+  auth_required: false
+  cost_required: false
+  expected_files:
+    - data/raw/viirs_avg_rad_year.tif
+  notes: >
+    Annual cloud-free composite of VIIRS Day/Night Band radiance from the
+    Earth Observation Group at Colorado School of Mines. Use rasterio +
+    rasterstats / exactextract for zonal statistics over TIGER tracts.
+
+geography:
+  native_unit: raster_500m
+  target_units_supported:
+    - raster_500m
+    - census_tract
+    - county
+  aggregation_required: true
+  default_aggregation: zonal_statistics_mean
+  join_keys:
+    - geometry
+  coverage: global
+
+temporal_coverage:
+  coverage_year_min: 2014
+  coverage_year_max: 2024
+  release_lag_years: 1.0
+  update_frequency: annual
+  cross_sectional_only: false
+  notes: >
+    Annual composites available 2012 onward. For monthly resolution use the
+    monthly product; for panel analysis, use the annual stable-lights product
+    and document the version (currently V2.2).
+
+variable_families:
+  nighttime_lights:
+    family_id: nighttime_lights
+    description: VIIRS DNB radiance summaries per tract
+    variables:
+      - name: night_lights_mean
+        description: Mean per-tract VIIRS radiance (nW/cm²/sr)
+        unit: radiance
+        dtype: float
+      - name: night_lights_variance
+        description: Within-tract variance of VIIRS radiance
+        unit: radiance_squared
+        dtype: float
+    aggregation_allowed_to:
+      - census_tract
+      - county
+
+join_recipes:
+  - recipe_id: viirs_zonal_to_tract
+    left_source: VIIRS
+    right_source: TIGER_Lines
+    left_key: geometry
+    right_key: geometry
+    join_type: zonal
+    notes: >
+      Zonal stats of VIIRS DNB raster over TIGER tracts. Reproject both to
+      EPSG:5070 first. Mask out fill / no-data values before averaging.
+    warnings:
+      - Mask fill values (negative radiance) before computing mean
+      - Use V2.2 for the most recent stable annual composite
+
+validation_rules:
+  - rule_id: projected_crs_required
+    description: Reproject raster + tracts to EPSG:5070 before zonal stats
+    severity: error
+  - rule_id: nodata_masked
+    description: Mask negative / fill values before computing zonal mean
+    severity: error
+
+known_limitations:
+  - "500m resolution; small tracts may contain only a handful of pixels"
+  - "Sensor saturation in dense urban cores limits variance information"
+  - "Light pollution from snow / lunar illumination not fully removed"

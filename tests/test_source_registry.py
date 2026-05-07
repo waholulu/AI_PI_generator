@@ -38,14 +38,17 @@ def test_resolve_alias_from_new_catalog():
 
 
 def test_old_source_capabilities_fallback():
-    """Sources only in source_capabilities.yaml (not in data catalog) still load."""
+    """Sources only in source_capabilities.yaml (not in data catalog) still load.
+
+    Mapillary and Google Street View are experimental / commercial sources kept
+    only in the flat source_capabilities.yaml (no rich data catalog profile).
+    """
     registry = SourceRegistry.load()
-    # OSMnx and NLCD are in source_capabilities.yaml but NOT in data_catalog/sources/
-    assert registry.resolve("OSMnx_OpenStreetMap") is not None
-    assert registry.resolve("NLCD") is not None
+    assert registry.resolve("Mapillary_Street_Images") is not None
+    assert registry.resolve("Google_Street_View_Static_API") is not None
     # They should NOT have a rich profile (fallback only)
-    assert registry.get_profile("OSMnx_OpenStreetMap") is None
-    assert registry.get_profile("NLCD") is None
+    assert registry.get_profile("Mapillary_Street_Images") is None
+    assert registry.get_profile("Google_Street_View_Static_API") is None
 
 
 # ── Step 2 tests ─────────────────────────────────────────────────────────────
@@ -183,8 +186,8 @@ def test_has_variable_mapping_negative():
     """has_variable_mapping returns False for missing families."""
     registry = SourceRegistry.load()
     assert registry.has_variable_mapping("EPA_Smart_Location_Database", "nonexistent_family") is False
-    # OSMnx has no data catalog profile → no variable mapping
-    assert registry.has_variable_mapping("OSMnx_OpenStreetMap", "street_connectivity") is False
+    # Asking for a family the source does not declare
+    assert registry.has_variable_mapping("OSMnx_OpenStreetMap", "nonexistent_family") is False
 
 
 def test_spatial_units_flat_contains_only_native_unit():

@@ -1,0 +1,124 @@
+source_id: NLCD
+canonical_name: National Land Cover Database
+aliases:
+  - NLCD 2021
+  - USGS NLCD
+  - National Land Cover Database
+
+# ── Backward-compatible flat fields ─────────────────────────────────────────
+roles:
+  - exposure
+tier: stable
+cloud_safe: true
+machine_readable: true
+source_type: download
+expected_format: geotiff
+auth_required: false
+cost_required: false
+access_url: https://www.mrlc.gov/data
+documentation_url: https://www.mrlc.gov/data/nlcd-2021-land-cover-conus
+coverage_year_min: 2001
+coverage_year_max: 2021
+spatial_units:
+  - raster_30m
+  - census_tract
+  - block_group
+
+# ── Enhanced data catalog fields ─────────────────────────────────────────────
+acquisition:
+  method: download
+  url: https://www.mrlc.gov/data
+  documentation_url: https://www.mrlc.gov/data/nlcd-2021-land-cover-conus
+  expected_format: geotiff
+  auth_required: false
+  cost_required: false
+  expected_files:
+    - data/raw/nlcd_2021_landcover_conus.tif
+    - data/raw/nlcd_2021_impervious_conus.tif
+  notes: >
+    Download CONUS raster from MRLC viewer. Use rasterio/rioxarray + zonal
+    statistics (rasterstats or exactextract) to summarize per tract polygon.
+    Reproject to a common projected CRS (EPSG:5070 / CONUS Albers) before
+    zonal stats.
+
+geography:
+  native_unit: raster_30m
+  target_units_supported:
+    - raster_30m
+    - census_tract
+    - block_group
+    - county
+  aggregation_required: true
+  default_aggregation: zonal_statistics_mean_or_share
+  join_keys:
+    - geometry
+  coverage: continental_us
+
+temporal_coverage:
+  coverage_year_min: 2001
+  coverage_year_max: 2021
+  release_lag_years: 2.0
+  update_frequency: irregular
+  cross_sectional_only: false
+  notes: >
+    NLCD releases at irregular intervals (2001, 2006, 2011, 2016, 2019, 2021).
+    Land-cover classes are consistent across releases; impervious surface
+    fraction is released as a separate product.
+
+variable_families:
+  green_space:
+    family_id: green_space
+    description: Land-cover-derived green space coverage
+    variables:
+      - name: green_space_share
+        description: Share of pixels classified as forest/grassland/wetland
+        unit: fraction
+        dtype: float
+      - name: ndvi_proxy
+        description: Greenness proxy from land-cover classes 41/42/43/52/71/90/95
+        unit: fraction
+        dtype: float
+    aggregation_allowed_to:
+      - census_tract
+      - block_group
+      - county
+
+  impervious_surface:
+    family_id: impervious_surface
+    description: Impervious surface fraction (NLCD impervious product)
+    variables:
+      - name: impervious_surface_share
+        description: Mean per-tract impervious surface fraction (0-1)
+        unit: fraction
+        dtype: float
+    aggregation_allowed_to:
+      - census_tract
+      - block_group
+      - county
+
+join_recipes:
+  - recipe_id: nlcd_zonal_to_tract
+    left_source: NLCD
+    right_source: TIGER_Lines
+    left_key: geometry
+    right_key: geometry
+    join_type: zonal
+    notes: >
+      Use rasterstats/exactextract zonal_stats() to compute mean/share per
+      TIGER tract polygon. Reproject raster + vectors to EPSG:5070 first.
+    warnings:
+      - "Tracts smaller than ~5 raster pixels may produce unstable estimates"
+      - "Use 'all_touched=False' to avoid double-counting boundary pixels"
+
+validation_rules:
+  - rule_id: projected_crs_required
+    description: Reproject raster + tracts to EPSG:5070 before zonal stats
+    severity: error
+  - rule_id: nlcd_year_matches_study_window
+    description: Use NLCD release closest to the study year (within 3 years)
+    severity: warning
+
+known_limitations:
+  - "30m resolution; underestimates fine-grained vegetation in dense areas"
+  - "CONUS only — Alaska/Hawaii released separately"
+  - "Class boundaries change slightly across releases — check legend"
