@@ -57,8 +57,10 @@ include = ["agents*", "api*", "models*", "ui*", "config*"]
 markers = [
     "live_openalex: marks tests that call the real OpenAlex API (require OPENALEX_API_KEY, OPENALEX_EMAIL, pyalex)",
     "live_llm: marks tests that call real LLM APIs (require GEMINI_API_KEY / GOOGLE_API_KEY)",
+    "slow: marks tests that run the full pipeline or are otherwise slow (>10s); excluded from default run",
     "asyncio: marks tests that run asyncio event loop",
 ]
+addopts = "-m 'not slow and not live_openalex and not live_llm'"
 
 [dependency-groups]
 dev = [

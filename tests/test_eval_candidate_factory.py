@@ -13,15 +13,18 @@ from scripts.eval_candidate_factory import _check_thresholds, evaluate
 
 
 # ---------------------------------------------------------------------------
-# Helper
+# Module-scoped fixture — evaluate() runs once and is shared by all threshold
+# tests, cutting run time from O(N_tests * 24s) down to ~24s for the whole
+# group.
 # ---------------------------------------------------------------------------
 
-def _run_eval(enable_experimental: bool = False, max_candidates: int = 40) -> dict:
+@pytest.fixture(scope="module")
+def eval_result():
     return evaluate(
         template_id="built_environment_health",
         domain="Built environment and health outcomes",
-        max_candidates=max_candidates,
-        enable_experimental=enable_experimental,
+        max_candidates=40,
+        enable_experimental=False,
     )
 
 
@@ -29,58 +32,50 @@ def _run_eval(enable_experimental: bool = False, max_candidates: int = 40) -> di
 # Threshold tests (v1 thresholds)
 # ---------------------------------------------------------------------------
 
-def test_candidate_count_at_least_20():
-    result = _run_eval()
-    assert result["candidate_count"] >= 20, (
-        f"candidate_count {result['candidate_count']} < 20"
+def test_candidate_count_at_least_20(eval_result):
+    assert eval_result["candidate_count"] >= 20, (
+        f"candidate_count {eval_result['candidate_count']} < 20"
     )
 
 
-def test_score_completion_rate():
-    result = _run_eval()
-    assert result["score_completion_rate"] >= 0.95, (
-        f"score_completion_rate {result['score_completion_rate']:.2%} < 95%"
+def test_score_completion_rate(eval_result):
+    assert eval_result["score_completion_rate"] >= 0.95, (
+        f"score_completion_rate {eval_result['score_completion_rate']:.2%} < 95%"
     )
 
 
-def test_implementation_spec_completion_rate():
-    result = _run_eval()
-    assert result["implementation_spec_completion_rate"] >= 0.85, (
+def test_implementation_spec_completion_rate(eval_result):
+    assert eval_result["implementation_spec_completion_rate"] >= 0.85, (
         f"implementation_spec_completion_rate "
-        f"{result['implementation_spec_completion_rate']:.2%} < 85%"
+        f"{eval_result['implementation_spec_completion_rate']:.2%} < 85%"
     )
 
 
-def test_development_pack_ready_rate():
-    result = _run_eval()
-    assert result["development_pack_ready_rate"] >= 0.80, (
-        f"development_pack_ready_rate {result['development_pack_ready_rate']:.2%} < 80%"
+def test_development_pack_ready_rate(eval_result):
+    assert eval_result["development_pack_ready_rate"] >= 0.80, (
+        f"development_pack_ready_rate {eval_result['development_pack_ready_rate']:.2%} < 80%"
     )
 
 
-def test_low_or_medium_automation_risk_rate():
-    result = _run_eval()
-    assert result["low_or_medium_automation_risk_rate"] >= 0.70, (
+def test_low_or_medium_automation_risk_rate(eval_result):
+    assert eval_result["low_or_medium_automation_risk_rate"] >= 0.70, (
         f"low_or_medium_automation_risk_rate "
-        f"{result['low_or_medium_automation_risk_rate']:.2%} < 70%"
+        f"{eval_result['low_or_medium_automation_risk_rate']:.2%} < 70%"
     )
 
 
-def test_no_experimental_candidates_when_disabled():
-    result = _run_eval(enable_experimental=False)
-    assert result["experimental_candidate_count"] == 0, (
-        f"experimental_candidate_count {result['experimental_candidate_count']} != 0 "
+def test_no_experimental_candidates_when_disabled(eval_result):
+    assert eval_result["experimental_candidate_count"] == 0, (
+        f"experimental_candidate_count {eval_result['experimental_candidate_count']} != 0 "
         "when experimental disabled"
     )
 
 
-def test_top5_candidate_ids_populated():
-    result = _run_eval()
-    assert len(result["top_5_candidate_ids"]) >= 1
+def test_top5_candidate_ids_populated(eval_result):
+    assert len(eval_result["top_5_candidate_ids"]) >= 1
 
 
-def test_result_has_all_required_keys():
-    result = _run_eval()
+def test_result_has_all_required_keys(eval_result):
     required_keys = {
         "template_id",
         "candidate_count",
@@ -95,11 +90,11 @@ def test_result_has_all_required_keys():
         "top_5_candidate_ids",
     }
     for key in required_keys:
-        assert key in result, f"Missing key: {key}"
+        assert key in eval_result, f"Missing key: {key}"
 
 
 # ---------------------------------------------------------------------------
-# _check_thresholds helper
+# _check_thresholds helper (pure logic, no fixture needed)
 # ---------------------------------------------------------------------------
 
 def test_check_thresholds_passes_on_good_result():

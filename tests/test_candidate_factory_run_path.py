@@ -26,9 +26,35 @@ def run_scope(tmp_path, monkeypatch):
     settings.deactivate_run_scope(token)
 
 
+@pytest.fixture(scope="module")
+def factory_result(tmp_path_factory):
+    """Run the candidate factory once per module; share result across tests 3-5."""
+    import os
+    tmp = tmp_path_factory.mktemp("factory_run")
+    prev = os.environ.get("AUTOPI_DATA_ROOT")
+    os.environ["AUTOPI_DATA_ROOT"] = str(tmp)
+    token = settings.activate_run_scope("test-run-shared")
+    try:
+        result = run_candidate_factory_ideation({
+            "domain_input": "Built environment and health",
+            "template_id": "built_environment_health",
+            "candidate_factory_enabled": True,
+            "enable_experimental": False,
+            "execution_status": "starting",
+        })
+    finally:
+        settings.deactivate_run_scope(token)
+        if prev is None:
+            os.environ.pop("AUTOPI_DATA_ROOT", None)
+        else:
+            os.environ["AUTOPI_DATA_ROOT"] = prev
+    return result
+
+
 # ── test 1: ideation_node routes to factory when enabled ─────────────────────
 
-def test_factory_path_taken_when_enabled(run_scope):
+def test_factory_path_taken_when_enabled(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTOPI_DATA_ROOT", str(tmp_path))
     state = {
         "domain_input": "Built environment and health",
         "template_id": "built_environment_health",
@@ -41,12 +67,11 @@ def test_factory_path_taken_when_enabled(run_scope):
         called.append(s["template_id"])
         return {"execution_status": "ideation_complete"}
 
-    with patch("agents.ideation_agent.run_candidate_factory_ideation", fake_factory, create=True):
-        with patch("agents.candidate_factory_ideation.run_candidate_factory_ideation", fake_factory):
-            ideation_node(state)
+    with patch("agents.candidate_factory_ideation.run_candidate_factory_ideation", fake_factory):
+        result = ideation_node(state)
 
-    # The factory intercept is inside the module-level import; check via direct call instead
-    result = run_candidate_factory_ideation(state)
+    assert called, "Candidate Factory was not called"
+    assert called[0] == "built_environment_health"
     assert result["execution_status"] == "ideation_complete"
 
 
@@ -77,16 +102,8 @@ def test_factory_called_with_default_template_when_no_template_id():
 
 # ── test 3: candidate_cards.json is written with ≥20 entries ──────────────────
 
-def test_candidate_cards_written(run_scope):
-    state = {
-        "domain_input": "Built environment and health",
-        "template_id": "built_environment_health",
-        "candidate_factory_enabled": True,
-        "enable_experimental": False,
-        "execution_status": "starting",
-    }
-    result = run_candidate_factory_ideation(state)
-
+def test_candidate_cards_written(factory_result):
+    result = factory_result
     cards_path = Path(result["candidate_cards_path"])
     assert cards_path.exists(), "candidate_cards.json was not created"
 
@@ -102,17 +119,9 @@ def test_candidate_cards_written(run_scope):
 
 # ── test 4: topic_screening.json is the shortlist (≤ shortlist_size candidates) ──
 
-def test_topic_screening_written(run_scope):
+def test_topic_screening_written(factory_result):
     """topic_screening.json must contain only the shortlist (default 5), not the full pool."""
-    state = {
-        "domain_input": "Built environment and health",
-        "template_id": "built_environment_health",
-        "candidate_factory_enabled": True,
-        "enable_experimental": False,
-        "execution_status": "starting",
-    }
-    result = run_candidate_factory_ideation(state)
-
+    result = factory_result
     screening_path = Path(result["candidate_topics_path"])
     assert screening_path.exists(), "topic_screening.json was not created"
 
@@ -148,17 +157,9 @@ def test_topic_screening_written(run_scope):
 
 # ── test 5: a candidate from the shortlist can be selected via candidate_id ───
 
-def test_candidate_selection(run_scope):
+def test_candidate_selection(factory_result):
     """apply_idea_selection_by_candidate_id works on any shortlist candidate."""
-    state = {
-        "domain_input": "Built environment and health",
-        "template_id": "built_environment_health",
-        "candidate_factory_enabled": True,
-        "enable_experimental": False,
-        "execution_status": "starting",
-    }
-    result = run_candidate_factory_ideation(state)
-
+    result = factory_result
     # Pick the first candidate from the shortlist (rank-1 after factory ranking).
     screening = json.loads(Path(result["candidate_topics_path"]).read_text())
     first_id = screening["candidates"][0]["candidate_id"]

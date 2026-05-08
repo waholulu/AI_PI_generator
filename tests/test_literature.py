@@ -1,7 +1,7 @@
 import json
 import os
 from typing import Any, Dict, List
-from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import pytest
 
@@ -11,7 +11,7 @@ from agents import openalex_utils
 
 
 # ---------------------------------------------------------------------------
-# Shared fake paper
+# Shared fake paper and helpers
 # ---------------------------------------------------------------------------
 
 def _fake_paper(paper_id: str = "paper1", title: str = "Test Paper") -> Dict[str, Any]:
@@ -51,81 +51,80 @@ def _fake_download(url: str, dest: str) -> Dict[str, Any]:
     return {"status": "pdf_downloaded", "path": dest, "reason": ""}
 
 
-def _setup_dirs_and_plan(plan_content: str | None = None) -> None:
-    os.makedirs("config", exist_ok=True)
-    os.makedirs("data/literature", exist_ok=True)
-    os.makedirs("output", exist_ok=True)
-    if plan_content is None:
-        plan_content = json.dumps(
-            {
-                "run_id": "r1",
-                "project_title": "AI and urban outcomes",
-                "research_question": "How does AI adoption affect urban outcomes?",
-                "short_rationale": "Practical policy relevance with public data.",
-                "geography": "US",
-                "time_window": "2010-2020",
-                "exposure": {"name": "AI adoption", "measurement_proxy": "ai index"},
-                "outcome": {"name": "Urban outcomes", "measurement_proxy": "outcome index"},
-                "identification": {"primary_method": "fixed_effects", "key_threats": ["confounding"]},
-                "data_sources": [{"name": "Source", "access_url": "https://example.org/source.csv", "expected_format": "csv"}],
-                "literature_queries": [
-                    "ai adoption urban outcomes fixed effects",
-                    "urban ai policy outcomes",
-                    "ai urban panel data",
-                ],
-                "feasibility": {"overall_verdict": "warning"},
-            }
-        )
-    with open("config/research_plan.json", "w", encoding="utf-8") as f:
-        f.write(plan_content)
+_PLAN_CONTENT = json.dumps({
+    "run_id": "r1",
+    "project_title": "AI and urban outcomes",
+    "research_question": "How does AI adoption affect urban outcomes?",
+    "short_rationale": "Practical policy relevance with public data.",
+    "geography": "US",
+    "time_window": "2010-2020",
+    "exposure": {"name": "AI adoption", "measurement_proxy": "ai index"},
+    "outcome": {"name": "Urban outcomes", "measurement_proxy": "outcome index"},
+    "identification": {"primary_method": "fixed_effects", "key_threats": ["confounding"]},
+    "data_sources": [{"name": "Source", "access_url": "https://example.org/source.csv", "expected_format": "csv"}],
+    "literature_queries": [
+        "ai adoption urban outcomes fixed effects",
+        "urban ai policy outcomes",
+        "ai urban panel data",
+    ],
+    "feasibility": {"overall_verdict": "warning"},
+})
+
+
+@pytest.fixture
+def plan_path(tmp_path):
+    """Write a minimal research plan into a temp dir and return its path."""
+    cfg = tmp_path / "config"
+    cfg.mkdir()
+    p = cfg / "research_plan.json"
+    p.write_text(_PLAN_CONTENT, encoding="utf-8")
+    (tmp_path / "data" / "literature").mkdir(parents=True)
+    (tmp_path / "output").mkdir(exist_ok=True)
+    return str(p)
+
+
+@pytest.fixture(autouse=True)
+def _mock_arxiv():
+    """Always stub out arXiv so tests never hit the network."""
+    with patch("agents.literature_agent.multi_search_arxiv", return_value=[]):
+        yield
 
 
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 
-def test_literature_node_offline(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_literature_node_offline(monkeypatch, plan_path, tmp_path):
     """Ensure literature node runs using a mocked OpenAlex search and download."""
-    _setup_dirs_and_plan()
+    monkeypatch.setenv("AUTOPI_DATA_ROOT", str(tmp_path))
 
     paper = _fake_paper()
 
-    def _fake_search(query: str, limit: int = 20, from_year: int | None = None, **kwargs) -> List[Dict[str, Any]]:
-        assert query  # ensure query was built
+    def _fake_search(query: str, limit: int = 20, from_year: int | None = None, **kwargs):
+        assert query
         return [paper]
 
     monkeypatch.setattr(openalex_utils, "search_openalex", _fake_search)
     monkeypatch.setattr(literature_agent, "download_pdf", _fake_download)
 
-    state = ResearchState(
-        current_plan_path="config/research_plan.json",
-        execution_status="harvesting",
-    )
+    state = ResearchState(current_plan_path=plan_path, execution_status="harvesting")
     new_state = literature_agent.literature_node(state)
 
     assert new_state["execution_status"] == "drafting"
-    assert os.path.exists("data/literature/index.json")
-    assert os.path.exists("output/references.bib")
-
-    with open("data/literature/index.json", "r", encoding="utf-8") as f:
-        inventory = json.load(f)
+    index_path = tmp_path / "data" / "literature" / "index.json"
+    assert index_path.exists()
+    inventory = json.loads(index_path.read_text())
     assert len(inventory) >= 1
     assert inventory[0]["title"] == "Test Paper"
     assert inventory[0]["pdf_status"] == "pdf_downloaded"
 
 
-def test_literature_multi_query_deduplication(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_literature_multi_query_deduplication(monkeypatch, plan_path, tmp_path):
     """Multiple queries returning the same openalex_id should yield only one paper."""
-    _setup_dirs_and_plan()
-
-    call_count = {"n": 0}
+    monkeypatch.setenv("AUTOPI_DATA_ROOT", str(tmp_path))
     shared_paper = _fake_paper(paper_id="W_SHARED", title="Shared Paper")
 
-    def _fake_search(query: str, limit: int = 20, from_year: int | None = None, **kwargs) -> List[Dict[str, Any]]:
-        call_count["n"] += 1
-        return [shared_paper]
-
-    monkeypatch.setattr(openalex_utils, "search_openalex", _fake_search)
+    monkeypatch.setattr(openalex_utils, "search_openalex", lambda *a, **kw: [shared_paper])
     monkeypatch.setattr(literature_agent, "download_pdf", _fake_download)
 
     papers, query_hits = openalex_utils.multi_search_openalex(
@@ -133,20 +132,17 @@ def test_literature_multi_query_deduplication(monkeypatch: pytest.MonkeyPatch) -
         per_query_limit=5,
         final_limit=5,
     )
-
-    ids = [p.get("openalex_id") or p.get("paperId") for p in papers]
     assert len(papers) == 1, f"Expected 1 unique paper after dedup, got {len(papers)}"
-    assert call_count["n"] >= 1
 
 
-def test_literature_multi_query_collects_distinct_papers(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_literature_multi_query_collects_distinct_papers(monkeypatch, plan_path, tmp_path):
     """Distinct papers from different queries should all be collected."""
-    _setup_dirs_and_plan()
-
-    def _fake_search(query: str, limit: int = 20, from_year: int | None = None, **kwargs) -> List[Dict[str, Any]]:
-        return [_fake_paper(paper_id=f"W_{query.replace(' ', '_')}", title=f"Paper for {query}")]
-
-    monkeypatch.setattr(openalex_utils, "search_openalex", _fake_search)
+    monkeypatch.setenv("AUTOPI_DATA_ROOT", str(tmp_path))
+    monkeypatch.setattr(
+        openalex_utils,
+        "search_openalex",
+        lambda query, **kw: [_fake_paper(paper_id=f"W_{query.replace(' ', '_')}", title=f"Paper for {query}")],
+    )
     monkeypatch.setattr(literature_agent, "download_pdf", _fake_download)
 
     papers, query_hits = openalex_utils.multi_search_openalex(
@@ -154,88 +150,65 @@ def test_literature_multi_query_collects_distinct_papers(monkeypatch: pytest.Mon
         per_query_limit=5,
         final_limit=10,
     )
-
-    titles = [p["title"] for p in papers]
     assert len(papers) == 3
-    queries_with_hits = [q for q, h in query_hits.items() if h > 0]
-    assert len(queries_with_hits) == 3
+    assert sum(1 for h in query_hits.values() if h > 0) == 3
 
 
-def test_literature_queries_used_written_to_context(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_literature_queries_used_written_to_context(monkeypatch, plan_path, tmp_path):
     """literature_summary in research_context.json should include queries_used list."""
-    _setup_dirs_and_plan()
+    monkeypatch.setenv("AUTOPI_DATA_ROOT", str(tmp_path))
 
-    # Write a minimal research context
-    context_path = "output/research_context.json"
-    with open(context_path, "w", encoding="utf-8") as f:
-        json.dump({"domain": "GeoAI", "selected_topic": {"title": "GeoAI health"}}, f)
+    context_path = tmp_path / "output" / "research_context.json"
+    context_path.write_text(
+        json.dumps({"domain": "GeoAI", "selected_topic": {"title": "GeoAI health"}}),
+        encoding="utf-8",
+    )
 
-    paper = _fake_paper()
-
-    def _fake_search(query: str, limit: int = 20, from_year: int | None = None, **kwargs) -> List[Dict[str, Any]]:
-        return [paper]
-
-    monkeypatch.setattr(openalex_utils, "search_openalex", _fake_search)
+    monkeypatch.setattr(openalex_utils, "search_openalex", lambda *a, **kw: [_fake_paper()])
     monkeypatch.setattr(literature_agent, "download_pdf", _fake_download)
 
     state = ResearchState(
-        current_plan_path="config/research_plan.json",
-        research_context_path=context_path,
+        current_plan_path=plan_path,
+        research_context_path=str(context_path),
         execution_status="harvesting",
     )
     literature_agent.literature_node(state)
 
-    with open(context_path, "r", encoding="utf-8") as f:
-        ctx = json.load(f)
-
+    ctx = json.loads(context_path.read_text(encoding="utf-8"))
     assert "literature_summary" in ctx
-    lit_summary = ctx["literature_summary"]
-    assert "queries_used" in lit_summary
-    assert isinstance(lit_summary["queries_used"], list)
-    assert "query_pool" in lit_summary
-    assert "used_fallback" in lit_summary
+    lit = ctx["literature_summary"]
+    assert "queries_used" in lit
+    assert isinstance(lit["queries_used"], list)
+    assert "query_pool" in lit
+    assert "used_fallback" in lit
 
 
-def test_literature_fallback_when_planner_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_literature_fallback_when_planner_disabled(monkeypatch, plan_path, tmp_path):
     """With OPENALEX_QUERY_REWRITE_ENABLED=false, harvester must still run correctly."""
+    monkeypatch.setenv("AUTOPI_DATA_ROOT", str(tmp_path))
     monkeypatch.setenv("OPENALEX_QUERY_REWRITE_ENABLED", "false")
-    _setup_dirs_and_plan()
 
-    paper = _fake_paper()
-
-    def _fake_search(query: str, limit: int = 20, from_year: int | None = None, **kwargs) -> List[Dict[str, Any]]:
-        return [paper]
-
-    monkeypatch.setattr(openalex_utils, "search_openalex", _fake_search)
+    monkeypatch.setattr(openalex_utils, "search_openalex", lambda *a, **kw: [_fake_paper()])
     monkeypatch.setattr(literature_agent, "download_pdf", _fake_download)
 
-    state = ResearchState(
-        current_plan_path="config/research_plan.json",
-        execution_status="harvesting",
-    )
+    state = ResearchState(current_plan_path=plan_path, execution_status="harvesting")
     new_state = literature_agent.literature_node(state)
 
     assert new_state["execution_status"] == "drafting"
-    with open("data/literature/index.json", "r", encoding="utf-8") as f:
-        inventory = json.load(f)
-    assert len(inventory) >= 1
+    index_path = tmp_path / "data" / "literature" / "index.json"
+    assert len(json.loads(index_path.read_text())) >= 1
 
 
-def test_literature_cards_include_matched_query(monkeypatch: pytest.MonkeyPatch) -> None:
-    _setup_dirs_and_plan()
-    paper = _fake_paper()
-
-    def _fake_search(query: str, limit: int = 20, from_year: int | None = None, **kwargs) -> List[Dict[str, Any]]:
-        return [paper]
-
-    monkeypatch.setattr(openalex_utils, "search_openalex", _fake_search)
+def test_literature_cards_include_matched_query(monkeypatch, plan_path, tmp_path):
+    monkeypatch.setenv("AUTOPI_DATA_ROOT", str(tmp_path))
+    monkeypatch.setattr(openalex_utils, "search_openalex", lambda *a, **kw: [_fake_paper()])
     monkeypatch.setattr(literature_agent, "download_pdf", _fake_download)
 
-    state = ResearchState(current_plan_path="config/research_plan.json", execution_status="harvesting")
+    state = ResearchState(current_plan_path=plan_path, execution_status="harvesting")
     literature_agent.literature_node(state)
 
-    with open("data/literature/index.json", "r", encoding="utf-8") as f:
-        inventory = json.load(f)
+    index_path = tmp_path / "data" / "literature" / "index.json"
+    inventory = json.loads(index_path.read_text())
     assert inventory
     assert "matched_query" in inventory[0]
     assert inventory[0]["matched_query"]

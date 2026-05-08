@@ -4,6 +4,7 @@ import pytest
 from agents.orchestrator import build_orchestrator, ResearchState
 
 
+@pytest.mark.slow
 def test_full_pipeline(tmp_path, monkeypatch):
     """Runs a full simulated run to ensure no crashes."""
     monkeypatch.setenv("AUTOPI_DATA_ROOT", str(tmp_path))

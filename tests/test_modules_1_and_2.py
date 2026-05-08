@@ -1,6 +1,7 @@
 import os
 import sys
 
+import pytest
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -13,6 +14,7 @@ from agents.orchestrator import ResearchState
 from agents.ideation_agent import ideation_node
 from agents.literature_agent import literature_node
 
+@pytest.mark.slow
 def test_module_1_and_2():
     print("=== 开始测试 Module 1: Ideation ===")
     
