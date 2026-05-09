@@ -47,8 +47,15 @@ def validate_candidate_export_contract(
     if any(not bool(registry.sources.get(sid, {}).get("machine_readable")) for sid in core_source_ids):
         blocking_reasons.append("missing_machine_readable_source")
 
+    is_training_research = candidate.unit_of_analysis == "training_run"
+
     controls = [registry.resolve(s) or s for s in (candidate.join_plan.get("controls") or [])]
-    if "ACS" not in controls:
+    if is_training_research:
+        # Training candidates use Training_Logs (wandb / tensorboard) as the
+        # control surface; ACS is irrelevant outside spatial-regression work.
+        if "Training_Logs" not in controls:
+            warnings.append("missing_training_logs_control")
+    elif "ACS" not in controls:
         warnings.append("missing_standard_control_source")
 
     boundary_ids = [registry.resolve(s) or s for s in (candidate.join_plan.get("boundary_source") or [])]
@@ -72,12 +79,22 @@ def validate_candidate_export_contract(
     if candidate.automation_risk == "high":
         blocking_reasons.append("high_automation_risk_blocks_ready")
 
-    # Required secrets block claude_code_ready — a prompt with secrets cannot
-    # run in a keyless cloud environment.
-    if candidate.required_secrets:
-        blocking_reasons.append("required_secrets_blocks_ready")
+    has_paid_source = any(
+        bool(registry.sources.get(sid, {}).get("cost_required")) for sid in core_source_ids
+    )
 
-    if no_paid_api and any(bool(registry.sources.get(sid, {}).get("cost_required")) for sid in core_source_ids):
+    # Required secrets normally block claude_code_ready — a prompt with paid
+    # API keys cannot run in a keyless cloud environment. For training-research
+    # candidates the only required secret is typically HF_TOKEN (free with
+    # sign-up, user-supplied at notebook runtime); demote to a warning unless
+    # a genuinely paid source is also in the mix.
+    if candidate.required_secrets:
+        if is_training_research and not has_paid_source:
+            warnings.append("hf_token_required_at_runtime")
+        else:
+            blocking_reasons.append("required_secrets_blocks_ready")
+
+    if no_paid_api and has_paid_source:
         blocking_reasons.append("paid_source_not_allowed")
 
     reasons.extend([r for r in blocking_reasons + warnings if r not in reasons])

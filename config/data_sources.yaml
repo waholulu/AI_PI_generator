@@ -323,3 +323,59 @@ data_sources:
     auth_required: false
     format: graph/geojson
     url: https://osmnx.readthedocs.io
+
+  # ── LLM / DL training research sources ───────────────────────────────────
+  - name: HuggingFace_Models
+    alias: [hf models, hf hub models, hf_hub_models]
+    description: Hugging Face Hub pretrained model artifacts (base models, tokenizers)
+    spatial_units: [training_run]
+    coverage_year_min: 2018
+    coverage_year_max: 2026
+    skills_required: [hf_model_load]
+    auth_required: true
+    format: safetensors
+    url: https://huggingface.co/models
+
+  - name: HuggingFace_Datasets
+    alias: [hf datasets, huggingface datasets, hf_datasets]
+    description: Hugging Face Hub datasets for training corpora and evaluation benchmarks
+    spatial_units: [training_run]
+    coverage_year_min: 2019
+    coverage_year_max: 2026
+    skills_required: [hf_dataset_load]
+    auth_required: false
+    format: parquet/jsonl
+    url: https://huggingface.co/datasets
+
+  - name: Local_Eval_Harness
+    alias: [lm-eval-harness, lm-evaluation-harness, eleuther eval harness]
+    description: EleutherAI lm-evaluation-harness for benchmark evaluation
+    spatial_units: [training_run]
+    coverage_year_min: 2022
+    coverage_year_max: 2026
+    skills_required: [eval_harness_run]
+    auth_required: false
+    format: jsonl
+    url: https://github.com/EleutherAI/lm-evaluation-harness
+
+  - name: Training_Logs
+    alias: [wandb_logs, tensorboard_logs, training_telemetry]
+    description: Wandb / tensorboard training run telemetry (loss, throughput, GPU)
+    spatial_units: [training_run]
+    coverage_year_min: 2020
+    coverage_year_max: 2026
+    skills_required: [wandb_log]
+    auth_required: false
+    format: jsonl
+    url: https://docs.wandb.ai
+
+  - name: Vector_DB_Local
+    alias: [chroma_local, faiss_local, vector_store_local]
+    description: Local persistent vector database (reserved for v2 RAG comparisons)
+    spatial_units: [training_run]
+    coverage_year_min: 2023
+    coverage_year_max: 2026
+    skills_required: [hf_dataset_load]
+    auth_required: false
+    format: chroma_or_faiss
+    url: https://www.trychroma.com

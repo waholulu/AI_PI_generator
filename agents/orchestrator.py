@@ -42,6 +42,7 @@ class _Module1State(ResearchState, total=False):
     skip_reflection: bool
     hitl_interruption: dict
     template_id: Optional[str]
+    runtime_tier: Optional[str]
     technology_options: dict
     automation_risk_tolerance: str
     cloud_constraints: dict

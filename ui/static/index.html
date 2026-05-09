@@ -543,13 +543,14 @@
       <div class="form-grid">
         <textarea id="domainInput" placeholder="输入研究方向，例如：Built environment exposure and health outcomes">Built environment exposure and health outcomes</textarea>
         <label class="field-label">Research template</label>
-        <select id="templateSelect" class="input"></select>
+        <select id="templateSelect" class="input" onchange="onTemplateChange(this.value)"></select>
         <label class="field-label">Automation risk tolerance</label>
         <select id="riskTolerance" class="input">
           <option value="low_medium">Low + medium</option>
           <option value="low_only">Low only</option>
           <option value="experimental">Experimental</option>
         </select>
+        <div id="spatialOptions">
         <label class="checkbox-row"><input type="checkbox" id="optOsmnx" checked> OSMnx</label>
         <label class="checkbox-row"><input type="checkbox" id="optRemoteSensing" checked> Remote sensing</label>
         <label class="checkbox-row"><input type="checkbox" id="optMsBuilding" checked> Microsoft building footprints</label>
@@ -559,6 +560,16 @@
         <label class="checkbox-row"><input type="checkbox" id="ccNoRawImage" checked> No raw image storage</label>
         <label class="checkbox-row"><input type="checkbox" id="ccNoManual" checked> No manual download</label>
         <label class="checkbox-row"><input type="checkbox" id="ccNoGpu" checked> No GPU</label>
+        </div>
+        <div id="llmOptions" style="display:none">
+        <label class="field-label">GPU runtime tier</label>
+        <select id="runtimeTier" class="input">
+          <option value="colab_t4">Colab T4 (16 GB) — LoRA≤1.5B / QLoRA≤7B</option>
+          <option value="colab_a100">Colab A100 (40 GB) — full SFT up to 7B</option>
+          <option value="local_gpu">Local GPU (user-supplied)</option>
+        </select>
+        <div style="font-size:.75rem;color:#94a3b8;margin-top:4px">HF_TOKEN required at notebook runtime (free HuggingFace account)</div>
+        </div>
         <label class="checkbox-row"><input type="checkbox" id="enableExperimental"> Enable experimental</label>
         <label class="field-label">Number of candidates</label>
         <select id="maxCandidates" class="input">
@@ -567,7 +578,7 @@
           <option value="60">60</option>
         </select>
       </div>
-      <div class="expect-box">
+      <div id="expectBox" class="expect-box">
         Expected output: up to 40 candidates · Sources: OSMnx/CDC PLACES/ACS/TIGER/EPA/NLCD · Development pack enabled
       </div>
       <button class="btn btn-primary" id="startBtn" onclick="startRun()">
@@ -659,6 +670,21 @@ function toast(msg, type='') {
   _toastTimer = setTimeout(() => el.className = '', 3000);
 }
 
+// ── Template-aware sidebar toggle ───────────────────────────────────────────
+function onTemplateChange(templateId) {
+  const isLlm = templateId === 'llm_training_research';
+  const spatial = document.getElementById('spatialOptions');
+  const llm = document.getElementById('llmOptions');
+  if (spatial) spatial.style.display = isLlm ? 'none' : '';
+  if (llm) llm.style.display = isLlm ? '' : 'none';
+  const expectBox = document.getElementById('expectBox');
+  if (expectBox) {
+    expectBox.textContent = isLlm
+      ? 'Expected output: up to 40 candidates · Sources: HuggingFace Models/Datasets + Training Logs · Colab dev pack (experiment_config.yaml + training_plan.yaml + colab_notebook_spec.md)'
+      : 'Expected output: up to 40 candidates · Sources: OSMnx/CDC PLACES/ACS/TIGER/EPA/NLCD · Development pack enabled';
+  }
+}
+
 // ── Sidebar run list ────────────────────────────────────────────────────────
 async function loadRuns() {
   try {
@@ -676,9 +702,11 @@ async function loadTemplates() {
     sel.innerHTML = state.templates.map(t => `<option value="${escAttr(t.file_id || t.template_id)}">${escHtml(t.template_id || t.file_id)}</option>`).join('');
     const built = state.templates.find(t => (t.file_id || t.template_id) === 'built_environment_health');
     if (built) sel.value = 'built_environment_health';
+    onTemplateChange(sel.value);
   } catch(e) {
     const sel = document.getElementById('templateSelect');
     if (sel) sel.innerHTML = '<option value="built_environment_health">built_environment_health</option>';
+    onTemplateChange('built_environment_health');
   }
 }
 
@@ -721,10 +749,13 @@ async function startRun() {
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> 提交中...';
   try {
+    const templateId = document.getElementById('templateSelect').value || 'built_environment_health';
+    const isLlm = templateId === 'llm_training_research';
     const run = await api('POST', '/runs', {
       domain_input: domain,
-      template_id: document.getElementById('templateSelect').value || 'built_environment_health',
-      technology_options: {
+      template_id: templateId,
+      runtime_tier: isLlm ? (document.getElementById('runtimeTier')?.value || 'colab_t4') : 'colab_t4',
+      technology_options: isLlm ? {} : {
         osmnx: document.getElementById('optOsmnx').checked,
         remote_sensing: document.getElementById('optRemoteSensing').checked,
         microsoft_building_footprints: document.getElementById('optMsBuilding').checked,
@@ -732,7 +763,7 @@ async function startRun() {
         deep_learning: document.getElementById('optDL').checked,
       },
       automation_risk_tolerance: document.getElementById('riskTolerance').value,
-      cloud_constraints: {
+      cloud_constraints: isLlm ? { no_paid_api: false, no_raw_image_storage: false, no_manual_download: false, no_gpu: false } : {
         no_paid_api: document.getElementById('ccNoPaidApi').checked,
         no_raw_image_storage: document.getElementById('ccNoRawImage').checked,
         no_manual_download: document.getElementById('ccNoManual').checked,
@@ -741,7 +772,7 @@ async function startRun() {
       enable_experimental: document.getElementById('enableExperimental').checked,
       max_candidates: parseInt(document.getElementById('maxCandidates').value, 10) || 40,
     });
-    state.cloudConstraints = {
+    state.cloudConstraints = isLlm ? { no_paid_api: false, no_raw_image_storage: false, no_manual_download: false, no_gpu: false } : {
       no_paid_api: document.getElementById('ccNoPaidApi').checked,
       no_raw_image_storage: document.getElementById('ccNoRawImage').checked,
       no_manual_download: document.getElementById('ccNoManual').checked,
@@ -963,11 +994,23 @@ function renderCandidateReviewTab(el, run) {
           const displayQuestion = display.research_question || c.research_question || '';
           const displayRationale = display.rationale || '';
           const displayContribution = display.contribution_angle || '';
+          const isTraining = c.unit_of_analysis === 'training_run';
           const executionSummary = display.execution_summary
-            || `Sources: ${c.exposure_source||'?'} + ${c.outcome_source||'?'} · Method: ${c.method||'?'} · Grain: ${c.unit_of_analysis||'?'}`;
+            || (isTraining
+              ? `Strategy: ${c.exposure_source||'?'} → Target: ${c.outcome_source||'?'} · Method: ${c.method||'?'}`
+              : `Sources: ${c.exposure_source||'?'} + ${c.outcome_source||'?'} · Method: ${c.method||'?'} · Grain: ${c.unit_of_analysis||'?'}`);
+          const xLabel = isTraining ? 'Strategy' : 'X';
+          const yLabel = isTraining ? 'Target' : 'Y';
+          const hasHfToken = hasSecrets && (c.required_secrets||[]).every(s => s === 'HF_TOKEN');
+          const secretsNoticePaid = hasSecrets
+            ? (hasHfToken
+              ? `<div style="font-size:.78rem;color:#fbbf24">⚠ Requires HF_TOKEN (free, provided at notebook runtime)</div>`
+              : `<div style="font-size:.78rem;color:#fbbf24">⚠ Required secrets: ${escHtml((c.required_secrets||[]).join(', '))}</div>`)
+            : '<div style="font-size:.78rem;color:#86efac">Required secrets: none</div>';
           return `
           <div class="candidate-card" style="${isBlocked ? 'opacity:.65;border-color:#7f1d1d' : ''}">
             <div style="display:flex;gap:4px;flex-wrap:wrap">${statusBadge(c.readiness || c.shortlist_status)} ${riskBadge(c.automation_risk)} ${gateHtml}</div>
+            ${isTraining ? '<span class="badge" style="background:#1e2d4a;color:#60a5fa;font-size:.68rem">LLM Training</span>' : ''}
             <div class="candidate-title">${escHtml(displayTitle)}</div>
             ${displayQuestion ? `<div style="font-size:.8rem;color:#94a3b8">${escHtml(displayQuestion)}</div>` : ''}
             ${displayRationale ? `<div style="font-size:.78rem;color:#cbd5e1">${escHtml(displayRationale)}</div>` : ''}
@@ -976,8 +1019,8 @@ function renderCandidateReviewTab(el, run) {
               <summary style="cursor:pointer;font-size:.78rem;color:#94a3b8">Show execution details (sources · method · grain)</summary>
               <div style="margin-top:6px;padding:8px;background:#0f172a;border-radius:6px;font-size:.78rem;line-height:1.45">
                 <div style="color:#cbd5e1">${escHtml(executionSummary)}</div>
-                <div style="margin-top:4px">X: ${escHtml(c.exposure_label||'')} · <em>${escHtml(c.exposure_source||'')}</em></div>
-                <div>Y: ${escHtml(c.outcome_label||'')} · <em>${escHtml(c.outcome_source||'')}</em></div>
+                <div style="margin-top:4px">${xLabel}: ${escHtml(c.exposure_label||'')} · <em>${escHtml(c.exposure_source||'')}</em></div>
+                <div>${yLabel}: ${escHtml(c.outcome_label||'')} · <em>${escHtml(c.outcome_source||'')}</em></div>
                 <div>Unit: ${escHtml(c.unit_of_analysis||'')} · Method: ${escHtml(c.method||'')}</div>
                 ${displayContribution ? `<div style="margin-top:4px;color:#94a3b8">Angle: ${escHtml(displayContribution)}</div>` : ''}
               </div>
@@ -988,7 +1031,7 @@ function renderCandidateReviewTab(el, run) {
               <span>Auto: ${Math.round((c.scores?.automation_feasibility||0)*100)}</span>
               <span>ID: ${Math.round((c.scores?.identification_quality||0)*100)}</span>
             </div>
-            ${secretsHtml}
+            ${secretsNoticePaid}
             ${blockedBannerHtml}
             ${tagsHtml ? `<div style="margin-top:2px">${tagsHtml}</div>` : ''}
             <div style="display:flex;gap:4px;align-items:center;margin-top:4px">${dpHtml}</div>
@@ -1030,6 +1073,7 @@ function renderCandidateDetailTab(el, run) {
   el.innerHTML = '<div style="color:#64748b">加载中...</div>';
   api('GET', `/runs/${run.run_id}/candidates/${state.selectedCandidateId}`).then(data => {
     const c = data.candidate;
+    const isTrainingDetail = (c.x_y_structure||[]).some(x => x.role === 'training_strategy' || x.role === 'evaluation_target');
     const rows = (c.x_y_structure||[]).map(x => `<tr><td>${escHtml(x.role)}</td><td>${escHtml(x.variable)}</td><td>${escHtml(x.source)}</td><td>${escHtml(x.unit)}</td><td>${escHtml(x.status)}</td></tr>`).join('');
     const mitigations = c.identification?.mitigations || {};
     const mitEntries = Object.entries(mitigations).filter(([,v]) => v);
@@ -1038,8 +1082,11 @@ function renderCandidateDetailTab(el, run) {
       : '';
     const hasSecrets = (c.technology?.required_secrets||[]).length > 0;
     const hasRawImage = (c.technology?.policy_constraints||[]).includes('no_raw_image_storage');
+    const detailHfOnly = hasSecrets && (c.technology.required_secrets||[]).every(s => s === 'HF_TOKEN');
     const secretsWarnHtml = hasSecrets
-      ? `<div class="warn-box">⚠ Required secrets: <strong>${escHtml((c.technology.required_secrets).join(', '))}</strong>. This candidate requires paid API access.</div>`
+      ? detailHfOnly
+        ? `<div class="warn-box-orange">⚠ Requires HF_TOKEN (free HuggingFace account; provided at notebook runtime).</div>`
+        : `<div class="warn-box">⚠ Required secrets: <strong>${escHtml((c.technology.required_secrets).join(', '))}</strong>. This candidate requires paid API access.</div>`
       : '';
     const rawImageWarnHtml = hasRawImage
       ? `<div class="warn-box-orange">⚠ Raw image storage is disabled. Only extracted numeric features may be stored.</div>`
@@ -1047,15 +1094,16 @@ function renderCandidateDetailTab(el, run) {
     const policyText = (c.technology?.policy_constraints||[]).filter(p => p !== 'no_raw_image_storage').join(', ') || 'none';
     el.innerHTML = `
       <h3 style="margin-bottom:8px">${escHtml(c.title)}</h3>
+      ${isTrainingDetail ? '<span class="badge" style="background:#1e2d4a;color:#60a5fa;font-size:.72rem;margin-bottom:8px;display:inline-block">LLM Training Research</span>' : ''}
       <div style="font-size:.85rem;color:#94a3b8;margin-bottom:12px">${escHtml(c.research_question)}</div>
       <table><thead><tr><th>Role</th><th>Variable</th><th>Source</th><th>Unit</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>
       <div class="status-card" style="margin-top:12px">
-        <h3>Join plan</h3>
+        <h3>${isTrainingDetail ? 'Experiment plan' : 'Join plan'}</h3>
         ${(c.join_plan?.steps||[]).map((s,i)=>`<div style="font-size:.85rem;margin-bottom:4px">${i+1}. ${escHtml(s)}</div>`).join('')}
-        ${c.join_plan?.join_key ? `<div style="font-size:.78rem;color:#64748b;margin-top:6px">Join key: <code>${escHtml(c.join_plan.join_key)}</code></div>` : ''}
+        ${c.join_plan?.join_key ? `<div style="font-size:.78rem;color:#64748b;margin-top:6px">${isTrainingDetail ? 'Run key' : 'Join key'}: <code>${escHtml(c.join_plan.join_key)}</code></div>` : ''}
       </div>
       <div class="status-card">
-        <h3>Identification</h3>
+        <h3>${isTrainingDetail ? 'Methodology & Threats' : 'Identification'}</h3>
         <div style="font-size:.85rem"><strong>Primary method:</strong> ${escHtml(c.identification?.primary_method||'—')}</div>
         <div style="font-size:.85rem"><strong>Claim strength:</strong> ${escHtml(c.identification?.claim_strength||'—')}</div>
         ${(c.identification?.key_threats||[]).length ? `
@@ -1347,7 +1395,8 @@ const _BLOCKER_REASONS = new Set(['missing_exposure_role_source','missing_outcom
   'missing_machine_readable_source','no_data_sources_declared','missing_join_path']);
 const _REVIEW_REASONS = new Set(['missing_identification_method','missing_identification_threats',
   'partial_literature_overlap','already_published_overlap','short_rationale_too_brief',
-  'research_question_too_brief','geography_incompatible','time_window_incompatible']);
+  'research_question_too_brief','geography_incompatible','time_window_incompatible',
+  'missing_training_logs_control','hf_token_required_at_runtime','gpu_runtime_capacity_warning']);
 const _INFO_REASONS = new Set(['source_alias_resolved','non_canonical_source_name',
   'canonicalize_source_name','partial_registry_match','novelty_evidence_limited',
   'url_not_reachable','no_access_url','experimental_source_requires_key']);
@@ -1460,6 +1509,7 @@ async function renderHitlPicker(run) {
         _eval_reasons: (c.evaluation && c.evaluation.user_visible_reasons) || [],
         _candidate_id: c.candidate_id || c.topic_id || '',
         _display: c.display || {},
+        _unit_of_analysis: c.unit_of_analysis || '',
       }));
       // Approval picker shows Ready + Needs Review only.  Blocked
       // candidates are diagnostic-only and hidden here.
@@ -1519,11 +1569,14 @@ async function renderHitlPicker(run) {
     const method = idea._method ? escHtml(idea._method) : '';
     const claim = idea._claim_strength ? escHtml(idea._claim_strength) : '';
     const threats = Array.isArray(idea._key_threats) ? idea._key_threats.length : 0;
+    const isTrainingIdea = idea._unit_of_analysis === 'training_run';
+    const hitlExpLabel = isTrainingIdea ? 'Training Strategy' : 'Exposure';
+    const hitlOutLabel = isTrainingIdea ? 'Evaluation Target' : 'Outcome';
     const designHtml = (expSrc || outSrc || method) ? `
       <div style="margin-top:6px;padding:8px;background:#0f172a;border-radius:6px;display:flex;flex-direction:column;gap:3px;font-size:.78rem">
         ${executionSummary ? `<div style="color:#cbd5e1">${escHtml(executionSummary)}</div>` : ''}
-        ${expSrc ? `<div class="design-row"><strong>Exposure:</strong> ${expSpec || '—'} · <em>${expSrc}</em></div>` : ''}
-        ${outSrc ? `<div class="design-row"><strong>Outcome:</strong> ${outSpec || '—'} · <em>${outSrc}</em></div>` : ''}
+        ${expSrc ? `<div class="design-row"><strong>${hitlExpLabel}:</strong> ${expSpec || '—'} · <em>${expSrc}</em></div>` : ''}
+        ${outSrc ? `<div class="design-row"><strong>${hitlOutLabel}:</strong> ${outSpec || '—'} · <em>${outSrc}</em></div>` : ''}
         ${method ? `<div class="design-row"><strong>Method:</strong> ${method}${claim ? ` · <strong>Claim:</strong> ${claim}` : ''}${threats ? ` · ${threats} threats addressed` : ''}</div>` : ''}
         ${contributionAngle ? `<div style="margin-top:4px;color:#94a3b8">Angle: ${escHtml(contributionAngle)}</div>` : ''}
       </div>` : '';
@@ -1693,6 +1746,8 @@ const SELECTED_OUTPUT_NAMES = new Set([
 const DEV_OUTPUT_SUFFIXES = [
   'implementation_spec.json','claude_task_prompt.md','data_contract.yaml',
   'feature_plan.yaml','analysis_plan.yaml','acceptance_tests.md',
+  'experiment_config.yaml','training_plan.yaml','evaluation_plan.yaml',
+  'colab_notebook_spec.md',
 ];
 
 function _semanticGroup(filename) {

@@ -128,6 +128,79 @@ tests/          Pytest test suite
 ui/             Streamlit monitoring interface (3-tab layout)
 ```
 
+### LLM Training Research Template (v1)
+
+Branch: `claude/add-llm-training-template-WPEJV`
+
+A second research template, `llm_training_research`, generates candidate
+research questions of the form *"training_strategy X vs evaluation_target Y,
+paired baseline-vs-treatment."* Unit of analysis is `training_run`. Run
+with:
+
+```bash
+python main.py --template llm_training_research --domain "LLM fine-tuning research" \
+  --runtime-tier colab_t4
+```
+
+#### v1 scope
+
+- **Strategies (X)**: `sft_full_finetune`, `lora_adapter`, `qlora_4bit`
+- **Outcomes (Y)**: `task_accuracy`, `instruction_following`,
+  `generation_quality`, `inference_latency`, `training_cost`
+- **Method**: paired baseline-vs-treatment (zero-shot / base model vs
+  trained adapter), with `ablation_sweep` as a secondary protocol
+- **Default runtime**: Colab T4 (free tier)
+- **Smoke-only by default**: 500 train / 200 eval / 100 max steps before
+  any full run
+
+#### v1 explicitly out of scope
+
+- ❌ DPO / RLHF / RLAIF
+- ❌ Full pretraining / continued pretraining
+- ❌ Distillation, long-context fine-tuning
+- ❌ RAG vs fine-tuning comparison (Vector_DB_Local registered, not wired
+  into v1 families)
+- ❌ Producing training scripts (this remains a research-design generator
+  — the dev pack outputs Colab notebook spec + plans, not `.py` training code)
+
+#### Dev pack output (Colab-ready)
+
+Per-candidate development pack contains:
+
+- `experiment_config.yaml` — strategy-scoped axes + Cartesian matrix +
+  smoke-run parameters
+- `training_plan.yaml` — model loading, trainer, LoRA / quantization
+  config, secret + license whitelist, checkpoint policy
+- `evaluation_plan.yaml` — paired baseline vs treatment protocol,
+  lm-evaluation-harness tasks, leakage checks
+- `colab_notebook_spec.md` — 12-cell scaffold from environment setup to
+  smoke train → smoke eval → flip-to-full-run
+- `claude_task_prompt.md`, `acceptance_tests.md`, `implementation_spec.json`
+
+The dispatcher in `agents/development_pack_writer.py` branches on
+`candidate.unit_of_analysis == "training_run"` to invoke the LLM-flavoured
+writer in `agents/development_pack_writer_llm.py`.
+
+#### Training-specific feasibility checks
+
+Layered on top of the standard 13-subcheck precheck:
+
+| Sub-check | Source | Disposition |
+|-----------|--------|-------------|
+| `license_in_whitelist` | template `allowed_licenses` | hard-fail when whitelist empty |
+| `gpu_runtime_capacity` | base_model param count vs runtime tier VRAM caps | warning → review (never blocks) |
+| `train_eval_leakage_plan_present` | candidate `key_threats` + `mitigations` | hard-fail when leakage threats / mitigations missing |
+
+Implemented in `agents/training_feasibility.py` and merged into
+`gate_status` by the candidate factory when
+`template.kind == "training_research"`.
+
+#### v2 roadmap
+
+DPO / RLHF, model distillation, RAG vs fine-tuning comparisons,
+long-context fine-tuning, clinical / claims reasoning verticals,
+interpretability evaluations.
+
 ## Tech Stack
 
 - **Python 3.10** (strictly pinned)

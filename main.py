@@ -297,6 +297,25 @@ def _parse_args():
         default=False,
         help="Skip reflection loop in Level 2 (one-shot topic generation, no iterative refinement)",
     )
+    parser.add_argument(
+        "--template",
+        dest="template_id",
+        default="built_environment_health",
+        help=(
+            "Research template id (filename in config/research_templates without "
+            ".yaml). Built-in: built_environment_health (default), "
+            "built_environment_health_experimental, llm_training_research."
+        ),
+    )
+    parser.add_argument(
+        "--runtime-tier",
+        dest="runtime_tier",
+        default="colab_t4",
+        help=(
+            "Runtime tier for training-research candidates. One of "
+            "colab_t4 (default), colab_a100, local_gpu. Ignored by spatial templates."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -349,6 +368,8 @@ def main():
         "ideation_mode": args.mode,
         "budget_override_usd": args.budget_override_usd,
         "skip_reflection": args.skip_reflection,
+        "template_id": args.template_id,
+        "runtime_tier": args.runtime_tier,
     }
     if args.user_topic:
         import os as _os

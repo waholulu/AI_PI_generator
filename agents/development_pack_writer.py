@@ -658,6 +658,14 @@ def _data_lineage_plan_yaml(candidate: ComposedCandidate, spec: dict[str, Any]) 
 # ── Main writer ───────────────────────────────────────────────────────────────
 
 def write_development_pack(run_id: str, candidate_payload: dict[str, Any]) -> Path:
+    # Branch on unit_of_analysis: training-research candidates use a Colab-shaped
+    # pack writer with a different artifact set (experiment / training / eval /
+    # notebook spec) instead of the spatial-regression scaffolding below.
+    if (candidate_payload or {}).get("unit_of_analysis") == "training_run":
+        from agents.development_pack_writer_llm import write_llm_development_pack
+
+        return write_llm_development_pack(run_id, candidate_payload)
+
     token = settings.activate_run_scope(run_id)
     try:
         candidate = _to_candidate(candidate_payload)

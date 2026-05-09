@@ -1,0 +1,120 @@
+source_id: HuggingFace_Datasets
+canonical_name: Hugging Face Hub Datasets
+aliases:
+  - HF Datasets
+  - HuggingFace Datasets
+  - hf_datasets
+
+# ── Backward-compatible flat fields ─────────────────────────────────────────
+roles:
+  - exposure
+  - outcome
+tier: stable
+cloud_safe: true
+machine_readable: true
+source_type: api_download
+expected_format: parquet_or_jsonl
+auth_required: false
+cost_required: false
+access_url: https://huggingface.co/datasets
+documentation_url: https://huggingface.co/docs/datasets
+coverage_year_min: 2019
+coverage_year_max: 2026
+spatial_units:
+  - training_run
+
+# ── Enhanced data catalog fields ─────────────────────────────────────────────
+acquisition:
+  method: api
+  url: https://huggingface.co/datasets/{dataset_id}
+  documentation_url: https://huggingface.co/docs/datasets
+  expected_format: parquet_or_jsonl
+  auth_required: false
+  cost_required: false
+  expected_files:
+    - data/raw/hf_datasets/{dataset_id}/train.parquet
+    - data/raw/hf_datasets/{dataset_id}/eval.parquet
+  notes: >
+    Load via `datasets.load_dataset(dataset_id, split=...)`.
+    Gated datasets (e.g. anthropic/hh-rlhf) require HF_TOKEN and accepted
+    license. Always inspect the dataset card for license, source, and
+    suspected contamination notes before training.
+
+geography:
+  native_unit: training_run
+  target_units_supported:
+    - training_run
+  aggregation_required: false
+  default_aggregation: ""
+  join_keys:
+    - dataset_id
+  coverage: global
+
+temporal_coverage:
+  coverage_year_min: 2019
+  coverage_year_max: 2026
+  release_lag_years: 0.0
+  update_frequency: continuous
+  cross_sectional_only: false
+  notes: >
+    Datasets are versioned by commit hash; pin to a specific revision.
+
+variable_families:
+  training_corpus:
+    family_id: training_corpus
+    description: Instruction or completion dataset used for fine-tuning
+    variables:
+      - name: dataset_id
+        description: HF Hub dataset repository ID
+        unit: identifier
+        dtype: str
+      - name: revision
+        description: Git commit hash
+        unit: identifier
+        dtype: str
+      - name: split
+        description: Train / validation / test split name
+        unit: identifier
+        dtype: str
+      - name: num_examples
+        description: Row count after filtering
+        unit: count
+        dtype: int
+      - name: license
+        description: SPDX license identifier
+        unit: identifier
+        dtype: str
+    aggregation_allowed_to:
+      - training_run
+
+  evaluation_benchmark:
+    family_id: evaluation_benchmark
+    description: Held-out benchmark dataset for treatment vs baseline comparison
+    variables:
+      - name: benchmark_id
+        description: e.g. mmlu, gsm8k, ifeval
+        unit: identifier
+        dtype: str
+      - name: release_date
+        description: Public release date — must precede base_model cutoff for clean eval
+        unit: date
+        dtype: str
+    aggregation_allowed_to:
+      - training_run
+
+validation_rules:
+  - rule_id: license_in_whitelist
+    description: Dataset license must be in template's allowed_licenses set
+    severity: error
+  - rule_id: train_eval_disjoint
+    description: Training corpus and evaluation benchmark must not share rows
+    severity: error
+  - rule_id: revision_pinned
+    description: Production runs must pin a specific revision (not main)
+    severity: warning
+
+known_limitations:
+  - "License inheritance from upstream sources is often unclear — check the dataset card"
+  - "Some popular instruction datasets (alpaca, dolly) are derived from GPT outputs — note in evaluation"
+  - "Benchmark contamination is widespread; prefer benchmarks released after base_model cutoff"
+  - "load_dataset caches to ~/.cache/huggingface/datasets — large; clean between Colab sessions"

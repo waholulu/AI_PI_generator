@@ -107,6 +107,39 @@ skills:
     description: Descriptive statistics, tabulation, and visualization
     status: available
 
+  # ── LLM / DL training research skills (used by training_research template) ─
+  - id: hf_dataset_load
+    description: Load and stream Hugging Face Hub datasets via the datasets library
+    status: available
+
+  - id: hf_model_load
+    description: Load Hugging Face Hub models and tokenizers via transformers
+    status: available
+
+  - id: sft_train
+    description: Supervised fine-tuning loop via transformers Trainer / TRL SFTTrainer
+    status: available
+
+  - id: lora_train
+    description: LoRA adapter training via peft
+    status: available
+
+  - id: qlora_train
+    description: 4-bit QLoRA training via bitsandbytes + peft
+    status: available
+
+  - id: eval_harness_run
+    description: Run lm-evaluation-harness benchmark suite against a model or adapter
+    status: available
+
+  - id: wandb_log
+    description: Log run metrics and hyperparameters to wandb (or anonymous wandb)
+    status: available
+
+  - id: colab_runtime
+    description: Execute training jobs on Google Colab T4 / A100 runtimes
+    status: available
+
 # Mapping: IdentificationPrimary enum value → required skill id
 identification_skill_map:
   diff_in_diff: diff_in_diff

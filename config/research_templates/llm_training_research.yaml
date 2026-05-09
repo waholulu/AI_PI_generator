@@ -1,0 +1,223 @@
+template_id: llm_training_research_v1
+kind: training_research
+description: >
+  LLM/DL training research generator (v1). Produces candidate research
+  questions of the form "training_strategy X vs evaluation_target Y, paired
+  baseline-vs-treatment, run on Colab T4/A100 or local GPU." Scope is
+  intentionally narrow for the first release: SFT, LoRA, QLoRA only.
+  RLHF / DPO / pretraining / distillation are out of scope (see roadmap).
+
+default_geography: model_release
+default_unit_of_analysis: training_run
+default_time_window: 2024-2026
+default_claim_strength: comparative
+
+required_roles:
+  exposure: true   # training strategy
+  outcome: true    # evaluation target
+  control: true    # training logs (run telemetry)
+  boundary: true   # eval harness defines comparison surface
+
+# Each exposure family is a training-strategy class. preferred_sources
+# point at the artifacts you ingest (base models, datasets) — not at the
+# strategy itself. derived_features are the knobs the dev-pack writer
+# expands into experiment_config.yaml.
+allowed_exposure_families:
+  sft_full_finetune:
+    preferred_sources:
+      - HuggingFace_Models
+      - HuggingFace_Datasets
+    allowed_units: [training_run]
+    derived_features:
+      - base_model
+      - dataset_id
+      - learning_rate
+      - batch_size
+      - num_train_epochs
+      - max_seq_length
+      - seed
+    notes: >
+      Full-parameter SFT only viable for ≤1B param models on T4 (16 GB).
+      Composer flags >1B base_model as gpu_warning (review tier, not blocker).
+
+  lora_adapter:
+    preferred_sources:
+      - HuggingFace_Models
+      - HuggingFace_Datasets
+    allowed_units: [training_run]
+    derived_features:
+      - base_model
+      - dataset_id
+      - lora_rank
+      - lora_alpha
+      - lora_dropout
+      - target_modules
+      - learning_rate
+      - batch_size
+      - seed
+
+  qlora_4bit:
+    preferred_sources:
+      - HuggingFace_Models
+      - HuggingFace_Datasets
+    allowed_units: [training_run]
+    derived_features:
+      - base_model
+      - dataset_id
+      - quantization_dtype
+      - lora_rank
+      - lora_alpha
+      - target_modules
+      - learning_rate
+      - batch_size
+      - seed
+    notes: >
+      4-bit NF4 quantization via bitsandbytes; enables 7B base models on T4.
+
+allowed_outcome_families:
+  task_accuracy:
+    preferred_sources: [Local_Eval_Harness, HuggingFace_Datasets]
+    allowed_units: [training_run]
+    metrics: [exact_match, accuracy, f1]
+  instruction_following:
+    preferred_sources: [Local_Eval_Harness, HuggingFace_Datasets]
+    allowed_units: [training_run]
+    metrics: [ifeval_loose, ifeval_strict]
+  generation_quality:
+    preferred_sources: [Local_Eval_Harness, HuggingFace_Datasets]
+    allowed_units: [training_run]
+    metrics: [rougeL, bertscore_f1, judge_winrate]
+  inference_latency:
+    preferred_sources: [Training_Logs]
+    allowed_units: [training_run]
+    metrics: [tokens_per_second, time_to_first_token_ms]
+  training_cost:
+    preferred_sources: [Training_Logs]
+    allowed_units: [training_run]
+    metrics: [gpu_hours, peak_vram_gb, total_tokens_seen]
+
+default_controls: [Training_Logs]
+default_boundary_source: [Local_Eval_Harness]
+
+# Each method declares a baseline-vs-treatment paired-run protocol so
+# every candidate has a clean comparative claim by construction.
+allowed_methods:
+  paired_run_baseline_vs_treatment:
+    claim_strength: comparative
+    baseline: zero_shot_or_base_model
+    treatment: trained_adapter_or_finetune
+    required_controls: [Training_Logs]
+    key_threats:
+      - train_eval_leakage
+      - eval_set_contamination
+      - seed_variance
+      - gpu_oom
+      - license_violation
+      - irreproducible_run
+      - tokenizer_mismatch
+    mitigations:
+      train_eval_leakage: Hold out eval split before training; verify no overlap by hash on prompt strings.
+      eval_set_contamination: Prefer benchmarks released after base_model cutoff; record cutoff dates in evaluation_plan.
+      seed_variance: Run treatment with ≥3 seeds; report mean ± std.
+      gpu_oom: Pre-flight VRAM estimate; gradient_checkpointing on; smoke test before full run.
+      license_violation: Whitelist apache-2.0, mit, cc-by-4.0, odc-by; hard-fail otherwise.
+      irreproducible_run: Pin transformers / peft / bitsandbytes versions; log full config to wandb.
+      tokenizer_mismatch: Always load tokenizer from same checkpoint as base_model.
+
+  ablation_sweep:
+    claim_strength: comparative
+    baseline: lowest_value_in_axis
+    treatment: swept_axis
+    required_controls: [Training_Logs]
+    key_threats:
+      - confounded_axis_choice
+      - seed_variance
+      - eval_set_contamination
+      - gpu_oom
+    mitigations:
+      confounded_axis_choice: Hold all other axes constant; vary one axis at a time.
+      seed_variance: Run each axis level with ≥2 seeds.
+      eval_set_contamination: Same as paired_run.
+      gpu_oom: Same as paired_run.
+
+# v1 LLM-template-specific section read by development_pack_writer_llm.py
+# to expand experiment_config.yaml. NOT consumed by composer or rule_engine.
+experiment_axes:
+  base_model:
+    - HuggingFaceTB/SmolLM2-135M-Instruct
+    - Qwen/Qwen2.5-0.5B
+    - Qwen/Qwen2.5-1.5B
+    - meta-llama/Llama-3.2-1B
+  dataset:
+    - tatsu-lab/alpaca
+    - databricks/databricks-dolly-15k
+    - yahma/alpaca-cleaned
+  lora_rank: [8, 16, 32]
+  lora_alpha: [16, 32]
+  batch_size: [1, 2, 4]
+  seed: [42, 1337, 2024]
+  eval_metric:
+    - mmlu_subset
+    - gsm8k_subset
+    - ifeval
+
+smoke_test:
+  train_samples: 500
+  eval_samples: 200
+  max_steps: 100
+  runtime_minutes_max: 15
+  required: true
+  description: >
+    Every candidate must pass a small-sample smoke run before any full
+    experiment is launched. This proves the data → tokenizer → trainer →
+    eval pipeline closes the loop end-to-end on cheap hardware.
+
+# License whitelist for G3 training-data check. Datasets / models with
+# any other license fail the gate.
+allowed_licenses:
+  - apache-2.0
+  - mit
+  - cc-by-4.0
+  - cc-by-sa-4.0
+  - odc-by
+  - bsd-3-clause
+
+# GPU capacity hints for G6 runtime check. Composer marks candidates whose
+# base_model exceeds the chosen runtime tier as `gpu_warning` (review).
+runtime_tiers:
+  colab_t4:
+    vram_gb: 16
+    max_param_billions_full_sft: 0.5
+    max_param_billions_lora: 1.5
+    max_param_billions_qlora: 7.0
+    cloud_safe: true
+  colab_a100:
+    vram_gb: 40
+    max_param_billions_full_sft: 3.0
+    max_param_billions_lora: 13.0
+    max_param_billions_qlora: 34.0
+    cloud_safe: true
+  local_gpu:
+    vram_gb: 24
+    max_param_billions_full_sft: 1.5
+    max_param_billions_lora: 7.0
+    max_param_billions_qlora: 13.0
+    cloud_safe: false
+
+technology_options:
+  colab_t4:
+    default_enabled: true
+    cloud_safe: true
+    requires: [hf_token]
+  colab_a100:
+    default_enabled: false
+    cloud_safe: true
+    requires: [hf_token, colab_pro]
+  local_gpu:
+    default_enabled: false
+    cloud_safe: false
+    requires: [cuda_runtime]
+  kaggle:
+    default_enabled: false
+    cloud_safe: true
+    requires: [kaggle_account]
