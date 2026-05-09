@@ -29,6 +29,10 @@ class StartRunRequest(BaseModel):
     max_candidates: int = Field(
         default=40, ge=1, le=200, description="Maximum candidates to generate (default 40)."
     )
+    runtime_tier: Optional[str] = Field(
+        default="colab_t4",
+        description="GPU runtime tier for LLM training template. One of: colab_t4 | colab_a100 | local_gpu.",
+    )
 
 
 class RunStatus(BaseModel):

@@ -114,6 +114,7 @@ async def _run_pipeline(
     cloud_constraints: dict | None = None,
     enable_experimental: bool = False,
     max_candidates: int = 40,
+    runtime_tier: str | None = None,
 ) -> None:
     """Run the pipeline phases in the background, handling HITL interrupt."""
     log_store.set_current_run(run_id)
@@ -131,6 +132,7 @@ async def _run_pipeline(
         "enable_experimental": enable_experimental,
         "candidate_factory_enabled": True,
         "max_candidates": max_candidates,
+        "runtime_tier": runtime_tier or "colab_t4",
     }
 
     def _stream_phase1() -> Optional[str]:
@@ -364,6 +366,7 @@ async def start_run(req: StartRunRequest, background_tasks: BackgroundTasks):
             cloud_constraints=req.cloud_constraints,
             enable_experimental=req.enable_experimental,
             max_candidates=req.max_candidates,
+            runtime_tier=req.runtime_tier,
         )
     )
     _tasks[run.run_id] = task
@@ -541,27 +544,36 @@ def _build_candidate_detail(candidate: dict[str, Any], fallback_idx: int) -> dic
     raw = card["_raw"]
     join_plan = raw.get("join_plan") or {}
     join_steps = join_plan.get("steps")
+    is_training = card.get("unit_of_analysis") == "training_run"
     if not join_steps:
-        join_steps = [
-            f"Prepare exposure features from {card['exposure_source'] or 'exposure source'}",
-            f"Load outcome data from {card['outcome_source'] or 'outcome source'}",
-            f"Join datasets at {card['unit_of_analysis'] or 'target'} level by GEOID",
-        ]
+        if is_training:
+            join_steps = [
+                f"Load base model from {card['exposure_source'] or 'HuggingFace_Models'}",
+                f"Load evaluation benchmark from {card['outcome_source'] or 'Local_Eval_Harness'}",
+                "Run training_plan.yaml experiment, log to Training_Logs (wandb/tensorboard)",
+                "Run evaluation_plan.yaml on held-out eval set, record metrics",
+            ]
+        else:
+            join_steps = [
+                f"Prepare exposure features from {card['exposure_source'] or 'exposure source'}",
+                f"Load outcome data from {card['outcome_source'] or 'outcome source'}",
+                f"Join datasets at {card['unit_of_analysis'] or 'target'} level by GEOID",
+            ]
     x_y_structure = [
         {
-            "role": "exposure",
+            "role": "training_strategy" if is_training else "exposure",
             "variable": card["exposure_label"],
             "source": card["exposure_source"],
             "unit": card["unit_of_analysis"],
-            "format": "derived_features",
+            "format": "model_artifact" if is_training else "derived_features",
             "status": "pass",
         },
         {
-            "role": "outcome",
+            "role": "evaluation_target" if is_training else "outcome",
             "variable": card["outcome_label"],
             "source": card["outcome_source"],
             "unit": card["unit_of_analysis"],
-            "format": "tabular",
+            "format": "benchmark_score" if is_training else "tabular",
             "status": "pass",
         },
     ]
@@ -593,7 +605,7 @@ def _build_candidate_detail(candidate: dict[str, Any], fallback_idx: int) -> dic
         "x_y_structure": x_y_structure,
         "join_plan": {
             "steps": join_steps,
-            "join_key": join_plan.get("join_key", "GEOID"),
+            "join_key": join_plan.get("join_key", "run_id" if is_training else "GEOID"),
         },
         "identification": identification,
         "technology": {
