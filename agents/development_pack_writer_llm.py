@@ -210,9 +210,7 @@ def _training_plan(
 ) -> str:
     strategy = candidate.exposure_family
     secrets = list(candidate.required_secrets) or []
-    if "HuggingFace_Models:api_key" not in secrets and not any(
-        "HuggingFace_Models" in s for s in secrets
-    ):
+    if not any("HuggingFace_Models" in s for s in secrets):
         secrets.append("HuggingFace_Models:hf_token")
 
     license_whitelist = template.get("allowed_licenses") or _DEFAULT_LICENSE_WHITELIST
