@@ -1,0 +1,134 @@
+source_id: Local_Eval_Harness
+canonical_name: Local Evaluation Harness
+aliases:
+  - lm-eval-harness
+  - lm-evaluation-harness
+  - eleuther eval harness
+  - local_lm_eval
+
+# ── Backward-compatible flat fields ─────────────────────────────────────────
+roles:
+  - outcome
+  - boundary
+tier: stable
+cloud_safe: true
+machine_readable: true
+source_type: pip_package
+expected_format: jsonl_results
+auth_required: false
+cost_required: false
+access_url: https://github.com/EleutherAI/lm-evaluation-harness
+documentation_url: https://github.com/EleutherAI/lm-evaluation-harness/blob/main/docs/README.md
+coverage_year_min: 2022
+coverage_year_max: 2026
+spatial_units:
+  - training_run
+
+# ── Enhanced data catalog fields ─────────────────────────────────────────────
+acquisition:
+  method: pip_install
+  url: https://github.com/EleutherAI/lm-evaluation-harness
+  documentation_url: https://github.com/EleutherAI/lm-evaluation-harness/blob/main/docs/task_table.md
+  expected_format: jsonl_results
+  auth_required: false
+  cost_required: false
+  expected_files:
+    - data/eval/{run_id}/results.json
+    - data/eval/{run_id}/samples_{task}.jsonl
+  notes: >
+    Install via `pip install lm-eval`. Run via
+    `lm_eval --model hf --model_args pretrained={model_id},peft={adapter}
+    --tasks mmlu,gsm8k --output_path data/eval/{run_id}`.
+    For LoRA evaluations always pass the adapter via `peft=` kwarg.
+
+geography:
+  native_unit: training_run
+  target_units_supported:
+    - training_run
+  aggregation_required: false
+  default_aggregation: ""
+  join_keys:
+    - run_id
+    - task
+  coverage: global
+
+temporal_coverage:
+  coverage_year_min: 2022
+  coverage_year_max: 2026
+  release_lag_years: 0.0
+  update_frequency: continuous
+  cross_sectional_only: false
+  notes: >
+    Pin a release tag in requirements.txt to keep metric definitions stable
+    across runs. Task definitions sometimes change between minor versions.
+
+variable_families:
+  task_accuracy:
+    family_id: task_accuracy
+    description: Accuracy / exact-match / F1 on knowledge or reasoning benchmarks
+    variables:
+      - name: task
+        description: Benchmark task name (e.g. mmlu, gsm8k, hellaswag)
+        unit: identifier
+        dtype: str
+      - name: metric_value
+        description: Accuracy / EM / F1
+        unit: fraction
+        dtype: float
+      - name: metric_stderr
+        description: Bootstrap stderr from harness
+        unit: fraction
+        dtype: float
+    aggregation_allowed_to:
+      - training_run
+
+  instruction_following:
+    family_id: instruction_following
+    description: Instruction-following metrics (ifeval loose / strict)
+    variables:
+      - name: task
+        description: ifeval task variant
+        unit: identifier
+        dtype: str
+      - name: metric_value
+        description: Loose / strict instruction-following score
+        unit: fraction
+        dtype: float
+    aggregation_allowed_to:
+      - training_run
+
+  generation_quality:
+    family_id: generation_quality
+    description: Open-ended generation quality (ROUGE / BERTScore / judge winrate)
+    variables:
+      - name: task
+        description: Generation benchmark name
+        unit: identifier
+        dtype: str
+      - name: metric_name
+        description: rougeL / bertscore_f1 / judge_winrate
+        unit: identifier
+        dtype: str
+      - name: metric_value
+        description: Metric score
+        unit: scalar
+        dtype: float
+    aggregation_allowed_to:
+      - training_run
+
+validation_rules:
+  - rule_id: harness_version_pinned
+    description: lm-eval version must be pinned in requirements.txt
+    severity: error
+  - rule_id: paired_run_protocol
+    description: Treatment and baseline must be evaluated with identical task and harness version
+    severity: error
+  - rule_id: stderr_present
+    description: Each metric must include stderr; otherwise flag as unreliable
+    severity: warning
+
+known_limitations:
+  - "Harness uses log-likelihood for many tasks — works only with HF transformers backends, not OpenAI API"
+  - "MMLU full run takes ~30 min on T4 for a 1B model; use mmlu_pro_subset for smoke tests"
+  - "GSM8K requires generation — slower than log-likelihood tasks; budget extra time"
+  - "Some tasks have train/dev/test contamination with popular pretraining corpora"

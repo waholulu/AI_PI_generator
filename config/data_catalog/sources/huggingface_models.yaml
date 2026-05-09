@@ -1,0 +1,186 @@
+source_id: HuggingFace_Models
+canonical_name: Hugging Face Hub Models
+aliases:
+  - HF Models
+  - HuggingFace Hub Models
+  - hf_hub_models
+
+# ── Backward-compatible flat fields ─────────────────────────────────────────
+roles:
+  - exposure
+tier: stable
+cloud_safe: true
+machine_readable: true
+source_type: api_download
+expected_format: safetensors_or_pytorch_bin
+auth_required: true
+cost_required: false
+access_url: https://huggingface.co/models
+documentation_url: https://huggingface.co/docs/hub/models
+coverage_year_min: 2018
+coverage_year_max: 2026
+spatial_units:
+  - training_run
+
+# ── Enhanced data catalog fields ─────────────────────────────────────────────
+acquisition:
+  method: api
+  url: https://huggingface.co/{model_id}
+  documentation_url: https://huggingface.co/docs/huggingface_hub
+  expected_format: safetensors_or_pytorch_bin
+  auth_required: true
+  cost_required: false
+  expected_files:
+    - data/raw/hf_models/{model_id}/config.json
+    - data/raw/hf_models/{model_id}/tokenizer.json
+    - data/raw/hf_models/{model_id}/model.safetensors
+  notes: >
+    Load via `transformers.AutoModelForCausalLM.from_pretrained(model_id)`
+    or `huggingface_hub.snapshot_download(model_id)`. Gated models
+    (Llama, Gemma, etc.) require accepted license terms and HF_TOKEN.
+
+geography:
+  native_unit: training_run
+  target_units_supported:
+    - training_run
+  aggregation_required: false
+  default_aggregation: ""
+  join_keys:
+    - model_id
+  coverage: global
+
+temporal_coverage:
+  coverage_year_min: 2018
+  coverage_year_max: 2026
+  release_lag_years: 0.0
+  update_frequency: continuous
+  cross_sectional_only: false
+  notes: >
+    Models are versioned by commit hash; pin to a specific revision in
+    experiment_config.yaml to ensure reproducibility.
+
+variable_families:
+  sft_full_finetune:
+    family_id: sft_full_finetune
+    description: Supervised fine-tuning of all base model parameters
+    variables:
+      - name: base_model
+        description: HF Hub model repository ID (e.g. Qwen/Qwen2.5-0.5B)
+        unit: identifier
+        dtype: str
+      - name: revision
+        description: Git commit hash for reproducibility
+        unit: identifier
+        dtype: str
+      - name: learning_rate
+        description: Peak learning rate for the AdamW optimizer
+        unit: scalar
+        dtype: float
+      - name: batch_size
+        description: Per-device train batch size
+        unit: count
+        dtype: int
+      - name: seed
+        description: Trainer seed for reproducibility
+        unit: count
+        dtype: int
+    aggregation_allowed_to:
+      - training_run
+
+  lora_adapter:
+    family_id: lora_adapter
+    description: Low-rank adapter fine-tuning via peft
+    variables:
+      - name: base_model
+        description: HF Hub model repository ID
+        unit: identifier
+        dtype: str
+      - name: lora_rank
+        description: LoRA rank (r)
+        unit: count
+        dtype: int
+      - name: lora_alpha
+        description: LoRA scaling factor (alpha)
+        unit: count
+        dtype: int
+      - name: target_modules
+        description: Module names patched with LoRA adapters
+        unit: list
+        dtype: list_str
+      - name: learning_rate
+        description: Peak learning rate for adapter parameters
+        unit: scalar
+        dtype: float
+      - name: seed
+        description: Trainer seed
+        unit: count
+        dtype: int
+    aggregation_allowed_to:
+      - training_run
+
+  qlora_4bit:
+    family_id: qlora_4bit
+    description: 4-bit NF4 quantized base model with LoRA adapters
+    variables:
+      - name: base_model
+        description: HF Hub model repository ID
+        unit: identifier
+        dtype: str
+      - name: quantization_dtype
+        description: bnb_4bit dtype (nf4 or fp4)
+        unit: identifier
+        dtype: str
+      - name: lora_rank
+        description: LoRA rank (r)
+        unit: count
+        dtype: int
+      - name: lora_alpha
+        description: LoRA scaling factor (alpha)
+        unit: count
+        dtype: int
+      - name: learning_rate
+        description: Peak learning rate
+        unit: scalar
+        dtype: float
+      - name: seed
+        description: Trainer seed
+        unit: count
+        dtype: int
+    aggregation_allowed_to:
+      - training_run
+
+  base_model_artifact:
+    family_id: base_model_artifact
+    description: Pretrained base model metadata (license, param count) used by gates
+    variables:
+      - name: model_id
+        description: HF Hub model repository ID
+        unit: identifier
+        dtype: str
+      - name: param_count
+        description: Number of trainable parameters
+        unit: count
+        dtype: int
+      - name: license
+        description: SPDX license identifier from model card
+        unit: identifier
+        dtype: str
+    aggregation_allowed_to:
+      - training_run
+
+validation_rules:
+  - rule_id: license_in_whitelist
+    description: Model license must be in template's allowed_licenses set
+    severity: error
+  - rule_id: revision_pinned
+    description: Production runs must pin a specific revision (not main)
+    severity: warning
+  - rule_id: tokenizer_present
+    description: Tokenizer must load from same model_id as weights
+    severity: error
+
+known_limitations:
+  - "Gated models require manual license acceptance on HF before HF_TOKEN works"
+  - "Some models ship in pytorch_model.bin (slower load) instead of safetensors"
+  - "Tokenizer family changes (Llama-2 vs Llama-3) — never mix tokenizer + weights"
+  - "param_count is a card claim — verify by counting after load if precise"

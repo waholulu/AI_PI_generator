@@ -1,0 +1,152 @@
+source_id: Training_Logs
+canonical_name: Training Run Telemetry Logs
+aliases:
+  - wandb_logs
+  - tensorboard_logs
+  - training_telemetry
+  - run_logs
+
+# ── Backward-compatible flat fields ─────────────────────────────────────────
+roles:
+  - control
+  - outcome
+tier: stable
+cloud_safe: true
+machine_readable: true
+source_type: api_download
+expected_format: jsonl
+auth_required: false
+cost_required: false
+access_url: https://docs.wandb.ai/
+documentation_url: https://docs.wandb.ai/guides/track
+coverage_year_min: 2020
+coverage_year_max: 2026
+spatial_units:
+  - training_run
+
+# ── Enhanced data catalog fields ─────────────────────────────────────────────
+acquisition:
+  method: api
+  url: https://api.wandb.ai/{entity}/{project}/runs/{run_id}
+  documentation_url: https://docs.wandb.ai/ref/python/public-api/api
+  expected_format: jsonl
+  auth_required: false
+  cost_required: false
+  expected_files:
+    - data/logs/{run_id}/metrics.jsonl
+    - data/logs/{run_id}/config.json
+    - data/logs/{run_id}/summary.json
+  notes: >
+    Log every training run to wandb (or tensorboard) with:
+      - full config (base_model, dataset, lora_rank, ...)
+      - per-step train_loss, learning_rate, grad_norm
+      - per-eval-step eval_loss, eval_metric
+      - hardware (gpu_name, peak_vram_gb, gpu_hours)
+    Anonymous wandb runs are free and cloud-safe; entity not required.
+
+geography:
+  native_unit: training_run
+  target_units_supported:
+    - training_run
+  aggregation_required: false
+  default_aggregation: ""
+  join_keys:
+    - run_id
+  coverage: global
+
+temporal_coverage:
+  coverage_year_min: 2020
+  coverage_year_max: 2026
+  release_lag_years: 0.0
+  update_frequency: realtime
+  cross_sectional_only: false
+  notes: >
+    Logs are emitted in real time during training. Useful as a control
+    surface to detect anomalies (loss divergence, grad explosion).
+
+variable_families:
+  inference_latency:
+    family_id: inference_latency
+    description: Inference throughput and latency metrics
+    variables:
+      - name: tokens_per_second
+        description: Generated tokens per wall-clock second
+        unit: rate
+        dtype: float
+      - name: time_to_first_token_ms
+        description: Latency from prompt submission to first generated token
+        unit: milliseconds
+        dtype: float
+    aggregation_allowed_to:
+      - training_run
+
+  training_cost:
+    family_id: training_cost
+    description: GPU-time and resource consumption metrics
+    variables:
+      - name: gpu_hours
+        description: Wall-clock GPU hours consumed
+        unit: hours
+        dtype: float
+      - name: peak_vram_gb
+        description: Peak GPU memory observed during the run
+        unit: gigabytes
+        dtype: float
+      - name: total_tokens_seen
+        description: Total training tokens processed
+        unit: count
+        dtype: int
+    aggregation_allowed_to:
+      - training_run
+
+  run_telemetry:
+    family_id: run_telemetry
+    description: Per-step training and evaluation metrics
+    variables:
+      - name: step
+        description: Optimizer step number
+        unit: count
+        dtype: int
+      - name: train_loss
+        description: Training loss at step
+        unit: scalar
+        dtype: float
+      - name: eval_loss
+        description: Eval loss at last eval step
+        unit: scalar
+        dtype: float
+      - name: learning_rate
+        description: Learning rate at step
+        unit: scalar
+        dtype: float
+      - name: grad_norm
+        description: Gradient L2 norm at step
+        unit: scalar
+        dtype: float
+      - name: tokens_per_second
+        description: Throughput
+        unit: rate
+        dtype: float
+      - name: peak_vram_gb
+        description: Peak GPU memory observed during run
+        unit: gigabytes
+        dtype: float
+      - name: gpu_hours
+        description: Wall-clock GPU hours consumed
+        unit: hours
+        dtype: float
+    aggregation_allowed_to:
+      - training_run
+
+validation_rules:
+  - rule_id: config_logged
+    description: Full hyperparameter config must be logged at run start
+    severity: error
+  - rule_id: loss_finite
+    description: train_loss must be finite at all logged steps; NaN = failed run
+    severity: error
+
+known_limitations:
+  - "wandb anonymous runs expire after 7 days unless claimed by an account"
+  - "tensorboard local logs are not portable across Colab sessions — upload to drive"
+  - "GPU telemetry from `nvidia-smi` polling has ~250 ms latency; not exact peaks"

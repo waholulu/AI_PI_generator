@@ -94,3 +94,19 @@ spatial_units:
   - name: raster_1km
     granularity_rank: 4
     aliases: [1km_grid, 1000m_grid]
+
+  # ── Non-spatial units (LLM training research template) ────────────────────
+  # These units describe ML experiment-level grain rather than physical
+  # geography. They share the same granularity_rank so G2 (scale_alignment)
+  # passes when both X and Y are training-run scoped.
+  - name: training_run
+    granularity_rank: 5
+    aliases: [experiment_run, model_training_run, run]
+
+  - name: experiment
+    granularity_rank: 5
+    aliases: [exp, ml_experiment]
+
+  - name: model_eval_pair
+    granularity_rank: 5
+    aliases: [eval_pair, baseline_treatment_pair]

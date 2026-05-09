@@ -31,6 +31,8 @@ from agents.identification_template_filler import ensure_identification_metadata
 from agents.development_pack_status import evaluate_development_pack_readiness
 from agents.final_ranker import rank_candidates, score_candidate
 from agents.logging_config import get_logger
+from agents.research_template_loader import load_research_template
+from agents.training_feasibility import evaluate_training_candidate
 from models.candidate_composer_schema import ComposeRequest
 
 logger = get_logger(__name__)
@@ -407,6 +409,17 @@ def run_candidate_factory_ideation(state: dict) -> dict:
             "degraded_nodes": ["ideation:no_candidates_from_factory"],
         }
 
+    # Load the template once so we know whether to layer training-feasibility
+    # checks on top of the standard precheck. `kind == "training_research"`
+    # is the routing flag set on llm_training_research.yaml; spatial templates
+    # leave it unset, so this is a no-op for them.
+    try:
+        template_dict = load_research_template(template_id)
+    except FileNotFoundError:
+        template_dict = {}
+    is_training_research = template_dict.get("kind") == "training_research"
+    runtime_tier = state.get("runtime_tier", "colab_t4")
+
     # Steps 4–9: per-candidate processing (no rank assigned yet — ranking happens after).
     cards: list[dict] = []
     all_repair_histories: list[dict] = []
@@ -426,6 +439,28 @@ def run_candidate_factory_ideation(state: dict) -> dict:
             gate_status,
             no_paid_api=req.no_paid_api,
         )
+
+        # Step 7b: training-research feasibility (license / GPU / leakage plan).
+        # Subchecks are merged into gate_status. License or leakage failures
+        # downgrade overall to fail; GPU warnings downgrade pass→warning.
+        # Per the approved plan, GPU shortfall never hard-blocks.
+        if is_training_research:
+            train_fb = evaluate_training_candidate(
+                repaired_c, template_dict, runtime_tier=runtime_tier
+            )
+            existing_subchecks = dict(gate_status.get("subchecks") or {})
+            existing_subchecks.update(train_fb["subchecks"])
+            gate_status["subchecks"] = existing_subchecks
+            gate_status.setdefault("reasons", []).extend(train_fb["reasons"])
+
+            cur_overall = gate_status.get("overall", "pass")
+            if train_fb["overall"] == "fail":
+                gate_status["overall"] = "fail"
+                gate_status["passed"] = False
+                gate_status["shortlist_status"] = "blocked"
+            elif train_fb["overall"] == "warning" and cur_overall == "pass":
+                gate_status["overall"] = "warning"
+                gate_status["shortlist_status"] = "review"
         # ── Contract-first: title and research question are derived ONLY from
         # the structured fields after the contract has been validated, so
         # candidates that fail the contract are not given a polished title

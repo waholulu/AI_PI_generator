@@ -1,0 +1,91 @@
+source_id: Vector_DB_Local
+canonical_name: Local Vector Database
+aliases:
+  - chroma_local
+  - faiss_local
+  - vector_store_local
+
+# ── Backward-compatible flat fields ─────────────────────────────────────────
+# NOTE: Registered for v2 RAG-vs-finetune work. Not currently referenced by
+# any allowed_exposure_family in llm_training_research_v1 (kept out of scope
+# per project plan). Loader still validates this entry exists.
+roles:
+  - exposure
+tier: stable
+cloud_safe: true
+machine_readable: true
+source_type: pip_package
+expected_format: chroma_or_faiss_index
+auth_required: false
+cost_required: false
+access_url: https://www.trychroma.com/
+documentation_url: https://docs.trychroma.com/
+coverage_year_min: 2023
+coverage_year_max: 2026
+spatial_units:
+  - training_run
+
+# ── Enhanced data catalog fields ─────────────────────────────────────────────
+acquisition:
+  method: pip_install
+  url: https://github.com/chroma-core/chroma
+  documentation_url: https://docs.trychroma.com/
+  expected_format: chroma_or_faiss_index
+  auth_required: false
+  cost_required: false
+  expected_files:
+    - data/vector_db/{collection}/index.bin
+    - data/vector_db/{collection}/metadata.json
+  notes: >
+    Reserved for v2 RAG comparison studies. Build via
+    `chromadb.PersistentClient(path=...)` or `faiss.IndexFlatIP`.
+    Embedding choice (e5, bge, sentence-transformers) is part of the
+    experiment_config when this source is in use.
+
+geography:
+  native_unit: training_run
+  target_units_supported:
+    - training_run
+  aggregation_required: false
+  default_aggregation: ""
+  join_keys:
+    - collection
+  coverage: global
+
+temporal_coverage:
+  coverage_year_min: 2023
+  coverage_year_max: 2026
+  release_lag_years: 0.0
+  update_frequency: continuous
+  cross_sectional_only: false
+  notes: >
+    Reserved for v2; not used by v1 candidates.
+
+variable_families:
+  retrieval_index:
+    family_id: retrieval_index
+    description: Local persistent vector index for retrieval-augmented experiments
+    variables:
+      - name: collection
+        description: Vector collection name
+        unit: identifier
+        dtype: str
+      - name: embedding_model
+        description: Embedding model identifier
+        unit: identifier
+        dtype: str
+      - name: num_documents
+        description: Number of indexed documents
+        unit: count
+        dtype: int
+    aggregation_allowed_to:
+      - training_run
+
+validation_rules:
+  - rule_id: embedding_model_pinned
+    description: Embedding model identifier must be pinned across queries
+    severity: error
+
+known_limitations:
+  - "Reserved for v2; not consumed by llm_training_research_v1 candidates"
+  - "Local vector DB does not survive Colab session restarts unless persisted to drive"
