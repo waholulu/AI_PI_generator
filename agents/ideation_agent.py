@@ -97,7 +97,7 @@ def _emit_emergency_fallback_outputs(state: ResearchState) -> dict:
 _DEFAULT_TEMPLATE_ID = "built_environment_health"
 
 
-def ideation_node(state: ResearchState) -> dict:
+def ideation_node(state: dict) -> dict:
     """LangGraph node: route to Candidate Factory (production default).
 
     Candidate Factory is the only path surfaced through the default CLI/UI.
