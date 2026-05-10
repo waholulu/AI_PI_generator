@@ -1,0 +1,741 @@
+{
+  "run_id": "20260510T114853",
+  "status": "pending_review",
+  "ideation_mode": "candidate_factory",
+  "template_id": "llm_training_research",
+  "shortlist_size": 5,
+  "pool_size": 15,
+  "candidates": [
+    {
+      "candidate_id": "beh_001",
+      "topic_id": "beh_001",
+      "title": "Sft Full Finetune and Task Accuracy",
+      "display": {
+        "display_title": "How Does Sft Full Finetune Relate to Task Accuracy at the Training Run Level?",
+        "research_question": "At the US training run level, is sft full finetune associated with task accuracy outcomes after controlling for sociodemographic confounders?",
+        "rationale": "Linking sft full finetune to task accuracy at the training run grain offers a policy-actionable lens: small-area variation in built-environment features is hypothesized to drive measurable differences in population health, and both inputs are publicly available.",
+        "contribution_angle": "Combines HuggingFace_Models with Local_Eval_Harness at a finer grain than most prior work, using a paired run baseline vs treatment design with a comparative claim.",
+        "execution_summary": "Sources: HuggingFace_Models + Local_Eval_Harness. Method: paired run baseline vs treatment. Grain: training run.",
+        "novelty_status": "pending_literature_check"
+      },
+      "rank": 1,
+      "research_question": "How does sft full finetune affect task accuracy at the training_run level?",
+      "novelty_status": "pending_literature_check",
+      "exposure_variable": "sft_full_finetune",
+      "outcome_variable": "task_accuracy",
+      "geography": "United States",
+      "unit_of_analysis": "training_run",
+      "method": "paired_run_baseline_vs_treatment",
+      "key_threats": [
+        "train_eval_leakage",
+        "eval_set_contamination",
+        "seed_variance",
+        "gpu_oom",
+        "license_violation",
+        "irreproducible_run",
+        "tokenizer_mismatch"
+      ],
+      "mitigations": {
+        "train_eval_leakage": "Hold out eval split before training; verify no overlap by hash on prompt strings.",
+        "eval_set_contamination": "Prefer benchmarks released after base_model cutoff; record cutoff dates in evaluation_plan.",
+        "seed_variance": "Run treatment with ≥3 seeds; report mean ± std.",
+        "gpu_oom": "Pre-flight VRAM estimate; gradient_checkpointing on; smoke test before full run.",
+        "license_violation": "Whitelist apache-2.0, mit, cc-by-4.0, odc-by; hard-fail otherwise.",
+        "irreproducible_run": "Pin transformers / peft / bitsandbytes versions; log full config to wandb.",
+        "tokenizer_mismatch": "Always load tokenizer from same checkpoint as base_model."
+      },
+      "declared_sources": [
+        "HuggingFace_Models",
+        "Local_Eval_Harness"
+      ],
+      "exposure_source": "HuggingFace_Models",
+      "outcome_source": "Local_Eval_Harness",
+      "exposure_family": "sft_full_finetune",
+      "outcome_family": "task_accuracy",
+      "join_plan": {
+        "boundary_source": [
+          "Local_Eval_Harness"
+        ],
+        "controls": [
+          "Training_Logs"
+        ],
+        "join_key": "GEOID"
+      },
+      "brief_rationale": "Assess whether sft full finetune is empirically associated with task accuracy using HuggingFace_Models and Local_Eval_Harness.",
+      "technology_tags": [],
+      "automation_risk": "medium",
+      "required_secrets": [
+        "HuggingFace_Models:api_key"
+      ],
+      "gate_status": {
+        "gate_id": "G3_candidate",
+        "passed": true,
+        "overall": "warning",
+        "subchecks": {
+          "source_exists": "pass",
+          "role_coverage": "pass",
+          "machine_readable": "pass",
+          "spatial_join_path": "pass",
+          "time_overlap": "pass",
+          "cloud_automation_feasibility": "pass",
+          "identification_threats": "pass",
+          "variable_mapping_exists": "pass",
+          "native_grain_known": "pass",
+          "target_grain_reachable": "pass",
+          "join_recipe_exists": "pass",
+          "aggregation_method_defined": "pass",
+          "time_cross_sectional_justified": "pass",
+          "license_in_whitelist": "pass",
+          "gpu_runtime_capacity": "warning",
+          "train_eval_leakage_plan_present": "pass"
+        },
+        "reasons": [
+          "hf_token_required_at_runtime",
+          "gpu_warning:base_model_Qwen/Qwen2.5-1.5B_1.5B_exceeds_colab_t4_sft_full_finetune_max_0.5B"
+        ],
+        "repair_suggestions": [],
+        "shortlist_status": "review",
+        "required_secrets": [
+          "HuggingFace_Models:api_key"
+        ],
+        "claude_code_ready": false,
+        "blocking_reasons": [],
+        "repairable_warnings": [
+          "hf_token_required_at_runtime"
+        ]
+      },
+      "repair_history": [
+        {
+          "candidate_id": "beh_001",
+          "round": 0,
+          "issue": "experimental_source_requires_key",
+          "action": "mark_high_risk",
+          "before": {
+            "source": "HuggingFace_Models",
+            "auth_required": true
+          },
+          "after": {
+            "shortlist_status": "review"
+          },
+          "result": "review"
+        }
+      ],
+      "shortlist_status": "review",
+      "readiness": "needs_review",
+      "evaluation": {
+        "overall_verdict": "warning",
+        "readiness": "needs_review",
+        "user_visible_reasons": [
+          "hf_token_required_at_runtime",
+          "gpu_warning:base_model_Qwen/Qwen2.5-1.5B_1.5B_exceeds_colab_t4_sft_full_finetune_max_0.5B"
+        ],
+        "score": 0.648
+      },
+      "debug": {
+        "gate_reasons": [
+          "hf_token_required_at_runtime",
+          "gpu_warning:base_model_Qwen/Qwen2.5-1.5B_1.5B_exceeds_colab_t4_sft_full_finetune_max_0.5B"
+        ],
+        "repair_history": [
+          {
+            "candidate_id": "beh_001",
+            "round": 0,
+            "issue": "experimental_source_requires_key",
+            "action": "mark_high_risk",
+            "before": {
+              "source": "HuggingFace_Models",
+              "auth_required": true
+            },
+            "after": {
+              "shortlist_status": "review"
+            },
+            "result": "review"
+          }
+        ]
+      }
+    },
+    {
+      "candidate_id": "beh_002",
+      "topic_id": "beh_002",
+      "title": "Lora Adapter and Task Accuracy",
+      "display": {
+        "display_title": "How Does Lora Adapter Relate to Task Accuracy at the Training Run Level?",
+        "research_question": "At the US training run level, is lora adapter associated with task accuracy outcomes after controlling for sociodemographic confounders?",
+        "rationale": "Linking lora adapter to task accuracy at the training run grain offers a policy-actionable lens: small-area variation in built-environment features is hypothesized to drive measurable differences in population health, and both inputs are publicly available.",
+        "contribution_angle": "Combines HuggingFace_Models with Local_Eval_Harness at a finer grain than most prior work, using a paired run baseline vs treatment design with a comparative claim.",
+        "execution_summary": "Sources: HuggingFace_Models + Local_Eval_Harness. Method: paired run baseline vs treatment. Grain: training run.",
+        "novelty_status": "pending_literature_check"
+      },
+      "rank": 2,
+      "research_question": "How does lora adapter affect task accuracy at the training_run level?",
+      "novelty_status": "pending_literature_check",
+      "exposure_variable": "lora_adapter",
+      "outcome_variable": "task_accuracy",
+      "geography": "United States",
+      "unit_of_analysis": "training_run",
+      "method": "paired_run_baseline_vs_treatment",
+      "key_threats": [
+        "train_eval_leakage",
+        "eval_set_contamination",
+        "seed_variance",
+        "gpu_oom",
+        "license_violation",
+        "irreproducible_run",
+        "tokenizer_mismatch"
+      ],
+      "mitigations": {
+        "train_eval_leakage": "Hold out eval split before training; verify no overlap by hash on prompt strings.",
+        "eval_set_contamination": "Prefer benchmarks released after base_model cutoff; record cutoff dates in evaluation_plan.",
+        "seed_variance": "Run treatment with ≥3 seeds; report mean ± std.",
+        "gpu_oom": "Pre-flight VRAM estimate; gradient_checkpointing on; smoke test before full run.",
+        "license_violation": "Whitelist apache-2.0, mit, cc-by-4.0, odc-by; hard-fail otherwise.",
+        "irreproducible_run": "Pin transformers / peft / bitsandbytes versions; log full config to wandb.",
+        "tokenizer_mismatch": "Always load tokenizer from same checkpoint as base_model."
+      },
+      "declared_sources": [
+        "HuggingFace_Models",
+        "Local_Eval_Harness"
+      ],
+      "exposure_source": "HuggingFace_Models",
+      "outcome_source": "Local_Eval_Harness",
+      "exposure_family": "lora_adapter",
+      "outcome_family": "task_accuracy",
+      "join_plan": {
+        "boundary_source": [
+          "Local_Eval_Harness"
+        ],
+        "controls": [
+          "Training_Logs"
+        ],
+        "join_key": "GEOID"
+      },
+      "brief_rationale": "Assess whether lora adapter is empirically associated with task accuracy using HuggingFace_Models and Local_Eval_Harness.",
+      "technology_tags": [],
+      "automation_risk": "medium",
+      "required_secrets": [
+        "HuggingFace_Models:api_key"
+      ],
+      "gate_status": {
+        "gate_id": "G3_candidate",
+        "passed": true,
+        "overall": "warning",
+        "subchecks": {
+          "source_exists": "pass",
+          "role_coverage": "pass",
+          "machine_readable": "pass",
+          "spatial_join_path": "pass",
+          "time_overlap": "pass",
+          "cloud_automation_feasibility": "pass",
+          "identification_threats": "pass",
+          "variable_mapping_exists": "pass",
+          "native_grain_known": "pass",
+          "target_grain_reachable": "pass",
+          "join_recipe_exists": "pass",
+          "aggregation_method_defined": "pass",
+          "time_cross_sectional_justified": "pass",
+          "license_in_whitelist": "pass",
+          "gpu_runtime_capacity": "pass",
+          "train_eval_leakage_plan_present": "pass"
+        },
+        "reasons": [
+          "hf_token_required_at_runtime"
+        ],
+        "repair_suggestions": [],
+        "shortlist_status": "review",
+        "required_secrets": [
+          "HuggingFace_Models:api_key"
+        ],
+        "claude_code_ready": false,
+        "blocking_reasons": [],
+        "repairable_warnings": [
+          "hf_token_required_at_runtime"
+        ]
+      },
+      "repair_history": [
+        {
+          "candidate_id": "beh_002",
+          "round": 0,
+          "issue": "experimental_source_requires_key",
+          "action": "mark_high_risk",
+          "before": {
+            "source": "HuggingFace_Models",
+            "auth_required": true
+          },
+          "after": {
+            "shortlist_status": "review"
+          },
+          "result": "review"
+        }
+      ],
+      "shortlist_status": "review",
+      "readiness": "needs_review",
+      "evaluation": {
+        "overall_verdict": "warning",
+        "readiness": "needs_review",
+        "user_visible_reasons": [
+          "hf_token_required_at_runtime"
+        ],
+        "score": 0.648
+      },
+      "debug": {
+        "gate_reasons": [
+          "hf_token_required_at_runtime"
+        ],
+        "repair_history": [
+          {
+            "candidate_id": "beh_002",
+            "round": 0,
+            "issue": "experimental_source_requires_key",
+            "action": "mark_high_risk",
+            "before": {
+              "source": "HuggingFace_Models",
+              "auth_required": true
+            },
+            "after": {
+              "shortlist_status": "review"
+            },
+            "result": "review"
+          }
+        ]
+      }
+    },
+    {
+      "candidate_id": "beh_004",
+      "topic_id": "beh_004",
+      "title": "Sft Full Finetune and Instruction Following",
+      "display": {
+        "display_title": "How Does Sft Full Finetune Relate to Instruction Following at the Training Run Level?",
+        "research_question": "At the US training run level, is sft full finetune associated with instruction following outcomes after controlling for sociodemographic confounders?",
+        "rationale": "Linking sft full finetune to instruction following at the training run grain offers a policy-actionable lens: small-area variation in built-environment features is hypothesized to drive measurable differences in population health, and both inputs are publicly available.",
+        "contribution_angle": "Combines HuggingFace_Models with Local_Eval_Harness at a finer grain than most prior work, using a paired run baseline vs treatment design with a comparative claim.",
+        "execution_summary": "Sources: HuggingFace_Models + Local_Eval_Harness. Method: paired run baseline vs treatment. Grain: training run.",
+        "novelty_status": "pending_literature_check"
+      },
+      "rank": 4,
+      "research_question": "How does sft full finetune affect instruction following at the training_run level?",
+      "novelty_status": "pending_literature_check",
+      "exposure_variable": "sft_full_finetune",
+      "outcome_variable": "instruction_following",
+      "geography": "United States",
+      "unit_of_analysis": "training_run",
+      "method": "paired_run_baseline_vs_treatment",
+      "key_threats": [
+        "train_eval_leakage",
+        "eval_set_contamination",
+        "seed_variance",
+        "gpu_oom",
+        "license_violation",
+        "irreproducible_run",
+        "tokenizer_mismatch"
+      ],
+      "mitigations": {
+        "train_eval_leakage": "Hold out eval split before training; verify no overlap by hash on prompt strings.",
+        "eval_set_contamination": "Prefer benchmarks released after base_model cutoff; record cutoff dates in evaluation_plan.",
+        "seed_variance": "Run treatment with ≥3 seeds; report mean ± std.",
+        "gpu_oom": "Pre-flight VRAM estimate; gradient_checkpointing on; smoke test before full run.",
+        "license_violation": "Whitelist apache-2.0, mit, cc-by-4.0, odc-by; hard-fail otherwise.",
+        "irreproducible_run": "Pin transformers / peft / bitsandbytes versions; log full config to wandb.",
+        "tokenizer_mismatch": "Always load tokenizer from same checkpoint as base_model."
+      },
+      "declared_sources": [
+        "HuggingFace_Models",
+        "Local_Eval_Harness"
+      ],
+      "exposure_source": "HuggingFace_Models",
+      "outcome_source": "Local_Eval_Harness",
+      "exposure_family": "sft_full_finetune",
+      "outcome_family": "instruction_following",
+      "join_plan": {
+        "boundary_source": [
+          "Local_Eval_Harness"
+        ],
+        "controls": [
+          "Training_Logs"
+        ],
+        "join_key": "GEOID"
+      },
+      "brief_rationale": "Assess whether sft full finetune is empirically associated with instruction following using HuggingFace_Models and Local_Eval_Harness.",
+      "technology_tags": [],
+      "automation_risk": "medium",
+      "required_secrets": [
+        "HuggingFace_Models:api_key"
+      ],
+      "gate_status": {
+        "gate_id": "G3_candidate",
+        "passed": true,
+        "overall": "warning",
+        "subchecks": {
+          "source_exists": "pass",
+          "role_coverage": "pass",
+          "machine_readable": "pass",
+          "spatial_join_path": "pass",
+          "time_overlap": "pass",
+          "cloud_automation_feasibility": "pass",
+          "identification_threats": "pass",
+          "variable_mapping_exists": "pass",
+          "native_grain_known": "pass",
+          "target_grain_reachable": "pass",
+          "join_recipe_exists": "pass",
+          "aggregation_method_defined": "pass",
+          "time_cross_sectional_justified": "pass",
+          "license_in_whitelist": "pass",
+          "gpu_runtime_capacity": "warning",
+          "train_eval_leakage_plan_present": "pass"
+        },
+        "reasons": [
+          "hf_token_required_at_runtime",
+          "gpu_warning:base_model_Qwen/Qwen2.5-1.5B_1.5B_exceeds_colab_t4_sft_full_finetune_max_0.5B"
+        ],
+        "repair_suggestions": [],
+        "shortlist_status": "review",
+        "required_secrets": [
+          "HuggingFace_Models:api_key"
+        ],
+        "claude_code_ready": false,
+        "blocking_reasons": [],
+        "repairable_warnings": [
+          "hf_token_required_at_runtime"
+        ]
+      },
+      "repair_history": [
+        {
+          "candidate_id": "beh_004",
+          "round": 0,
+          "issue": "experimental_source_requires_key",
+          "action": "mark_high_risk",
+          "before": {
+            "source": "HuggingFace_Models",
+            "auth_required": true
+          },
+          "after": {
+            "shortlist_status": "review"
+          },
+          "result": "review"
+        }
+      ],
+      "shortlist_status": "review",
+      "readiness": "needs_review",
+      "evaluation": {
+        "overall_verdict": "warning",
+        "readiness": "needs_review",
+        "user_visible_reasons": [
+          "hf_token_required_at_runtime",
+          "gpu_warning:base_model_Qwen/Qwen2.5-1.5B_1.5B_exceeds_colab_t4_sft_full_finetune_max_0.5B"
+        ],
+        "score": 0.648
+      },
+      "debug": {
+        "gate_reasons": [
+          "hf_token_required_at_runtime",
+          "gpu_warning:base_model_Qwen/Qwen2.5-1.5B_1.5B_exceeds_colab_t4_sft_full_finetune_max_0.5B"
+        ],
+        "repair_history": [
+          {
+            "candidate_id": "beh_004",
+            "round": 0,
+            "issue": "experimental_source_requires_key",
+            "action": "mark_high_risk",
+            "before": {
+              "source": "HuggingFace_Models",
+              "auth_required": true
+            },
+            "after": {
+              "shortlist_status": "review"
+            },
+            "result": "review"
+          }
+        ]
+      }
+    },
+    {
+      "candidate_id": "beh_005",
+      "topic_id": "beh_005",
+      "title": "Lora Adapter and Instruction Following",
+      "display": {
+        "display_title": "How Does Lora Adapter Relate to Instruction Following at the Training Run Level?",
+        "research_question": "At the US training run level, is lora adapter associated with instruction following outcomes after controlling for sociodemographic confounders?",
+        "rationale": "Linking lora adapter to instruction following at the training run grain offers a policy-actionable lens: small-area variation in built-environment features is hypothesized to drive measurable differences in population health, and both inputs are publicly available.",
+        "contribution_angle": "Combines HuggingFace_Models with Local_Eval_Harness at a finer grain than most prior work, using a paired run baseline vs treatment design with a comparative claim.",
+        "execution_summary": "Sources: HuggingFace_Models + Local_Eval_Harness. Method: paired run baseline vs treatment. Grain: training run.",
+        "novelty_status": "pending_literature_check"
+      },
+      "rank": 5,
+      "research_question": "How does lora adapter affect instruction following at the training_run level?",
+      "novelty_status": "pending_literature_check",
+      "exposure_variable": "lora_adapter",
+      "outcome_variable": "instruction_following",
+      "geography": "United States",
+      "unit_of_analysis": "training_run",
+      "method": "paired_run_baseline_vs_treatment",
+      "key_threats": [
+        "train_eval_leakage",
+        "eval_set_contamination",
+        "seed_variance",
+        "gpu_oom",
+        "license_violation",
+        "irreproducible_run",
+        "tokenizer_mismatch"
+      ],
+      "mitigations": {
+        "train_eval_leakage": "Hold out eval split before training; verify no overlap by hash on prompt strings.",
+        "eval_set_contamination": "Prefer benchmarks released after base_model cutoff; record cutoff dates in evaluation_plan.",
+        "seed_variance": "Run treatment with ≥3 seeds; report mean ± std.",
+        "gpu_oom": "Pre-flight VRAM estimate; gradient_checkpointing on; smoke test before full run.",
+        "license_violation": "Whitelist apache-2.0, mit, cc-by-4.0, odc-by; hard-fail otherwise.",
+        "irreproducible_run": "Pin transformers / peft / bitsandbytes versions; log full config to wandb.",
+        "tokenizer_mismatch": "Always load tokenizer from same checkpoint as base_model."
+      },
+      "declared_sources": [
+        "HuggingFace_Models",
+        "Local_Eval_Harness"
+      ],
+      "exposure_source": "HuggingFace_Models",
+      "outcome_source": "Local_Eval_Harness",
+      "exposure_family": "lora_adapter",
+      "outcome_family": "instruction_following",
+      "join_plan": {
+        "boundary_source": [
+          "Local_Eval_Harness"
+        ],
+        "controls": [
+          "Training_Logs"
+        ],
+        "join_key": "GEOID"
+      },
+      "brief_rationale": "Assess whether lora adapter is empirically associated with instruction following using HuggingFace_Models and Local_Eval_Harness.",
+      "technology_tags": [],
+      "automation_risk": "medium",
+      "required_secrets": [
+        "HuggingFace_Models:api_key"
+      ],
+      "gate_status": {
+        "gate_id": "G3_candidate",
+        "passed": true,
+        "overall": "warning",
+        "subchecks": {
+          "source_exists": "pass",
+          "role_coverage": "pass",
+          "machine_readable": "pass",
+          "spatial_join_path": "pass",
+          "time_overlap": "pass",
+          "cloud_automation_feasibility": "pass",
+          "identification_threats": "pass",
+          "variable_mapping_exists": "pass",
+          "native_grain_known": "pass",
+          "target_grain_reachable": "pass",
+          "join_recipe_exists": "pass",
+          "aggregation_method_defined": "pass",
+          "time_cross_sectional_justified": "pass",
+          "license_in_whitelist": "pass",
+          "gpu_runtime_capacity": "pass",
+          "train_eval_leakage_plan_present": "pass"
+        },
+        "reasons": [
+          "hf_token_required_at_runtime"
+        ],
+        "repair_suggestions": [],
+        "shortlist_status": "review",
+        "required_secrets": [
+          "HuggingFace_Models:api_key"
+        ],
+        "claude_code_ready": false,
+        "blocking_reasons": [],
+        "repairable_warnings": [
+          "hf_token_required_at_runtime"
+        ]
+      },
+      "repair_history": [
+        {
+          "candidate_id": "beh_005",
+          "round": 0,
+          "issue": "experimental_source_requires_key",
+          "action": "mark_high_risk",
+          "before": {
+            "source": "HuggingFace_Models",
+            "auth_required": true
+          },
+          "after": {
+            "shortlist_status": "review"
+          },
+          "result": "review"
+        }
+      ],
+      "shortlist_status": "review",
+      "readiness": "needs_review",
+      "evaluation": {
+        "overall_verdict": "warning",
+        "readiness": "needs_review",
+        "user_visible_reasons": [
+          "hf_token_required_at_runtime"
+        ],
+        "score": 0.648
+      },
+      "debug": {
+        "gate_reasons": [
+          "hf_token_required_at_runtime"
+        ],
+        "repair_history": [
+          {
+            "candidate_id": "beh_005",
+            "round": 0,
+            "issue": "experimental_source_requires_key",
+            "action": "mark_high_risk",
+            "before": {
+              "source": "HuggingFace_Models",
+              "auth_required": true
+            },
+            "after": {
+              "shortlist_status": "review"
+            },
+            "result": "review"
+          }
+        ]
+      }
+    },
+    {
+      "candidate_id": "beh_009",
+      "topic_id": "beh_009",
+      "title": "Qlora 4Bit and Generation Quality",
+      "display": {
+        "display_title": "How Does Qlora 4Bit Relate to Generation Quality at the Training Run Level?",
+        "research_question": "At the US training run level, is qlora 4bit associated with generation quality outcomes after controlling for sociodemographic confounders?",
+        "rationale": "Linking qlora 4bit to generation quality at the training run grain offers a policy-actionable lens: small-area variation in built-environment features is hypothesized to drive measurable differences in population health, and both inputs are publicly available.",
+        "contribution_angle": "Combines HuggingFace_Models with Local_Eval_Harness at a finer grain than most prior work, using a paired run baseline vs treatment design with a comparative claim.",
+        "execution_summary": "Sources: HuggingFace_Models + Local_Eval_Harness. Method: paired run baseline vs treatment. Grain: training run.",
+        "novelty_status": "pending_literature_check"
+      },
+      "rank": 9,
+      "research_question": "How does qlora 4bit affect generation quality at the training_run level?",
+      "novelty_status": "pending_literature_check",
+      "exposure_variable": "qlora_4bit",
+      "outcome_variable": "generation_quality",
+      "geography": "United States",
+      "unit_of_analysis": "training_run",
+      "method": "paired_run_baseline_vs_treatment",
+      "key_threats": [
+        "train_eval_leakage",
+        "eval_set_contamination",
+        "seed_variance",
+        "gpu_oom",
+        "license_violation",
+        "irreproducible_run",
+        "tokenizer_mismatch"
+      ],
+      "mitigations": {
+        "train_eval_leakage": "Hold out eval split before training; verify no overlap by hash on prompt strings.",
+        "eval_set_contamination": "Prefer benchmarks released after base_model cutoff; record cutoff dates in evaluation_plan.",
+        "seed_variance": "Run treatment with ≥3 seeds; report mean ± std.",
+        "gpu_oom": "Pre-flight VRAM estimate; gradient_checkpointing on; smoke test before full run.",
+        "license_violation": "Whitelist apache-2.0, mit, cc-by-4.0, odc-by; hard-fail otherwise.",
+        "irreproducible_run": "Pin transformers / peft / bitsandbytes versions; log full config to wandb.",
+        "tokenizer_mismatch": "Always load tokenizer from same checkpoint as base_model."
+      },
+      "declared_sources": [
+        "HuggingFace_Models",
+        "Local_Eval_Harness"
+      ],
+      "exposure_source": "HuggingFace_Models",
+      "outcome_source": "Local_Eval_Harness",
+      "exposure_family": "qlora_4bit",
+      "outcome_family": "generation_quality",
+      "join_plan": {
+        "boundary_source": [
+          "Local_Eval_Harness"
+        ],
+        "controls": [
+          "Training_Logs"
+        ],
+        "join_key": "GEOID"
+      },
+      "brief_rationale": "Assess whether qlora 4bit is empirically associated with generation quality using HuggingFace_Models and Local_Eval_Harness.",
+      "technology_tags": [],
+      "automation_risk": "medium",
+      "required_secrets": [
+        "HuggingFace_Models:api_key"
+      ],
+      "gate_status": {
+        "gate_id": "G3_candidate",
+        "passed": true,
+        "overall": "warning",
+        "subchecks": {
+          "source_exists": "pass",
+          "role_coverage": "pass",
+          "machine_readable": "pass",
+          "spatial_join_path": "pass",
+          "time_overlap": "pass",
+          "cloud_automation_feasibility": "pass",
+          "identification_threats": "pass",
+          "variable_mapping_exists": "pass",
+          "native_grain_known": "pass",
+          "target_grain_reachable": "pass",
+          "join_recipe_exists": "pass",
+          "aggregation_method_defined": "pass",
+          "time_cross_sectional_justified": "pass",
+          "license_in_whitelist": "pass",
+          "gpu_runtime_capacity": "pass",
+          "train_eval_leakage_plan_present": "pass"
+        },
+        "reasons": [
+          "hf_token_required_at_runtime"
+        ],
+        "repair_suggestions": [],
+        "shortlist_status": "review",
+        "required_secrets": [
+          "HuggingFace_Models:api_key"
+        ],
+        "claude_code_ready": false,
+        "blocking_reasons": [],
+        "repairable_warnings": [
+          "hf_token_required_at_runtime"
+        ]
+      },
+      "repair_history": [
+        {
+          "candidate_id": "beh_009",
+          "round": 0,
+          "issue": "experimental_source_requires_key",
+          "action": "mark_high_risk",
+          "before": {
+            "source": "HuggingFace_Models",
+            "auth_required": true
+          },
+          "after": {
+            "shortlist_status": "review"
+          },
+          "result": "review"
+        }
+      ],
+      "shortlist_status": "review",
+      "readiness": "needs_review",
+      "evaluation": {
+        "overall_verdict": "warning",
+        "readiness": "needs_review",
+        "user_visible_reasons": [
+          "hf_token_required_at_runtime"
+        ],
+        "score": 0.648
+      },
+      "debug": {
+        "gate_reasons": [
+          "hf_token_required_at_runtime"
+        ],
+        "repair_history": [
+          {
+            "candidate_id": "beh_009",
+            "round": 0,
+            "issue": "experimental_source_requires_key",
+            "action": "mark_high_risk",
+            "before": {
+              "source": "HuggingFace_Models",
+              "auth_required": true
+            },
+            "after": {
+              "shortlist_status": "review"
+            },
+            "result": "review"
+          }
+        ]
+      }
+    }
+  ]
+}
