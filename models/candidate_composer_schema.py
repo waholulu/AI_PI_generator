@@ -38,3 +38,14 @@ class ComposedCandidate(BaseModel):
     cloud_safe: bool = True
     # Composer-level shortlist hint; feasibility precheck may override to "blocked"
     initial_shortlist_status: Literal["ready", "review", "blocked"] = "ready"
+
+    # Domain-derived task fields (training_research templates only). When set,
+    # outcome_family is the *metric family* (task_accuracy / instruction_following /
+    # generation_quality) and these carry the concrete supervised task derived
+    # from the user's domain_input. Leave None for spatial templates.
+    outcome_task_id: str | None = None
+    outcome_task_label: str | None = None
+    outcome_task_description: str | None = None
+    outcome_task_modality: str | None = None
+    outcome_task_dataset_hint: str | None = None
+    outcome_task_domain_input: str | None = None

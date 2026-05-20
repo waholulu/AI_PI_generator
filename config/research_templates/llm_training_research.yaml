@@ -1,11 +1,19 @@
 template_id: llm_training_research_v1
 kind: training_research
 description: >
-  LLM/DL training research generator (v1). Produces candidate research
-  questions of the form "training_strategy X vs evaluation_target Y, paired
-  baseline-vs-treatment, run on Colab T4/A100 or local GPU." Scope is
+  LLM/DL training research generator (v1.1). Produces candidate research
+  questions of the form "training_strategy X applied to a domain task T,
+  paired baseline-vs-treatment, run on Colab T4/A100 or local GPU." The
+  domain task T is derived at runtime from the user's `--domain` input by
+  `agents/task_seed_generator.py` (one Gemini call per run); the entries
+  below under `allowed_outcome_families` are the *metric families* applied
+  to each generated task, not the task palette itself. Scope is
   intentionally narrow for the first release: SFT, LoRA, QLoRA only.
   RLHF / DPO / pretraining / distillation are out of scope (see roadmap).
+
+  When `GEMINI_API_KEY` is unset, task seeding falls back to a single
+  generic classification task derived from the raw domain string so the
+  pipeline stays deterministic.
 
 default_geography: model_release
 default_unit_of_analysis: training_run

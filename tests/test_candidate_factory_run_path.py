@@ -28,7 +28,13 @@ def run_scope(tmp_path, monkeypatch):
 
 @pytest.fixture(scope="module")
 def factory_result(tmp_path_factory):
-    """Run the candidate factory once per module; share result across tests 3-5."""
+    """Run the candidate factory once per module; share result across tests 3-5.
+
+    Keeps AUTOPI_DATA_ROOT and the run scope active for the *whole* module so
+    helpers that re-resolve paths via `settings.topic_screening_path()` (e.g.
+    `apply_idea_selection_by_candidate_id`) see the same tmp directory the
+    factory wrote into. Reverts both on teardown.
+    """
     import os
     tmp = tmp_path_factory.mktemp("factory_run")
     prev = os.environ.get("AUTOPI_DATA_ROOT")
@@ -42,13 +48,13 @@ def factory_result(tmp_path_factory):
             "enable_experimental": False,
             "execution_status": "starting",
         })
+        yield result
     finally:
         settings.deactivate_run_scope(token)
         if prev is None:
             os.environ.pop("AUTOPI_DATA_ROOT", None)
         else:
             os.environ["AUTOPI_DATA_ROOT"] = prev
-    return result
 
 
 # ── test 1: ideation_node routes to factory when enabled ─────────────────────

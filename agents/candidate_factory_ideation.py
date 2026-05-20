@@ -71,6 +71,16 @@ _GENERIC_TITLE_TEMPLATE = (
 )
 
 
+# Training_research strategy → human-readable phrase used in titles, research
+# questions, and dev-pack copy. Shared between _make_title / _make_research_question
+# (legacy contract fields) and _format_training_card (display layer).
+_STRATEGY_PHRASES: dict[str, str] = {
+    "sft_full_finetune": "supervised fine-tuning",
+    "lora_adapter": "LoRA adapter fine-tuning",
+    "qlora_4bit": "4-bit QLoRA fine-tuning",
+}
+
+
 def _humanize(token: str) -> str:
     return token.replace("_", " ").strip()
 
@@ -91,15 +101,109 @@ def _make_title(c) -> str:
     Retained on the card for backward compatibility; the user-visible label
     is `display.display_title` produced by `format_display_card()`.
     """
+    if getattr(c, "unit_of_analysis", "") == "training_run":
+        strategy = getattr(c, "exposure_family", "") or ""
+        task_label = getattr(c, "outcome_task_label", None)
+        if task_label:
+            return f"{_humanize(strategy).title()} → {task_label}"
+        out = getattr(c, "outcome_family", "").replace("_", " ").title()
+        return f"{_humanize(strategy).title()} → {out}"
     exp = c.exposure_family.replace("_", " ").title()
     out = c.outcome_family.replace("_", " ").title()
     return f"{exp} and {out}"
 
 
 def _make_research_question(c) -> str:
+    if getattr(c, "unit_of_analysis", "") == "training_run":
+        strategy_phrase = _STRATEGY_PHRASES.get(
+            getattr(c, "exposure_family", ""), _humanize(getattr(c, "exposure_family", ""))
+        )
+        task_label = getattr(c, "outcome_task_label", None) or _humanize(
+            getattr(c, "outcome_family", "")
+        ).title()
+        metric_phrase = _humanize(getattr(c, "outcome_family", "")) or "task performance"
+        return (
+            f"Does {strategy_phrase} improve {metric_phrase} on \"{task_label}\" "
+            f"relative to a zero-shot baseline?"
+        )
     exp = c.exposure_family.replace("_", " ")
     out = c.outcome_family.replace("_", " ")
     return f"How does {exp} affect {out} at the {c.unit_of_analysis} level?"
+
+
+def _format_training_card(candidate, gate_status: dict | None = None) -> dict:
+    """Display formatter for training_research candidates.
+
+    Generates LLM-flavoured text grounded in the domain-derived task
+    (`outcome_task_*` fields) rather than the spatial-research boilerplate.
+    """
+    strategy = getattr(candidate, "exposure_family", "") or ""
+    strategy_phrase = _STRATEGY_PHRASES.get(strategy, _humanize(strategy))
+    metric_family = getattr(candidate, "outcome_family", "") or ""
+    metric_phrase = _humanize(metric_family) or "task performance"
+    task_label = getattr(candidate, "outcome_task_label", "") or _humanize(metric_family).title()
+    task_description = (getattr(candidate, "outcome_task_description", "") or "").strip()
+    dataset_hint = getattr(candidate, "outcome_task_dataset_hint", "") or ""
+    domain_input = (getattr(candidate, "outcome_task_domain_input", "") or "").strip()
+    method_template = getattr(candidate, "method_template", "") or "paired baseline-vs-treatment"
+
+    # The fallback path injects "(placeholder — set GEMINI_API_KEY for ...)"
+    # into task_description. Detect this so the rationale shown to the user
+    # stays clean instead of embedding internal warnings as if they were
+    # research justification.
+    is_placeholder_task = (
+        "placeholder" in task_description.lower()
+        or "gemini was unavailable" in task_description.lower()
+    )
+
+    display_title = f"Can {strategy_phrase.title()} Improve {task_label}?"
+
+    research_question = (
+        f"Does {strategy_phrase} of an open base language model improve "
+        f"{metric_phrase} on the task \"{task_label}\" relative to a "
+        f"zero-shot baseline, under a {_humanize(method_template).lower()} "
+        f"protocol?"
+    )
+
+    domain_clause = f' Domain: "{domain_input}".' if domain_input else ""
+    if task_description and not is_placeholder_task:
+        rationale = (
+            f"{task_description.rstrip('.')}.{domain_clause} "
+            f"Testing this with {strategy_phrase} on Colab-tier hardware "
+            f"probes whether parameter-efficient adaptation delivers "
+            f"measurable gains on a domain-specific task."
+        )
+    else:
+        rationale = (
+            f"Apply {strategy_phrase} to a {task_label.lower()} derived from "
+            f"the user's domain{(' (' + domain_input + ')') if domain_input else ''}, "
+            f"comparing against a zero-shot baseline on Colab-tier hardware. "
+            f"Set GEMINI_API_KEY to replace this placeholder task with a "
+            f"domain-grounded set."
+        )
+
+    contribution_angle = (
+        f"Pairs a domain-grounded task ({task_label}) with {strategy_phrase} "
+        f"and a paired baseline-vs-treatment protocol, runnable end-to-end on "
+        f"Colab T4."
+        + (f" Suggested data: {dataset_hint}." if dataset_hint else "")
+    )
+
+    execution_summary = (
+        f"Strategy: {strategy_phrase}. "
+        f"Task: {task_label} ({metric_phrase}). "
+        f"Method: {_humanize(method_template).lower()}. "
+        f"Unit: training_run."
+    )
+
+    return {
+        "display_title": display_title,
+        "research_question": research_question,
+        "rationale": rationale,
+        "contribution_angle": contribution_angle,
+        "execution_summary": execution_summary,
+        "novelty_status": "pending_literature_check",
+    }
 
 
 def format_display_card(candidate, gate_status: dict | None = None) -> dict:
@@ -114,7 +218,15 @@ def format_display_card(candidate, gate_status: dict | None = None) -> dict:
 
     Pure function — no I/O, no LLM calls.  Lives here (not a separate agent)
     so display formatting stays close to the contract that produced it.
+
+    Branches on unit_of_analysis: training_research candidates (unit ==
+    "training_run") get LLM-flavoured copy via `_format_training_card`;
+    spatial-research candidates keep the built-environment-flavoured copy
+    below.
     """
+    if getattr(candidate, "unit_of_analysis", "") == "training_run":
+        return _format_training_card(candidate, gate_status)
+
     gs = gate_status or {}
     exposure_family = getattr(candidate, "exposure_family", "")
     outcome_family = getattr(candidate, "outcome_family", "")
@@ -247,6 +359,28 @@ def _card_to_screening_entry(card: dict) -> dict:
     display = card.get("display") or {}
     exp = card.get("exposure_label", "").replace("_", " ")
     out = card.get("outcome_label", "").replace("_", " ")
+
+    # Training-research candidates aren't geographic — geography is the model
+    # release window, not a country. Detect via unit_of_analysis so the
+    # screening entry doesn't claim US-only when it's really LLM training.
+    is_training_research = card.get("unit_of_analysis") == "training_run"
+    geography = "model_release" if is_training_research else "United States"
+
+    if is_training_research:
+        task_label = raw.get("outcome_task_label") or out.title()
+        strategy_phrase = _STRATEGY_PHRASES.get(
+            card.get("exposure_label", ""), exp
+        )
+        brief_rationale = (
+            f"Test whether {strategy_phrase} of an open base LM improves "
+            f"{out} on the task \"{task_label}\" against a zero-shot baseline."
+        )
+    else:
+        brief_rationale = (
+            f"Assess whether {exp} is empirically associated with {out} "
+            f"using {card.get('exposure_source', '')} and {card.get('outcome_source', '')}."
+        )
+
     return {
         "candidate_id": card["candidate_id"],
         "topic_id": card["candidate_id"],
@@ -257,7 +391,7 @@ def _card_to_screening_entry(card: dict) -> dict:
         "novelty_status": card.get("novelty_status", "pending_literature_check"),
         "exposure_variable": card.get("exposure_label", ""),
         "outcome_variable": card.get("outcome_label", ""),
-        "geography": "United States",
+        "geography": geography,
         "unit_of_analysis": card.get("unit_of_analysis", ""),
         "method": card.get("method", ""),
         "key_threats": raw.get("key_threats", []),
@@ -267,11 +401,14 @@ def _card_to_screening_entry(card: dict) -> dict:
         "outcome_source": card.get("outcome_source", ""),
         "exposure_family": card.get("exposure_label", ""),
         "outcome_family": card.get("outcome_label", ""),
+        "outcome_task_id": raw.get("outcome_task_id"),
+        "outcome_task_label": raw.get("outcome_task_label"),
+        "outcome_task_description": raw.get("outcome_task_description"),
+        "outcome_task_modality": raw.get("outcome_task_modality"),
+        "outcome_task_dataset_hint": raw.get("outcome_task_dataset_hint"),
+        "outcome_task_domain_input": raw.get("outcome_task_domain_input"),
         "join_plan": raw.get("join_plan", {}),
-        "brief_rationale": (
-            f"Assess whether {exp} is empirically associated with {out} "
-            f"using {card.get('exposure_source', '')} and {card.get('outcome_source', '')}."
-        ),
+        "brief_rationale": brief_rationale,
         "technology_tags": card.get("technology_tags", []),
         "automation_risk": card.get("automation_risk", "medium"),
         "required_secrets": card.get("required_secrets", []),
@@ -331,7 +468,11 @@ def select_diverse_shortlist(
         if len(selected) >= shortlist_size:
             break
         exp = str(card.get("exposure_label") or "")
-        out = str(card.get("outcome_label") or "")
+        # For training_research, outcome diversity must track the domain task
+        # (outcome_task_id), not the metric_family (which only has 3 values).
+        raw = card.get("_raw") or {}
+        task_id = raw.get("outcome_task_id")
+        out = str(task_id or card.get("outcome_label") or "")
         if exposure_count.get(exp, 0) >= max_per_exposure:
             continue
         if outcome_count.get(out, 0) >= max_per_outcome:

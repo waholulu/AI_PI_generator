@@ -285,6 +285,97 @@ def test_expand_matrix_round_robin_covers_first_axis_levels():
     assert base_models == {"A", "B", "C"}
 
 
+# ── Domain-grounded task seeding (v1.1) ──────────────────────────────────────
+
+
+def test_fallback_task_seeds_cover_three_metric_families():
+    """Without GEMINI_API_KEY the generator returns one task per metric family,
+    so the pool stays large enough to review without an LLM."""
+    from agents.task_seed_generator import _fallback_seeds
+
+    seeds = _fallback_seeds("Built environment exposure and health outcomes")
+    families = {s.metric_family for s in seeds}
+    assert families == {"task_accuracy", "instruction_following", "generation_quality"}
+    # Each fallback task should reference the user domain so the UI shows it
+    assert all("built environment" in s.task_label.lower() for s in seeds)
+
+
+def test_compose_attaches_task_to_training_candidate():
+    """Training_research candidates must carry the task metadata so the
+    display formatter can drop the built-environment language."""
+    cands = compose_candidates(
+        ComposeRequest(
+            template_id=TEMPLATE_ID,
+            domain_input="Built environment exposure and health outcomes",
+            max_candidates=20,
+        )
+    )
+    assert cands, "expected at least one candidate from training_research path"
+    for c in cands:
+        assert c.outcome_task_id is not None
+        assert c.outcome_task_label
+        assert c.outcome_task_modality in {
+            "text_classification", "sequence_labeling", "extraction",
+            "generation", "summarization", "question_answering",
+        }
+        # outcome_family is now the metric family (one of 3), not the task name
+        assert c.outcome_family in {
+            "task_accuracy", "instruction_following", "generation_quality",
+        }
+
+
+def test_training_card_drops_built_environment_language():
+    """The bug we're fixing: the display card for LLM candidates must not
+    mention sociodemographic confounders, US census tracts, or small-area
+    variation in built-environment features."""
+    from agents.candidate_factory_ideation import format_display_card
+
+    cands = compose_candidates(
+        ComposeRequest(
+            template_id=TEMPLATE_ID,
+            domain_input="Built environment exposure and health outcomes",
+            max_candidates=4,
+        )
+    )
+    card = format_display_card(cands[0])
+    blob = " ".join(
+        str(card.get(k, "")) for k in
+        ("display_title", "research_question", "rationale", "contribution_angle", "execution_summary")
+    ).lower()
+
+    for forbidden in (
+        "sociodemographic confounders",
+        "small-area variation",
+        "us census tract",
+        "policy-actionable lens",
+    ):
+        assert forbidden not in blob, f"display still contains {forbidden!r}: {blob}"
+
+
+def test_screening_entry_geography_for_training_is_not_us():
+    """The geography field on a training_research screening entry must not
+    claim 'United States' — the unit of analysis is training_run."""
+    from agents.candidate_factory_ideation import (
+        _card_to_screening_entry,
+        _to_card,
+        format_display_card,
+    )
+
+    cands = compose_candidates(
+        ComposeRequest(
+            template_id=TEMPLATE_ID,
+            domain_input="Healthcare claims analysis",
+            max_candidates=4,
+        )
+    )
+    c = cands[0]
+    card = _to_card(c, "test_title", "test_rq", display=format_display_card(c))
+    entry = _card_to_screening_entry(card)
+    assert entry["geography"] == "model_release"
+    assert entry["unit_of_analysis"] == "training_run"
+    assert entry["outcome_task_label"] == c.outcome_task_label
+
+
 # ── Regression: spatial template still works ─────────────────────────────────
 
 

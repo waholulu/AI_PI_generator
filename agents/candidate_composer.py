@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from agents.research_template_loader import load_research_template
 from agents.source_registry import SourceRegistry
+from agents.task_seed_generator import TaskSeed, TaskSeedGenerator
 from models.candidate_composer_schema import ComposeRequest, ComposedCandidate
 
 # First-batch high-pass (exposure_family, outcome_family) pairs that should always
@@ -87,6 +88,7 @@ def _build_candidate(
     registry: SourceRegistry,
     req: ComposeRequest,
     template: dict,
+    task_seed: TaskSeed | None = None,
 ) -> ComposedCandidate | None:
     """Build one candidate or return None if sources can't be resolved."""
     exp_source = _pick_source(
@@ -153,12 +155,91 @@ def _build_candidate(
         automation_risk=risk,
         cloud_safe=cloud_safe,
         initial_shortlist_status=shortlist,
+        outcome_task_id=task_seed.task_id if task_seed else None,
+        outcome_task_label=task_seed.task_label if task_seed else None,
+        outcome_task_description=task_seed.task_description if task_seed else None,
+        outcome_task_modality=task_seed.modality if task_seed else None,
+        outcome_task_dataset_hint=task_seed.dataset_hint if task_seed else None,
+        outcome_task_domain_input=req.domain_input if task_seed else None,
     )
+
+
+def _compose_training_research(
+    req: ComposeRequest,
+    template: dict,
+    registry: SourceRegistry,
+) -> list[ComposedCandidate]:
+    """Training-research path: outcome axis = domain-derived tasks.
+
+    The static `allowed_outcome_families` block (task_accuracy /
+    instruction_following / generation_quality) becomes the *metric family*
+    palette; the concrete Y axis comes from `TaskSeedGenerator`. Each
+    candidate keeps `outcome_family` = metric_family (so registry lookups
+    and downstream code still work) and carries the task identity in the
+    new `outcome_task_*` fields.
+
+    Falls back to the static Cartesian product (legacy behaviour) when the
+    task generator returns nothing usable or all task seeds map to metric
+    families absent from the template.
+    """
+    exposures = template.get("allowed_exposure_families", {})
+    outcomes = template.get("allowed_outcome_families", {})
+    methods = template.get("allowed_methods", {})
+
+    seeds = TaskSeedGenerator().generate(req.domain_input or "")
+    # Drop seeds whose metric_family isn't declared by the template — keeps
+    # registry lookups honest.
+    seeds = [s for s in seeds if s.metric_family in outcomes]
+    if not seeds:
+        return []
+
+    eligible_exposures = dict(exposures)
+    eligible_methods = dict(methods)
+    method_name = next(iter(eligible_methods), None)
+    if method_name is None:
+        return []
+    method_spec = eligible_methods[method_name]
+
+    candidates: list[ComposedCandidate] = []
+    serial = 1
+    seen: set[tuple[str, str]] = set()
+
+    # Round 1: one candidate per (strategy, task) — broad coverage first.
+    for seed in seeds:
+        for exp_name, exp_spec in eligible_exposures.items():
+            if len(candidates) >= req.max_candidates:
+                break
+            key = (exp_name, seed.task_id)
+            if key in seen:
+                continue
+            out_spec = outcomes.get(seed.metric_family, {})
+            c = _build_candidate(
+                serial, exp_name, seed.metric_family, method_name,
+                exp_spec, out_spec, method_spec,
+                registry, req, template, task_seed=seed,
+            )
+            if c is None:
+                continue
+            # Make candidate_id include the task so duplicates from
+            # round-robin filling can be distinguished.
+            c.candidate_id = f"llm_{serial:03d}"
+            seen.add(key)
+            candidates.append(c)
+            serial += 1
+        if len(candidates) >= req.max_candidates:
+            break
+
+    return candidates
 
 
 def compose_candidates(req: ComposeRequest) -> list[ComposedCandidate]:
     template = load_research_template(req.template_id)
     registry = SourceRegistry.load()
+
+    # Training-research templates take a separate path that grounds the Y
+    # axis in the user's domain_input via TaskSeedGenerator.
+    if template.get("kind") == "training_research":
+        return _compose_training_research(req, template, registry)
 
     exposures = template.get("allowed_exposure_families", {})
     outcomes = template.get("allowed_outcome_families", {})

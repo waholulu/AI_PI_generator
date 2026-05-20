@@ -168,7 +168,7 @@ def _experiment_config(
     matrix = _expand_matrix(axes)
     smoke = template.get("smoke_test", {}) or {}
 
-    payload = {
+    payload: dict[str, Any] = {
         "candidate_id": candidate.candidate_id,
         "template_id": candidate.template_id,
         "training_strategy": candidate.exposure_family,
@@ -199,6 +199,19 @@ def _experiment_config(
             "eval_every_n_steps": 50,
         },
     }
+    if candidate.outcome_task_id:
+        payload["domain_task"] = {
+            "task_id": candidate.outcome_task_id,
+            "task_label": candidate.outcome_task_label,
+            "task_description": candidate.outcome_task_description,
+            "modality": candidate.outcome_task_modality,
+            "dataset_hint": candidate.outcome_task_dataset_hint,
+            "user_domain_input": candidate.outcome_task_domain_input,
+            "note": (
+                "Replace the placeholder dataset / benchmark choices with "
+                "your domain-specific data before flipping SMOKE=False."
+            ),
+        }
     return _yaml_dump(payload)
 
 
@@ -319,6 +332,13 @@ def _evaluation_plan(
     plan: dict[str, Any] = {
         "candidate_id": candidate.candidate_id,
         "evaluation_target": candidate.outcome_family,
+        "domain_task": {
+            "task_id": candidate.outcome_task_id,
+            "task_label": candidate.outcome_task_label,
+            "task_description": candidate.outcome_task_description,
+            "modality": candidate.outcome_task_modality,
+            "dataset_hint": candidate.outcome_task_dataset_hint,
+        } if candidate.outcome_task_id else None,
         "harness": "lm-evaluation-harness",
         "harness_pinned_version": ">=0.4.4,<0.5",
         "paired_protocol": {
@@ -511,9 +531,12 @@ def _claude_task_prompt(
         ## Goal
 
         Compare {candidate.exposure_family} (treatment) against the
-        zero-shot / base-model baseline on
-        `{candidate.outcome_family}`. Claim strength is
+        zero-shot / base-model baseline on the task
+        `{candidate.outcome_task_label or candidate.outcome_family}`
+        (metric family: `{candidate.outcome_family}`). Claim strength is
         `{candidate.claim_strength}`.
+        {('Task description: ' + candidate.outcome_task_description) if candidate.outcome_task_description else ''}
+        {('Suggested data: ' + candidate.outcome_task_dataset_hint) if candidate.outcome_task_dataset_hint else ''}
 
         ## Key constraints
 
@@ -595,6 +618,13 @@ def _acceptance_tests(candidate: ComposedCandidate) -> str:
 
 
 def _readme(candidate: ComposedCandidate) -> str:
+    task_row = ""
+    if candidate.outcome_task_label:
+        task_row = (
+            f"        | Domain task | {candidate.outcome_task_label} |\n"
+            f"        | Task modality | {candidate.outcome_task_modality or 'n/a'} |\n"
+            f"        | Metric family | {candidate.outcome_family} |\n"
+        )
     return textwrap.dedent(
         f"""
         # Development Pack: {candidate.candidate_id} (LLM training)
@@ -602,8 +632,8 @@ def _readme(candidate: ComposedCandidate) -> str:
         | Field | Value |
         |-------|-------|
         | Strategy (X) | {candidate.exposure_family} |
-        | Outcome (Y) | {candidate.outcome_family} |
-        | Method | {candidate.method_template} |
+        | Outcome (Y) | {candidate.outcome_task_label or candidate.outcome_family} |
+{task_row}        | Method | {candidate.method_template} |
         | Unit of analysis | {candidate.unit_of_analysis} |
         | Automation risk | {candidate.automation_risk} |
         | Cloud safe | {'Yes' if candidate.cloud_safe else 'No'} |
