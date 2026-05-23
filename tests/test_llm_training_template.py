@@ -288,6 +288,64 @@ def test_expand_matrix_round_robin_covers_first_axis_levels():
 # ── Domain-grounded task seeding (v1.1) ──────────────────────────────────────
 
 
+def test_seed_post_filter_rejects_non_public_data():
+    """The denylist must catch clinical notes, EHR, MIMIC, and similar
+    credentialed sources even when the LLM ignores the prompt's hard
+    constraint.
+
+    Defends against the v1.1 regression where the LLM kept proposing tasks
+    backed by MIMIC-III / i2b2 / clinical notes despite the cloud-safe-only
+    rule.
+    """
+    from agents.task_seed_generator import TaskSeed, _seed_uses_public_data
+
+    clean = TaskSeed(
+        task_id="reddit_urban_classification",
+        task_label="Built-Environment Mention Classification (r/urbanplanning)",
+        task_description="Classify Reddit posts mentioning walkability vs transit access.",
+        modality="text_classification",
+        metric_family="task_accuracy",
+        dataset_hint="pushshift reddit dump, r/urbanplanning",
+    )
+    ok, hit = _seed_uses_public_data(clean)
+    assert ok is True and hit is None
+
+    forbidden = [
+        ("clinical notes", TaskSeed(
+            task_id="be_extract_clinical_notes",
+            task_label="Built-Environment Extraction from Clinical Notes",
+            task_description="Extract exposure mentions from clinical notes.",
+            modality="extraction", metric_family="task_accuracy",
+            dataset_hint="i2b2 2010",
+        )),
+        ("MIMIC-III", TaskSeed(
+            task_id="discharge_summary_summ",
+            task_label="Summarize Discharge Summaries",
+            task_description="Summarize MIMIC-III discharge summaries.",
+            modality="summarization", metric_family="generation_quality",
+            dataset_hint="MIMIC-III, PhysioNet credentialed",
+        )),
+        ("EHR", TaskSeed(
+            task_id="ehr_phenotype",
+            task_label="EHR Phenotype Classification",
+            task_description="Classify diagnoses from electronic health record text.",
+            modality="text_classification", metric_family="task_accuracy",
+            dataset_hint="hospital EHR export",
+        )),
+        ("UK Biobank", TaskSeed(
+            task_id="ukb_predict",
+            task_label="Predict outcomes from UK Biobank individual-level survey",
+            task_description="Use UK Biobank microdata.",
+            modality="text_classification", metric_family="task_accuracy",
+            dataset_hint="UK Biobank application required",
+        )),
+    ]
+    for label, bad in forbidden:
+        ok, hit = _seed_uses_public_data(bad)
+        assert ok is False, f"expected {label!r} task to be rejected; passed: {bad!r}"
+        assert hit, f"missing match string for {label!r}"
+
+
 def test_fallback_task_seeds_cover_three_metric_families():
     """Without GEMINI_API_KEY the generator returns one task per metric family,
     so the pool stays large enough to review without an LLM."""

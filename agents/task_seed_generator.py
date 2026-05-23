@@ -85,8 +85,9 @@ class TaskSeed(BaseModel):
         description=(
             "Free-text hint about a candidate dataset on HuggingFace Hub or a "
             "public corpus the user could fine-tune on. May be empty if no "
-            "obvious match. Example: 'i2b2 2010 clinical concept extraction, "
-            "MIMIC-III discharge summaries'."
+            "obvious match. MUST point to data that downloads without sign-up, "
+            "credentialing, IRB approval, or a paid licence. Example: "
+            "'yelp_polarity train split' or 'HuggingFaceH4/no_robots (mit)'."
         ),
         default="",
     )
@@ -107,12 +108,31 @@ domain. Your job is to enumerate 5-10 *concrete supervised-learning tasks*
 inside that domain that an LLM could plausibly be fine-tuned on with a small
 public dataset and a Colab GPU.
 
-Rules:
+Hard data-access constraint (every task must satisfy this):
+- The dataset must download from a public URL with no sign-up, no
+  credentialing, no IRB approval, and no paid licence.
+- FORBIDDEN sources: clinical notes, electronic health records (EHR/EMR),
+  discharge summaries, medical or insurance claims, PhysioNet datasets
+  (MIMIC-III/IV, eICU, etc.), i2b2 / n2c2, ADNI, UK Biobank, All of Us,
+  individual-level survey microdata, restricted-use research files,
+  proprietary news/legal corpora behind paywalls, gated HF Hub repos.
+- ALLOWED sources: public HuggingFace Hub datasets under apache-2.0, mit,
+  cc-by-4.0, cc-by-sa-4.0, odc-by, or bsd-3-clause; Wikipedia / Wikidata
+  dumps; Common Crawl derivatives; Stack Exchange data dumps; PubMed
+  Central open-access subset; public consumer-health or social-media
+  forum dumps; government open-data portals (CDC PLACES tract-level,
+  data.gov, data.gov.uk); curated public benchmarks already on HF Hub.
+- When the user's domain naturally implies clinical/EHR data, reach for
+  public proxies (open consumer-health forum text, PubMed Central
+  abstracts, CDC PLACES outcomes joined to OpenStreetMap features) — do
+  not propose tasks that would need credentialed access even if the
+  research question would be more clinically authoritative.
+
+Other rules:
 - Each task must be a specific predictive problem, not a research theme.
-  Bad: "study built-environment effects on health".
-  Good: "Classify mentions of built-environment exposures in clinical notes".
-- Each task should have inputs that are plausibly available as public or
-  semi-public text/tabular data on HuggingFace Hub.
+  Bad:  "study built-environment effects on health".
+  Good: "Classify built-environment factors mentioned in r/urbanplanning
+         Reddit posts (Pushshift dump)".
 - Stay inside the user's domain. Do NOT generalize to LLM benchmarking
   tasks (MMLU, IFEval, etc.) unless the user explicitly asked about those.
 - Spread coverage across modalities: at least two of
@@ -138,6 +158,51 @@ Produce a TaskSeedPlan with 5-10 tasks the lab could fine-tune an open LM on.
 def _slugify(text: str, max_len: int = 40) -> str:
     s = re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")
     return s[:max_len] or "domain_task"
+
+
+# Defence-in-depth against the LLM ignoring the prompt's data-access rule.
+# Patterns are tuned to the failure modes observed in production: clinical
+# notes / EHRs / credentialed health datasets / individual-level surveys.
+# The prompt is the primary guardrail — this filter just stops the worst
+# obvious mistakes from reaching the user.
+_NON_PUBLIC_PATTERNS = [
+    re.compile(p, re.IGNORECASE)
+    for p in (
+        r"\bmimic[\-_ ]?(?:iii|iv|3|4)?\b",
+        r"\bphysionet\b",
+        r"\beicu\b",
+        r"\behrshot\b",
+        r"\bi2b2\b",
+        r"\bn2c2\b",
+        r"\badni\b",
+        r"\bukb\b",
+        r"\buk[\- ]?biobank\b",
+        r"\ball[\- ]of[\- ]us\b",
+        r"\bclinical[\- ]notes?\b",
+        r"\bdischarge[\- ]summar(y|ies)\b",
+        r"\belectronic[\- ]health[\- ]record",
+        r"\behr\b",
+        r"\bemr\b",
+        r"\bmedical[\- ]claims?\b",
+        r"\binsurance[\- ]claims?\b",
+        r"\birb[\- ]approval\b",
+        r"\bcredentialed\b",
+        r"\bgated[\- ]dataset\b",
+        r"\bindividual[\- ]level[\- ]survey\b",
+        r"\bmicrodata\b",
+        r"\brestricted[\- ]use\b",
+    )
+]
+
+
+def _seed_uses_public_data(seed: TaskSeed) -> tuple[bool, str | None]:
+    """Return (is_public, matched_pattern). Inspects label, description, and hint."""
+    blob = " ".join((seed.task_label or "", seed.task_description or "", seed.dataset_hint or ""))
+    for pat in _NON_PUBLIC_PATTERNS:
+        m = pat.search(blob)
+        if m:
+            return False, m.group(0)
+    return True, None
 
 
 def _fallback_seeds(domain_input: str) -> list[TaskSeed]:
@@ -258,7 +323,37 @@ class TaskSeedGenerator:
                 seen.add(tid)
                 t.task_id = tid
                 deduped.append(t)
-            return deduped[:10]
+
+            # Drop seeds whose data is clearly non-public despite the prompt.
+            public_only: list[TaskSeed] = []
+            for t in deduped:
+                ok, hit = _seed_uses_public_data(t)
+                if ok:
+                    public_only.append(t)
+                else:
+                    logger.warning(
+                        "TaskSeedGenerator: dropped non-public seed "
+                        "task_id=%r (matched %r)",
+                        t.task_id, hit,
+                    )
+
+            if not public_only:
+                logger.warning(
+                    "TaskSeedGenerator: every LLM seed referenced "
+                    "non-public data — using fallback for domain=%r",
+                    domain_input,
+                )
+                return _fallback_seeds(domain_input)
+
+            # If too few seeds survived, top up from the generic fallback so
+            # the user still gets coverage across the three metric families.
+            if len(public_only) < 3:
+                existing_ids = {s.task_id for s in public_only}
+                for fb in _fallback_seeds(domain_input):
+                    if fb.task_id not in existing_ids:
+                        public_only.append(fb)
+
+            return public_only[:10]
         except Exception as exc:
             logger.warning(
                 "TaskSeedGenerator: LLM call failed (%s) — using fallback", exc
