@@ -625,7 +625,18 @@ def _readme(candidate: ComposedCandidate) -> str:
             f"        | Task modality | {candidate.outcome_task_modality or 'n/a'} |\n"
             f"        | Metric family | {candidate.outcome_family} |\n"
         )
-    return textwrap.dedent(
+    cred_banner = ""
+    if candidate.requires_credentialing:
+        note = candidate.credentialing_note or "Credentialed access required"
+        cred_banner = textwrap.dedent(
+            f"""
+            > ⚠ **Credentialed data**: {note}.
+            > This candidate is NOT runnable on Colab without completing the
+            > access process for the underlying dataset. Verify approval
+            > before flipping `SMOKE = False`.
+            """
+        ).strip() + "\n\n"
+    return cred_banner + textwrap.dedent(
         f"""
         # Development Pack: {candidate.candidate_id} (LLM training)
 

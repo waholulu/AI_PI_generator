@@ -316,6 +316,19 @@ def _parse_args():
             "colab_t4 (default), colab_a100, local_gpu. Ignored by spatial templates."
         ),
     )
+    parser.add_argument(
+        "--allow-credentialed-data",
+        dest="allow_credentialed_data",
+        action="store_true",
+        default=False,
+        help=(
+            "Opt in to candidates backed by credentialed / IRB-gated datasets "
+            "(MIMIC, UK Biobank, i2b2, etc.). Default off: pipeline only "
+            "proposes Colab-runnable, no-sign-up data. Use only if you "
+            "already have access. Also settable via "
+            "AUTOPI_ALLOW_CREDENTIALED_DATA=1."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -361,6 +374,16 @@ def main():
 
     graph = orchestrator.build_orchestrator()
 
+    allow_credentialed = bool(args.allow_credentialed_data) or os.getenv(
+        "AUTOPI_ALLOW_CREDENTIALED_DATA", "0"
+    ).strip().lower() in ("1", "true", "yes")
+    if allow_credentialed:
+        _log(
+            "已启用 --allow-credentialed-data：候选可能包含 MIMIC / UK Biobank "
+            "等需要资质审核的数据集，请确保已获取访问权限。",
+            level="WARNING",
+        )
+
     initial_state = {
         "domain_input": domain_input,
         "execution_status": "starting",
@@ -370,6 +393,7 @@ def main():
         "skip_reflection": args.skip_reflection,
         "template_id": args.template_id,
         "runtime_tier": args.runtime_tier,
+        "allow_credentialed_data": allow_credentialed,
     }
     if args.user_topic:
         import os as _os

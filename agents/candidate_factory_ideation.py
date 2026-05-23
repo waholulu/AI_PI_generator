@@ -196,6 +196,19 @@ def _format_training_card(candidate, gate_status: dict | None = None) -> dict:
         f"Unit: training_run."
     )
 
+    # Credentialing banner — when the user opted into MIMIC/UKB/i2b2-style
+    # data, every affected candidate must surface the access requirement
+    # so the user doesn't pick one expecting Colab-runnable speed.
+    if getattr(candidate, "requires_credentialing", False):
+        note = getattr(candidate, "credentialing_note", None) or "Credentialed access required"
+        display_title = f"[⚠ Credentialing required] {display_title}"
+        execution_summary = f"⚠ {note}. " + execution_summary
+        rationale = (
+            f"{rationale} "
+            f"Access requirement: {note} — this is NOT a Colab-runnable "
+            f"candidate without completed access approval."
+        )
+
     return {
         "display_title": display_title,
         "research_question": research_question,
@@ -407,6 +420,8 @@ def _card_to_screening_entry(card: dict) -> dict:
         "outcome_task_modality": raw.get("outcome_task_modality"),
         "outcome_task_dataset_hint": raw.get("outcome_task_dataset_hint"),
         "outcome_task_domain_input": raw.get("outcome_task_domain_input"),
+        "requires_credentialing": bool(raw.get("requires_credentialing")),
+        "credentialing_note": raw.get("credentialing_note"),
         "join_plan": raw.get("join_plan", {}),
         "brief_rationale": brief_rationale,
         "technology_tags": card.get("technology_tags", []),
@@ -538,6 +553,7 @@ def run_candidate_factory_ideation(state: dict) -> dict:
             key for key, enabled in (state.get("technology_options") or {}).items() if bool(enabled)
         ],
         automation_risk_tolerance=state.get("automation_risk_tolerance", "low_medium"),
+        allow_credentialed_data=bool(state.get("allow_credentialed_data", False)),
     )
     candidates = compose_candidates(req)
 

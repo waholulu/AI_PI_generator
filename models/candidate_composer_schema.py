@@ -15,6 +15,12 @@ class ComposeRequest(BaseModel):
     no_manual_download: bool = True
     preferred_technology: list[str] = Field(default_factory=list)
     automation_risk_tolerance: Literal["low_only", "low_medium", "experimental"] = "low_medium"
+    # When True, the LLM task-seed generator may propose tasks backed by
+    # credentialed datasets (MIMIC, UK Biobank, i2b2, …). Candidates that
+    # rely on such data are labelled `requires_credentialing=True` instead
+    # of being filtered out. Default False preserves the Colab-runnable,
+    # no-sign-up promise.
+    allow_credentialed_data: bool = False
 
 
 class ComposedCandidate(BaseModel):
@@ -49,3 +55,8 @@ class ComposedCandidate(BaseModel):
     outcome_task_modality: str | None = None
     outcome_task_dataset_hint: str | None = None
     outcome_task_domain_input: str | None = None
+    # Set when the seed references a credentialed dataset (MIMIC, UKB, i2b2,
+    # …) and `allow_credentialed_data` opt-in was enabled. UI shows a
+    # warning banner and the dev pack includes access-request instructions.
+    requires_credentialing: bool = False
+    credentialing_note: str | None = None

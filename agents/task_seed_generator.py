@@ -50,6 +50,23 @@ Modality = Literal[
 class TaskSeed(BaseModel):
     """One concrete supervised-learning task derived from a domain description."""
 
+    requires_credentialing: bool = Field(
+        default=False,
+        description=(
+            "Set True when the proposed dataset requires sign-up, IRB, DUA, "
+            "or paid licence (MIMIC, UK Biobank, i2b2, EHR data, …). Only "
+            "non-False values are allowed when the user has opted in via "
+            "--allow-credentialed-data."
+        ),
+    )
+    credentialing_note: str = Field(
+        default="",
+        description=(
+            "When requires_credentialing is True, a one-line summary of the "
+            "access process (e.g. 'PhysioNet credentialed access + CITI "
+            "training', 'UK Biobank application via AMS portal')."
+        ),
+    )
     task_id: str = Field(
         description=(
             "Short snake_case identifier, max 40 chars. Must be unique within "
@@ -143,6 +160,33 @@ Other rules:
 - Be concise. Each task_description is one or two sentences max.
 - task_id is snake_case, 40 chars max, unique.
 """
+
+# Opt-in addendum appended to the system prompt when the user has set
+# --allow-credentialed-data. Relaxes the hard ban on PhysioNet / UKB / i2b2
+# style datasets and instead asks the LLM to mark each such task with
+# `requires_credentialing: true` plus a one-line `credentialing_note` so
+# the user knows what access process is required.
+_CREDENTIALED_OPT_IN_ADDENDUM = """\
+
+OPT-IN OVERRIDE (the user has confirmed they have access):
+- The hard data-access constraint above is RELAXED. You MAY propose tasks
+  backed by credentialed / gated biomedical datasets when they fit the
+  domain — e.g. MIMIC-III/IV (PhysioNet), eICU, i2b2 / n2c2, UK Biobank,
+  All of Us, ADNI. These are the dominant benchmarks in top venues
+  (NEJM, Lancet Digital Health, JAMIA, Nature Medicine), so prefer them
+  over weaker public proxies when the research question would clearly
+  benefit.
+- For every such task, you MUST set `requires_credentialing: true` and
+  fill `credentialing_note` with the access process in <=120 chars
+  (examples: "PhysioNet credentialed access + CITI training",
+  "UK Biobank application via Access Management System",
+  "n2c2 DUA via Harvard DBMI"). Tasks that omit this signalling will be
+  rejected downstream.
+- You may still propose public-data tasks alongside credentialed ones —
+  diversity is preferred. Public-only tasks leave `requires_credentialing`
+  at False.
+"""
+
 
 _USER_PROMPT = """\
 Research domain (free text):
@@ -266,10 +310,14 @@ class TaskSeedGenerator:
     deterministic.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, allow_credentialed_data: bool = False) -> None:
         self._enabled: bool = os.getenv(
             "LLM_DOMAIN_TASK_GENERATION_ENABLED", "true"
         ).lower() not in ("false", "0", "no")
+        # CLI flag wins; env var is a fallback for non-CLI callers.
+        self._allow_credentialed: bool = bool(allow_credentialed_data) or os.getenv(
+            "AUTOPI_ALLOW_CREDENTIALED_DATA", "0"
+        ).strip().lower() in ("1", "true", "yes")
         model_name = os.getenv(
             "LLM_DOMAIN_TASK_MODEL",
             os.getenv("GEMINI_FAST_MODEL", "gemini-2.0-flash-lite"),
@@ -302,7 +350,10 @@ class TaskSeedGenerator:
 
         try:
             structured = self._llm.with_structured_output(TaskSeedPlan)
-            prompt = _SYSTEM_PROMPT + "\n\n" + _USER_PROMPT.format(
+            system = _SYSTEM_PROMPT + (
+                _CREDENTIALED_OPT_IN_ADDENDUM if self._allow_credentialed else ""
+            )
+            prompt = system + "\n\n" + _USER_PROMPT.format(
                 domain_input=domain_input.strip(),
                 extra_context=extra_context.strip() or "(none)",
             )
@@ -324,20 +375,36 @@ class TaskSeedGenerator:
                 t.task_id = tid
                 deduped.append(t)
 
-            # Drop seeds whose data is clearly non-public despite the prompt.
-            public_only: list[TaskSeed] = []
+            # Inspect every seed against the denylist. Strict mode drops
+            # matches; opt-in mode labels them so the UI / dev pack can
+            # surface the credentialing step.
+            kept: list[TaskSeed] = []
             for t in deduped:
                 ok, hit = _seed_uses_public_data(t)
                 if ok:
-                    public_only.append(t)
-                else:
-                    logger.warning(
-                        "TaskSeedGenerator: dropped non-public seed "
+                    kept.append(t)
+                    continue
+                if self._allow_credentialed:
+                    t.requires_credentialing = True
+                    if not t.credentialing_note:
+                        t.credentialing_note = (
+                            f"Credentialed access required (matched: {hit})"
+                        )
+                    logger.info(
+                        "TaskSeedGenerator: labelled credentialed seed "
                         "task_id=%r (matched %r)",
                         t.task_id, hit,
                     )
+                    kept.append(t)
+                else:
+                    logger.warning(
+                        "TaskSeedGenerator: dropped non-public seed "
+                        "task_id=%r (matched %r) — set "
+                        "--allow-credentialed-data to keep these",
+                        t.task_id, hit,
+                    )
 
-            if not public_only:
+            if not kept:
                 logger.warning(
                     "TaskSeedGenerator: every LLM seed referenced "
                     "non-public data — using fallback for domain=%r",
@@ -347,13 +414,13 @@ class TaskSeedGenerator:
 
             # If too few seeds survived, top up from the generic fallback so
             # the user still gets coverage across the three metric families.
-            if len(public_only) < 3:
-                existing_ids = {s.task_id for s in public_only}
+            if len(kept) < 3:
+                existing_ids = {s.task_id for s in kept}
                 for fb in _fallback_seeds(domain_input):
                     if fb.task_id not in existing_ids:
-                        public_only.append(fb)
+                        kept.append(fb)
 
-            return public_only[:10]
+            return kept[:10]
         except Exception as exc:
             logger.warning(
                 "TaskSeedGenerator: LLM call failed (%s) — using fallback", exc

@@ -288,6 +288,99 @@ def test_expand_matrix_round_robin_covers_first_axis_levels():
 # ── Domain-grounded task seeding (v1.1) ──────────────────────────────────────
 
 
+def test_compose_request_accepts_credentialed_flag_default_false():
+    """ComposeRequest exposes the opt-in field and defaults it off."""
+    req = ComposeRequest(template_id=TEMPLATE_ID, domain_input="x")
+    assert req.allow_credentialed_data is False
+
+
+def test_candidate_carries_credentialing_fields_default_false():
+    """Public candidates produced via the fallback path must not be
+    mistakenly labelled as credentialed."""
+    cands = compose_candidates(
+        ComposeRequest(template_id=TEMPLATE_ID, domain_input="x", max_candidates=4)
+    )
+    assert all(c.requires_credentialing is False for c in cands)
+    assert all(c.credentialing_note is None for c in cands)
+
+
+def test_task_seed_generator_opt_in_labels_instead_of_drops(monkeypatch):
+    """When allow_credentialed_data is on, the generator must keep MIMIC /
+    UKB / i2b2 seeds and mark them requires_credentialing=True instead of
+    dropping them."""
+    from agents.task_seed_generator import TaskSeed, TaskSeedGenerator, TaskSeedPlan
+
+    forbidden_seeds = [
+        TaskSeed(
+            task_id="mimic_summ",
+            task_label="MIMIC Discharge Summary Summarization",
+            task_description="Summarize MIMIC-III discharge summaries.",
+            modality="summarization",
+            metric_family="generation_quality",
+            dataset_hint="MIMIC-III via PhysioNet",
+        ),
+        TaskSeed(
+            task_id="reddit_health_cls",
+            task_label="Health-Forum Symptom Classification",
+            task_description="Classify symptoms in public r/AskDocs posts.",
+            modality="text_classification",
+            metric_family="task_accuracy",
+            dataset_hint="pushshift r/AskDocs dump",
+        ),
+    ]
+
+    class _FakeLLM:
+        def with_structured_output(self, _schema):
+            return self
+        def invoke(self, _prompt):
+            return TaskSeedPlan(tasks=forbidden_seeds)
+
+    gen = TaskSeedGenerator(allow_credentialed_data=True)
+    gen._enabled = True
+    gen._llm = _FakeLLM()
+
+    out = gen.generate("Clinical NLP on discharge summaries")
+    by_id = {s.task_id: s for s in out}
+    assert "mimic_summ" in by_id, "MIMIC seed must be retained when opted in"
+    assert by_id["mimic_summ"].requires_credentialing is True
+    assert by_id["mimic_summ"].credentialing_note  # non-empty
+    assert "reddit_health_cls" in by_id, "Public seed must coexist with credentialed"
+    assert by_id["reddit_health_cls"].requires_credentialing is False
+
+
+def test_task_seed_generator_strict_still_drops_when_opt_out(monkeypatch):
+    """Default mode (allow_credentialed_data=False) must keep dropping
+    MIMIC-style seeds even when the LLM proposes them."""
+    from agents.task_seed_generator import TaskSeed, TaskSeedGenerator, TaskSeedPlan
+
+    forbidden = [
+        TaskSeed(
+            task_id="mimic_summ", task_label="MIMIC Discharge Summary Summarization",
+            task_description="Summarize MIMIC-III discharge summaries.",
+            modality="summarization", metric_family="generation_quality",
+            dataset_hint="MIMIC-III via PhysioNet",
+        ),
+    ]
+
+    class _FakeLLM:
+        def with_structured_output(self, _schema):
+            return self
+        def invoke(self, _prompt):
+            return TaskSeedPlan(tasks=forbidden)
+
+    # Make sure the env-var fallback doesn't sneak the opt-in back on.
+    monkeypatch.delenv("AUTOPI_ALLOW_CREDENTIALED_DATA", raising=False)
+    gen = TaskSeedGenerator(allow_credentialed_data=False)
+    gen._enabled = True
+    gen._llm = _FakeLLM()
+
+    out = gen.generate("Clinical NLP")
+    assert all(s.task_id != "mimic_summ" for s in out), (
+        "strict mode must drop MIMIC seeds; got: "
+        + ", ".join(s.task_id for s in out)
+    )
+
+
 def test_seed_post_filter_rejects_non_public_data():
     """The denylist must catch clinical notes, EHR, MIMIC, and similar
     credentialed sources even when the LLM ignores the prompt's hard

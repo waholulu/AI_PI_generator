@@ -161,6 +161,8 @@ def _build_candidate(
         outcome_task_modality=task_seed.modality if task_seed else None,
         outcome_task_dataset_hint=task_seed.dataset_hint if task_seed else None,
         outcome_task_domain_input=req.domain_input if task_seed else None,
+        requires_credentialing=bool(task_seed and task_seed.requires_credentialing),
+        credentialing_note=(task_seed.credentialing_note or None) if task_seed else None,
     )
 
 
@@ -186,7 +188,9 @@ def _compose_training_research(
     outcomes = template.get("allowed_outcome_families", {})
     methods = template.get("allowed_methods", {})
 
-    seeds = TaskSeedGenerator().generate(req.domain_input or "")
+    seeds = TaskSeedGenerator(
+        allow_credentialed_data=getattr(req, "allow_credentialed_data", False)
+    ).generate(req.domain_input or "")
     # Drop seeds whose metric_family isn't declared by the template — keeps
     # registry lookups honest.
     seeds = [s for s in seeds if s.metric_family in outcomes]
