@@ -535,6 +535,8 @@ def _normalize_candidate_card(candidate: dict[str, Any], fallback_idx: int) -> d
         },
         "gate_summary": gate_summary,
         "development_pack_status": candidate.get("development_pack_status", "not_generated"),
+        "requires_credentialing": bool(candidate.get("requires_credentialing", False)),
+        "credentialing_note": candidate.get("credentialing_note"),
         "_raw": candidate.get("_raw") or candidate,
     }
 
@@ -615,6 +617,8 @@ def _build_candidate_detail(candidate: dict[str, Any], fallback_idx: int) -> dic
             "required_secrets": card["required_secrets"],
             "policy_constraints": policy_constraints,
         },
+        "requires_credentialing": card.get("requires_credentialing", False),
+        "credentialing_note": card.get("credentialing_note"),
         "gate_status": raw.get("gate_status", {}),
         "repair_history": raw.get("repair_history", []),
     }

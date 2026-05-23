@@ -987,6 +987,11 @@ function renderCandidateReviewTab(el, run) {
                 ✗ 不可执行：${escHtml(blockedTip || '当前模板约束下无法自动运行，仅作诊断用途')}
                </div>`
             : '';
+          const credBannerHtml = c.requires_credentialing
+            ? `<div style="margin-top:6px;padding:6px 10px;background:#3b2a11;border:1px solid #b45309;border-radius:6px;font-size:.78rem;color:#fbbf24">
+                ⚠ 需要数据资质审核：${escHtml(c.credentialing_note || 'credentialed access required')}。该候选无法直接在 Colab 上运行，请先完成访问申请。
+               </div>`
+            : '';
           // Two-layer display: research-question title (Layer 1) + folded
           // execution_summary (Layer 2) hidden behind a <details> toggle.
           const display = c.display || {};
@@ -1011,6 +1016,7 @@ function renderCandidateReviewTab(el, run) {
           <div class="candidate-card" style="${isBlocked ? 'opacity:.65;border-color:#7f1d1d' : ''}">
             <div style="display:flex;gap:4px;flex-wrap:wrap">${statusBadge(c.readiness || c.shortlist_status)} ${riskBadge(c.automation_risk)} ${gateHtml}</div>
             ${isTraining ? '<span class="badge" style="background:#1e2d4a;color:#60a5fa;font-size:.68rem">LLM Training</span>' : ''}
+            ${c.requires_credentialing ? '<span class="badge" style="background:#3b2a11;color:#fbbf24;font-size:.68rem">Credentialing required</span>' : ''}
             <div class="candidate-title">${escHtml(displayTitle)}</div>
             ${displayQuestion ? `<div style="font-size:.8rem;color:#94a3b8">${escHtml(displayQuestion)}</div>` : ''}
             ${displayRationale ? `<div style="font-size:.78rem;color:#cbd5e1">${escHtml(displayRationale)}</div>` : ''}
@@ -1032,6 +1038,7 @@ function renderCandidateReviewTab(el, run) {
               <span>ID: ${Math.round((c.scores?.identification_quality||0)*100)}</span>
             </div>
             ${secretsNoticePaid}
+            ${credBannerHtml}
             ${blockedBannerHtml}
             ${tagsHtml ? `<div style="margin-top:2px">${tagsHtml}</div>` : ''}
             <div style="display:flex;gap:4px;align-items:center;margin-top:4px">${dpHtml}</div>
@@ -1092,9 +1099,14 @@ function renderCandidateDetailTab(el, run) {
       ? `<div class="warn-box-orange">⚠ Raw image storage is disabled. Only extracted numeric features may be stored.</div>`
       : '';
     const policyText = (c.technology?.policy_constraints||[]).filter(p => p !== 'no_raw_image_storage').join(', ') || 'none';
+    const credBannerDetail = c.requires_credentialing
+      ? `<div class="warn-box-orange" style="margin-bottom:10px">⚠ <strong>需要数据资质审核</strong>：${escHtml(c.credentialing_note || 'credentialed access required')}。该候选无法直接在 Colab 上运行，请先完成访问申请（PhysioNet CITI、UK Biobank AMS、n2c2 DUA 等）。</div>`
+      : '';
     el.innerHTML = `
       <h3 style="margin-bottom:8px">${escHtml(c.title)}</h3>
       ${isTrainingDetail ? '<span class="badge" style="background:#1e2d4a;color:#60a5fa;font-size:.72rem;margin-bottom:8px;display:inline-block">LLM Training Research</span>' : ''}
+      ${c.requires_credentialing ? '<span class="badge" style="background:#3b2a11;color:#fbbf24;font-size:.72rem;margin-bottom:8px;display:inline-block;margin-left:6px">⚠ Credentialing required</span>' : ''}
+      ${credBannerDetail}
       <div style="font-size:.85rem;color:#94a3b8;margin-bottom:12px">${escHtml(c.research_question)}</div>
       <table><thead><tr><th>Role</th><th>Variable</th><th>Source</th><th>Unit</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>
       <div class="status-card" style="margin-top:12px">
@@ -1510,6 +1522,8 @@ async function renderHitlPicker(run) {
         _candidate_id: c.candidate_id || c.topic_id || '',
         _display: c.display || {},
         _unit_of_analysis: c.unit_of_analysis || '',
+        _requires_credentialing: !!c.requires_credentialing,
+        _credentialing_note: c.credentialing_note || '',
       }));
       // Approval picker shows Ready + Needs Review only.  Blocked
       // candidates are diagnostic-only and hidden here.
@@ -1592,6 +1606,14 @@ async function renderHitlPicker(run) {
       ...infoReasons.map(r => `<div class="reason-info">ℹ ${escHtml(r)}</div>`),
     ].join('');
 
+    const credBadge = idea._requires_credentialing
+      ? '<span class="badge" style="background:#3b2a11;color:#fbbf24;font-size:.68rem">⚠ Credentialing required</span>'
+      : '';
+    const credNoteHtml = idea._requires_credentialing
+      ? `<div style="margin-top:4px;padding:6px 8px;background:#3b2a11;border:1px solid #b45309;border-radius:6px;font-size:.78rem;color:#fbbf24">
+          ⚠ 需要数据资质审核：${escHtml(idea._credentialing_note || 'credentialed access required')}。选中后请先完成访问申请。
+         </div>`
+      : '';
     return `
       <label class="hitl-card" style="display:block;padding:12px;margin-bottom:10px;border:1px solid ${borderColor};border-radius:8px;cursor:pointer">
         <div style="display:flex;align-items:flex-start;gap:10px">
@@ -1599,10 +1621,12 @@ async function renderHitlPicker(run) {
           <div style="flex:1">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
               ${execBadge(execStatus)}
+              ${credBadge}
               <span style="font-weight:600;color:#e2e8f0">选题 ${i + 1}: ${escHtml(layer1Title)}</span>
             </div>
             ${researchQuestion ? `<div style="margin-top:4px;font-size:.82rem;color:#94a3b8">${escHtml(researchQuestion)}</div>` : ''}
             ${rationaleText ? `<div style="margin-top:4px;font-size:.82rem;color:#cbd5e1">${escHtml(rationaleText)}</div>` : ''}
+            ${credNoteHtml}
             <div style="margin-top:4px;font-size:.78rem;color:#64748b">${noveltyLabel}</div>
             <details style="margin-top:6px">
               <summary style="cursor:pointer;font-size:.78rem;color:#94a3b8">展开执行细节 (sources · method · grain)</summary>
