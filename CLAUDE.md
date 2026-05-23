@@ -237,25 +237,20 @@ See `.env.example` for the full list. Key variables:
 
 ## Testing
 
-Four test tiers run in CI order:
+Three tiers:
 
 | Tier | Command | Keys needed | In CI |
 |------|---------|-------------|-------|
-| Unit/mock | `uv run pytest tests/ -m "not live_openalex and not live_llm" -q` | none | ✓ |
+| Unit/mock | `uv run pytest -q` | none | ✓ |
 | Candidate factory eval | `uv run python scripts/eval_candidate_factory.py --check-thresholds` | none | ✓ |
-| Cloud smoke test | `uv run python scripts/cloud_smoke_test.py` | none (local server) | manual |
-| Live OpenAlex | `uv run pytest tests/test_field_scan_live.py -v` | OPENALEX_API_KEY | manual |
+| Live (manual) | `uv run pytest -m "live_openalex or live_llm"` | API keys | manual |
+
+`pyproject.toml` sets `addopts = "-m 'not slow and not live_openalex and not live_llm'"`
+so plain `pytest -q` excludes everything that needs secrets. Do NOT pass `-m` on the
+command line for the default run — it overrides the marker filter and pulls in slow
+tests. ~90s for the full offline suite.
 
 ```bash
-# Run all mock tests (no API keys required) — use uv run for correct venv
-uv run python -m pytest tests/ -m "not live_openalex and not live_llm" -q
-
-# Run only Module 1 upgrade tests
-uv run python -m pytest tests/test_topic_schema.py tests/test_settings_new_paths.py \
-  tests/test_rule_engine.py tests/test_budget_tracker.py tests/test_openalex_verifier.py \
-  tests/test_reflection_loop.py tests/test_ideation_v2.py tests/test_hitl_helpers_v2.py \
-  tests/test_integration_module1_v2.py -v
-
 # Candidate factory eval — enforces thresholds in CI; writes artifact to output/
 uv run python scripts/eval_candidate_factory.py \
   --template built_environment_health \
@@ -268,14 +263,12 @@ uv run python scripts/eval_candidate_factory.py \
 
 # Cloud smoke test (requires local API server on port 8000)
 uv run python scripts/cloud_smoke_test.py
-
-# Live tests (require API keys)
-uv run python -m pytest tests/test_field_scan_live.py -v   # Live OpenAlex test
 ```
 
 **Markers** (defined in `pyproject.toml`):
 - `live_openalex` — Requires `OPENALEX_API_KEY` and `OPENALEX_EMAIL`
 - `live_llm` — Requires `GEMINI_API_KEY`
+- `slow` — Heavy/full-pipeline tests excluded by default
 
 ### Module 1 Diagnostic Report
 

@@ -1,8 +1,10 @@
-"""Tests for agents/rule_engine.py — Day 2 TDD.
+"""Tests for agents/rule_engine.py.
 
-Each gate has >= 3 boundary cases.  All tests use real YAML configs
-(they must exist, verified by Day 1 tests).  No LLM calls.
+Each gate has >= 3 boundary cases.  All tests use real YAML configs.
+No LLM calls.
 """
+
+from pathlib import Path
 
 import pytest
 
@@ -295,3 +297,29 @@ class TestRunHardBlockers:
         results = engine.run_hard_blockers(t, ["NHGIS"])
         for r in results:
             assert r.refinable is False
+
+
+def test_g2_blocks_when_spatial_config_missing(monkeypatch):
+    missing = Path("/tmp/does-not-exist-spatial-units.yaml")
+    monkeypatch.setattr("agents.rule_engine.spatial_units_path", lambda: str(missing))
+
+    engine = RuleEngine()
+    result = engine.check_G2_scale_alignment(make_topic())
+
+    assert result.passed is False
+    assert result.refinable is False
+    assert "config_unavailable_blocking" in result.reason
+
+
+def test_g3_role_based_subchecks_pass_for_osmnx_places_stack() -> None:
+    engine = RuleEngine()
+    result = engine.check_G3_role_based_data_availability(
+        exposure_family="street_connectivity",
+        outcome_family="physical_inactivity",
+        declared_sources=["OSMnx_OpenStreetMap", "CDC_PLACES", "TIGER_Lines"],
+    )
+
+    assert result.gate_id == "G3"
+    assert result.details["subchecks"]["source_exists"] == "pass"
+    assert result.details["subchecks"]["role_coverage"] == "pass"
+    assert result.details["subchecks"]["machine_readable"] == "pass"

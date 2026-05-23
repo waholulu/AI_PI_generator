@@ -17,7 +17,7 @@ def test_field_scan_live_uses_openalex(tmp_path) -> None:
     - 需要 .env 中配置 OPENALEX_API_KEY / OPENALEX_EMAIL
     - 需要安装 pyalex 依赖
     """
-    # 从项目根目录加载 .env（与 test_api_keys 的行为一致）
+    # 从项目根目录加载 .env
     env_path = Path(__file__).resolve().parent.parent / ".env"
     load_dotenv(env_path)
 
