@@ -12,7 +12,7 @@ At its core is the **Candidate Factory** — a deterministic pipeline that turns
 | Mode | What it does | LLM keys required |
 |------|-------------|-------------------|
 | **Mode 1: Candidate Factory** | Template → 20–40 ranked research designs with development packs | None (deterministic) |
-| **Mode 2: Legacy LLM Ideation** | LLM generates ideas → gates → HITL → literature | GEMINI_API_KEY |
+| **Mode 2: Legacy LLM Ideation** | LLM generates ideas → gates → HITL → literature | DEEPSEEK_API_KEY / LLM_API_KEY |
 
 Mode 1 is the recommended starting point. Mode 2 extends the pipeline with full literature harvesting and draft writing.
 
@@ -40,7 +40,7 @@ python scripts/e2e_acceptance_test.py
 docker build -t ai-pi-generator .
 ```
 
-Copy `.env.example` to `.env`. `GEMINI_API_KEY` is only required for Mode 2.
+Copy `.env.example` to `.env`. `DEEPSEEK_API_KEY` is only required for Mode 2.
 
 ---
 
@@ -122,7 +122,10 @@ Field scanner is skipped in Level 1 mode (`--user-topic path.yaml`).
 
 | Variable | Purpose |
 |----------|---------|
-| `GEMINI_API_KEY` | Google AI API key (required for full pipeline) |
+| `LLM_PROVIDER` | LLM provider selector (default: `deepseek`) |
+| `DEEPSEEK_API_KEY` | DeepSeek API key (required for full pipeline by default) |
+| `LLM_FAST_MODEL` | Fast model name (default: `deepseek-v4-pro`) |
+| `LLM_PRO_MODEL` | Pro model name (default: `deepseek-v4-pro`) |
 | `OPENALEX_EMAIL` | OpenAlex polite pool email |
 | `AUTOPI_DATA_ROOT` | Output root directory (default: `.`) |
 | `DATABASE_URL` | PostgreSQL URL for cloud checkpointing |

@@ -1,11 +1,11 @@
 """
-KeywordPlanner: uses Gemini fast to reformulate broad domain descriptions
+KeywordPlanner: uses the configured fast LLM to reformulate broad domain descriptions
 into structured, multi-query search plans for OpenAlex.
 
 Environment variables (all optional, with safe defaults):
   OPENALEX_QUERY_REWRITE_ENABLED   – "true" (default) / "false" to bypass LLM
   OPENALEX_QUERY_REWRITE_MAX_QUERIES – max queries to include in the pool (default 10)
-  OPENALEX_QUERY_REWRITE_MODEL     – model name override (default: GEMINI_FAST_MODEL)
+  OPENALEX_QUERY_REWRITE_MODEL     – model name override (default: LLM_FAST_MODEL)
 """
 
 from __future__ import annotations
@@ -15,14 +15,10 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
+from agents.llm import create_chat_model, get_model_name, invoke_structured
 from agents.logging_config import get_logger
 
 logger = get_logger(__name__)
-
-try:
-    from langchain_google_genai import ChatGoogleGenerativeAI
-except ImportError:  # pragma: no cover
-    ChatGoogleGenerativeAI = None  # type: ignore[assignment, misc]
 
 
 # ---------------------------------------------------------------------------
@@ -99,12 +95,12 @@ class KeywordPlanner:
 
         model_name = os.getenv(
             "OPENALEX_QUERY_REWRITE_MODEL",
-            os.getenv("GEMINI_FAST_MODEL", "gemini-2.0-flash-lite"),
+            get_model_name("fast"),
         )
         self._llm: Optional[Any] = None
-        if self._enabled and ChatGoogleGenerativeAI is not None:
+        if self._enabled:
             try:
-                self._llm = ChatGoogleGenerativeAI(model=model_name, temperature=0.3)
+                self._llm = create_chat_model("fast", model=model_name, temperature=0.3)
             except Exception:
                 self._enabled = False
 
@@ -139,12 +135,11 @@ class KeywordPlanner:
     # ------------------------------------------------------------------
 
     def _call_llm(self, domain_input: str, extra_context: str) -> Dict[str, Any]:
-        structured_llm = self._llm.with_structured_output(KeywordPlan)  # type: ignore[union-attr]
         prompt = _SYSTEM_PROMPT + "\n\n" + _USER_PROMPT.format(
             domain_input=domain_input,
             extra_context=extra_context or "(none)",
         )
-        result: KeywordPlan = structured_llm.invoke(prompt)
+        result: KeywordPlan = invoke_structured(self._llm, KeywordPlan, prompt)  # type: ignore[arg-type]
 
         # Collect and deduplicate queries
         seen: set[str] = set()

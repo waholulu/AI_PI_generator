@@ -1,9 +1,9 @@
 import json
 import os
 from langchain_core.prompts import PromptTemplate
-from langchain_google_genai import ChatGoogleGenerativeAI
 
 from agents import settings
+from agents.llm import create_chat_model
 from agents.logging_config import get_logger
 from agents.orchestrator import ResearchState
 from models.research_plan_schema import ResearchPlan
@@ -14,9 +14,8 @@ logger = get_logger(__name__)
 class DrafterAgent:
     def __init__(self):
         self.output_md = settings.draft_path()
-        model = os.getenv("GEMINI_PRO_MODEL", "gemini-2.5-pro")
         try:
-            self.llm = ChatGoogleGenerativeAI(model=model, temperature=0.1)
+            self.llm = create_chat_model("pro", temperature=0.1)
         except Exception as exc:
             logger.warning("LLM unavailable for drafter; fallback memo will be used: %s", exc)
             self.llm = None

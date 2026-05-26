@@ -6,10 +6,10 @@ from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any
 from pydantic import BaseModel, Field
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_google_genai import ChatGoogleGenerativeAI
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from agents import settings
+from agents.llm import create_chat_model, invoke_structured
 from agents.logging_config import get_logger
 from agents.memory_retriever import MemoryRetriever
 from agents.orchestrator import ResearchState
@@ -171,10 +171,8 @@ class IdeationAgentV0:
                 "IdeationAgentV0 ignoring unsupported kwargs: %s",
                 sorted(kwargs.keys()),
             )
-        fast_model = os.getenv("GEMINI_FAST_MODEL", "gemini-2.0-flash-lite")
-        pro_model = os.getenv("GEMINI_PRO_MODEL", "gemini-2.5-pro")
-        self.fast_llm = ChatGoogleGenerativeAI(model=fast_model, temperature=0.7)
-        self.pro_llm = ChatGoogleGenerativeAI(model=pro_model, temperature=0.2)
+        self.fast_llm = create_chat_model("fast", temperature=0.7)
+        self.pro_llm = create_chat_model("pro", temperature=0.2)
         self.memory = MemoryRetriever()
         self.keyword_planner = KeywordPlanner()
         self._degraded_nodes: list[str] = []
@@ -186,7 +184,6 @@ class IdeationAgentV0:
 
         try:
             if self.fast_llm:
-                structured_llm = self.fast_llm.with_structured_output(NoveltyQueryPlan)
                 prompt = (
                     "Generate exactly 2-3 precise OpenAlex search queries for novelty check.\n"
                     "Each query should be concise and targeted to detect prior near-identical studies.\n"
@@ -195,7 +192,7 @@ class IdeationAgentV0:
                     f"Idea title: {title}\n"
                     f"Idea summary: {base}\n"
                 )
-                result = structured_llm.invoke(prompt)
+                result = invoke_structured(self.fast_llm, NoveltyQueryPlan, prompt)
                 queries = [q.strip() for q in result.queries if q.strip()]
                 if queries:
                     return queries[:3]
@@ -261,7 +258,6 @@ class IdeationAgentV0:
         assessment: NoveltyAssessment | None = None
         try:
             if self.pro_llm:
-                structured_llm = self.pro_llm.with_structured_output(NoveltyAssessment)
                 prompt = (
                     "You are evaluating novelty risk for a research idea.\n"
                     "Compare the idea with each candidate paper (title + abstract) and judge substantive overlap.\n"
@@ -270,7 +266,7 @@ class IdeationAgentV0:
                     f"Idea rationale: {candidate.get('brief_rationale', '')}\n"
                     f"Candidate papers: {json.dumps(paper_payload, ensure_ascii=False)}\n"
                 )
-                assessment = structured_llm.invoke(prompt)
+                assessment = invoke_structured(self.pro_llm, NoveltyAssessment, prompt)
         except Exception as exc:
             logger.warning("Novelty assessment LLM failed for '%s': %s", title, exc)
 
@@ -367,11 +363,10 @@ class IdeationAgentV0:
         def _generate_light_batch():
             if not self.fast_llm:
                 raise ValueError("fast_llm not initialized")
-            structured_llm = self.fast_llm.with_structured_output(LightCandidateTopicsList)
             prompt_value = generation_prompt.invoke(
                 {"domain": domain, "past_ideas": past_context, "field_scan_context": field_scan_context}
             )
-            result = structured_llm.invoke(prompt_value)
+            result = invoke_structured(self.fast_llm, LightCandidateTopicsList, prompt_value.to_string())
             return [c.model_dump() for c in result.candidates]
 
         target_candidates = int(os.getenv("MIN_CANDIDATE_TOPICS", "30"))
@@ -450,14 +445,13 @@ class IdeationAgentV0:
                 ),
             ])
 
-            structured_llm = scoring_llm.with_structured_output(TopicScoresList)
             prompt_value = scoring_prompt.invoke({
                 "domain": domain,
                 "past_ideas": past_context,
                 "field_scan_context": field_scan_context,
                 "candidates_json": json.dumps(light_candidates, ensure_ascii=False),
             })
-            result = structured_llm.invoke(prompt_value)
+            result = invoke_structured(scoring_llm, TopicScoresList, prompt_value.to_string())
             scores_by_title = {s.title.strip().lower(): s for s in result.scores}
 
             scored_all = []
@@ -524,7 +518,7 @@ class IdeationAgentV0:
         @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
         def _enrich_single(candidate: Dict[str, Any]) -> Dict[str, Any]:
             enrichment_llm = self.pro_llm or self.fast_llm
-            if not isinstance(enrichment_llm, ChatGoogleGenerativeAI):
+            if not enrichment_llm:
                 return {
                     **candidate,
                     "impact_evidence": "High impact (offline fallback)",
@@ -541,14 +535,13 @@ class IdeationAgentV0:
                     },
                     "data_sources": [{"name": "US Census", "accessibility": "Public API"}],
                 }
-            structured_llm = enrichment_llm.with_structured_output(RawCandidateTopic)
             prompt_value = enrichment_prompt.invoke({
                 "domain": domain,
                 "field_scan_context": field_scan_context,
                 "title": candidate.get("title", ""),
                 "brief_rationale": candidate.get("brief_rationale", ""),
             })
-            result = structured_llm.invoke(prompt_value)
+            result = invoke_structured(enrichment_llm, RawCandidateTopic, prompt_value.to_string())
             enriched_fields = result.model_dump()
             return {**candidate, **enriched_fields}
 
@@ -710,24 +703,6 @@ class IdeationAgentV0:
         def generate_plan():
             if not self.pro_llm:
                 raise ValueError("LLM not initialized")
-            if not isinstance(self.pro_llm, ChatGoogleGenerativeAI):
-                title = top1.get("title", "Generated Topic")
-                self._degraded_nodes.append("ideation:plan_placeholder")
-                logger.warning("Pro LLM unavailable; research plan generated from placeholder template.")
-                return {
-                    "project_title": title,
-                    "study_type": "quantitative",
-                    "topic_screening": {"top_candidate_title": title},
-                    "research_questions": [f"RQ1: What drives outcomes for {title}?"],
-                    "hypotheses": ["H1: There is a measurable effect."],
-                    "unit_of_analysis": "units",
-                    "outcomes": [],
-                    "exposures": [],
-                    "keywords": [domain],
-                    "data_sources": [],
-                    "methodology": {"design": "placeholder"},
-                }
-            structured_llm = self.pro_llm.with_structured_output(ResearchPlanSchema)
             plan_prompt_cache_hours = float(os.getenv("PLAN_PROMPT_CACHE_HOURS", "24"))
             plan_cache_key = build_cache_key(
                 "ideation_research_plan",
@@ -737,13 +712,14 @@ class IdeationAgentV0:
             if isinstance(cached_plan, dict) and cached_plan:
                 return cached_plan
 
-            plan = structured_llm.invoke(
+            plan_prompt = (
                 "Design a comprehensive quantitative research plan based on the selected top candidates.\n\n"
                 "Primary selected topic (rank 1):\n"
                 + top1_context
                 + "\n\nAdditional ranked context (top 3 shortlist):\n"
                 + top3_context
             )
+            plan = invoke_structured(self.pro_llm, ResearchPlanSchema, plan_prompt)
             plan_data_cached = plan.model_dump()
             save_json_cache("research_plans", plan_cache_key, plan_data_cached)
             return plan_data_cached

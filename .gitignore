@@ -29,6 +29,7 @@ MANIFEST
 # Environment variables
 .env
 .env.*
+!.env.example
 
 # Local SQLite databases
 *.sqlite

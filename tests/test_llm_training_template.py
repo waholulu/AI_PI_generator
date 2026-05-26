@@ -289,7 +289,7 @@ def test_expand_matrix_round_robin_covers_first_axis_levels():
 
 
 def test_fallback_task_seeds_cover_three_metric_families():
-    """Without GEMINI_API_KEY the generator returns one task per metric family,
+    """Without an LLM API key the generator returns one task per metric family,
     so the pool stays large enough to review without an LLM."""
     from agents.task_seed_generator import _fallback_seeds
 

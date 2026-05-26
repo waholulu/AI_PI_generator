@@ -23,6 +23,11 @@ def _root() -> Path:
     return _base_root()
 
 
+def _path_str(path: Path) -> str:
+    """Return stable slash-separated paths for API payloads and tests."""
+    return path.as_posix()
+
+
 def current_run_scope() -> str | None:
     return _RUN_SCOPE_ID.get()
 
@@ -118,31 +123,31 @@ def repo_config_dir() -> Path:
 
 
 def reflection_config_path() -> str:
-    return str(repo_config_dir() / "reflection_config.yaml")
+    return _path_str(repo_config_dir() / "reflection_config.yaml")
 
 
 def gate_config_path() -> str:
-    return str(repo_config_dir() / "gate_config.yaml")
+    return _path_str(repo_config_dir() / "gate_config.yaml")
 
 
 def data_sources_yaml_path() -> str:
-    return str(repo_config_dir() / "data_sources.yaml")
+    return _path_str(repo_config_dir() / "data_sources.yaml")
 
 
 def skill_registry_path() -> str:
-    return str(repo_config_dir() / "skill_registry.yaml")
+    return _path_str(repo_config_dir() / "skill_registry.yaml")
 
 
 def spatial_units_path() -> str:
-    return str(repo_config_dir() / "spatial_units.yaml")
+    return _path_str(repo_config_dir() / "spatial_units.yaml")
 
 
 def refine_operations_path() -> str:
-    return str(repo_config_dir() / "refine_operations.yaml")
+    return _path_str(repo_config_dir() / "refine_operations.yaml")
 
 
 def tentative_pool_path() -> str:
-    return str(output_dir() / "tentative_pool.json")
+    return _path_str(output_dir() / "tentative_pool.json")
 
 
 def ideation_traces_dir() -> Path:
@@ -152,18 +157,18 @@ def ideation_traces_dir() -> Path:
 
 
 def ideation_run_summary_path() -> str:
-    return str(output_dir() / "ideation_run_summary.json")
+    return _path_str(output_dir() / "ideation_run_summary.json")
 
 
 # ── Specific file paths ──────────────────────────────────────────────
 
 # Output files
 def field_scan_path() -> str:
-    return str(output_dir() / "field_scan.json")
+    return _path_str(output_dir() / "field_scan.json")
 
 
 def topic_screening_path() -> str:
-    return str(output_dir() / "topic_screening.json")
+    return _path_str(output_dir() / "topic_screening.json")
 
 
 def ideas_graveyard_path(domain: str | None = None) -> str:
@@ -177,43 +182,43 @@ def ideas_graveyard_path(domain: str | None = None) -> str:
     if domain:
         import hashlib
         domain_key = hashlib.md5(domain.lower().strip().encode()).hexdigest()[:8]
-        return str(global_output_dir() / f"ideas_graveyard_{domain_key}.json")
+        return _path_str(global_output_dir() / f"ideas_graveyard_{domain_key}.json")
     # Legacy / fallback: global graveyard used when domain is unknown.
-    return str(global_output_dir() / "ideas_graveyard.json")
+    return _path_str(global_output_dir() / "ideas_graveyard.json")
 
 
 def topic_ranking_path() -> str:
-    return str(output_dir() / "topic_ranking.csv")
+    return _path_str(output_dir() / "topic_ranking.csv")
 
 
 def research_context_path() -> str:
-    return str(output_dir() / "research_context.json")
+    return _path_str(output_dir() / "research_context.json")
 
 
 def draft_path() -> str:
-    return str(output_dir() / "Draft_v1.md")
+    return _path_str(output_dir() / "Draft_v1.md")
 
 
 def research_memo_prompt_path() -> str:
-    return str(prompts_dir() / "research_memo_drafter.txt")
+    return _path_str(prompts_dir() / "research_memo_drafter.txt")
 
 
 def references_bib_path() -> str:
-    return str(output_dir() / "references.bib")
+    return _path_str(output_dir() / "references.bib")
 
 
 def run_index_path() -> str:
-    return str(output_dir() / "run_index.json")
+    return _path_str(output_dir() / "run_index.json")
 
 
 def checkpoints_db_path() -> str:
     # Keep checkpoints global for stable graph compilation in API process.
-    return str(global_output_dir() / "checkpoints.sqlite")
+    return _path_str(global_output_dir() / "checkpoints.sqlite")
 
 
 # Config files
 def research_plan_path() -> str:
-    return str(config_dir() / "research_plan.json")
+    return _path_str(config_dir() / "research_plan.json")
 
 
 # Data files
@@ -236,7 +241,7 @@ def literature_pdfs_dir() -> Path:
 
 
 def literature_index_path() -> str:
-    return str(literature_dir() / "index.json")
+    return _path_str(literature_dir() / "index.json")
 
 
 def raw_data_dir() -> Path:
@@ -246,15 +251,15 @@ def raw_data_dir() -> Path:
 
 
 def raw_manifest_path() -> str:
-    return str(raw_data_dir() / "manifest.json")
+    return _path_str(raw_data_dir() / "manifest.json")
 
 
 def data_access_report_path() -> str:
-    return str(output_dir() / "data_access_report.json")
+    return _path_str(output_dir() / "data_access_report.json")
 
 
 def repair_history_path() -> str:
-    return str(output_dir() / "repair_history.json")
+    return _path_str(output_dir() / "repair_history.json")
 
 
 def candidates_dir() -> Path:
@@ -271,24 +276,24 @@ def development_packs_dir() -> Path:
 
 # Memory files
 def idea_memory_csv_path() -> str:
-    return str(memory_dir() / "idea_memory.csv")
+    return _path_str(memory_dir() / "idea_memory.csv")
 
 
 def enriched_top_candidates_path() -> str:
-    return str(memory_dir() / "enriched_top_candidates.jsonl")
+    return _path_str(memory_dir() / "enriched_top_candidates.jsonl")
 
 
 def idea_validation_path() -> str:
-    return str(output_dir() / "idea_validation.json")
+    return _path_str(output_dir() / "idea_validation.json")
 
 
 def data_source_registry_path() -> str:
-    return str(prompts_dir() / "data_source_registry.json")
+    return _path_str(prompts_dir() / "data_source_registry.json")
 
 
 # Prompts
 def academic_drafter_prompt_path() -> str:
-    return str(prompts_dir() / "academic_drafter.txt")
+    return _path_str(prompts_dir() / "academic_drafter.txt")
 
 
 # ── Database URL ─────────────────────────────────────────────────────

@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from agents import settings
+from agents.llm import create_chat_model, invoke_structured
 from agents.logging_config import get_logger
 from agents.memory_retriever import MemoryRetriever
 from agents.openalex_utils import search_openalex
@@ -32,12 +33,6 @@ from agents.research_plan_builder import build_research_plan_from_candidate
 from models.research_plan_schema import ResearchPlan
 
 logger = get_logger(__name__)
-
-try:
-    from langchain_google_genai import ChatGoogleGenerativeAI
-except ImportError:  # pragma: no cover
-    ChatGoogleGenerativeAI = None  # type: ignore[assignment, misc]
-
 
 # ---------------------------------------------------------------------------
 # Pydantic schemas
@@ -180,15 +175,13 @@ def _generate_novelty_queries(
     n_queries: int = 3,
 ) -> List[str]:
     """Use LLM to generate targeted search queries for novelty checking."""
-    if llm is None or not isinstance(llm, ChatGoogleGenerativeAI):
+    if llm is None:
         # Fallback: use title words as query
         return [title]
 
-    structured_llm = llm.with_structured_output(NoveltySearchQueries)
-
     @retry(stop=stop_after_attempt(2), wait=wait_exponential(min=2, max=8))
     def _call():
-        return structured_llm.invoke(
+        prompt = (
             f"Generate {n_queries} precise search queries to find existing published "
             f"papers that may overlap with this research idea.\n\n"
             f"Title: {title}\n"
@@ -196,6 +189,7 @@ def _generate_novelty_queries(
             f"The queries should target the specific combination of method, data, "
             f"and phenomenon. Use short English phrases (4-8 words), no boolean operators."
         )
+        return invoke_structured(llm, NoveltySearchQueries, prompt)
 
     try:
         result = _call()
@@ -216,7 +210,7 @@ def _assess_novelty(
     Returns (assessment, was_fallback) where was_fallback is True when the LLM
     was unavailable or threw an exception and a safe default was used instead.
     """
-    if llm is None or not isinstance(llm, ChatGoogleGenerativeAI):
+    if llm is None:
         return NoveltyAssessment(verdict="novel", similar_papers=[]), True
 
     if not papers:
@@ -229,11 +223,9 @@ def _assess_novelty(
         for p in papers[:15]  # limit to avoid token overflow
     )
 
-    structured_llm = llm.with_structured_output(NoveltyAssessment)
-
     @retry(stop=stop_after_attempt(2), wait=wait_exponential(min=2, max=8))
     def _call():
-        return structured_llm.invoke(
+        prompt = (
             f"You are a senior research evaluator. Compare this research idea against "
             f"recently published papers and assess its novelty.\n\n"
             f"RESEARCH IDEA:\n"
@@ -248,6 +240,7 @@ def _assess_novelty(
             f"method and data — minimal remaining gap\n\n"
             f"List papers with non-trivial overlap (highly_similar or partially_similar)."
         )
+        return invoke_structured(llm, NoveltyAssessment, prompt)
 
     try:
         return _call(), False
@@ -300,15 +293,13 @@ def check_novelty(
 
 class IdeaValidatorAgent:
     def __init__(self):
-        fast_model = os.getenv("GEMINI_FAST_MODEL", "gemini-2.0-flash-lite")
         self.llm = None
         self._degraded_nodes: list[str] = []
-        if ChatGoogleGenerativeAI is not None:
-            try:
-                self.llm = ChatGoogleGenerativeAI(model=fast_model, temperature=0.1)
-            except Exception as e:
-                logger.warning("Could not init LLM for validation: %s", e)
-                self._degraded_nodes.append("idea_validator:llm_unavailable")
+        try:
+            self.llm = create_chat_model("fast", temperature=0.1)
+        except Exception as e:
+            logger.warning("Could not init LLM for validation: %s", e)
+            self._degraded_nodes.append("idea_validator:llm_unavailable")
 
         self.memory = MemoryRetriever()
 

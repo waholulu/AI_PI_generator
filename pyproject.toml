@@ -14,6 +14,7 @@ dependencies = [
     "geopandas>=1.1.2",
     "langchain-anthropic>=1.3.4",
     "langchain-google-genai>=4.2.1",
+    "langchain-openai>=1.2.2",
     "langgraph>=1.0.10",
     "langgraph-checkpoint-sqlite>=3.0.3",
     "pandas>=2.3.3",
@@ -56,7 +57,7 @@ include = ["agents*", "api*", "models*", "ui*", "config*"]
 [tool.pytest.ini_options]
 markers = [
     "live_openalex: marks tests that call the real OpenAlex API (require OPENALEX_API_KEY, OPENALEX_EMAIL, pyalex)",
-    "live_llm: marks tests that call real LLM APIs (require GEMINI_API_KEY / GOOGLE_API_KEY)",
+    "live_llm: marks tests that call real LLM APIs (require DEEPSEEK_API_KEY / LLM_API_KEY, or the selected provider key)",
     "slow: marks tests that run the full pipeline or are otherwise slow (>10s); excluded from default run",
     "asyncio: marks tests that run asyncio event loop",
 ]

@@ -14,9 +14,9 @@ research questions surfaced at the HITL checkpoint are about applying LLM
 techniques *to the user's domain* rather than about LLM training in the
 abstract.
 
-Falls back to a single generic task derived from `domain_input` when Gemini
-is unavailable, the key is missing, or the call fails — keeps the pipeline
-deterministic and the unit tests green without API keys.
+Falls back to a single generic task derived from `domain_input` when the
+configured LLM is unavailable, the key is missing, or the call fails — keeps
+the pipeline deterministic and the unit tests green without API keys.
 """
 from __future__ import annotations
 
@@ -26,14 +26,15 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from agents.llm import (
+    create_chat_model,
+    get_model_name,
+    has_llm_credentials,
+    invoke_structured,
+)
 from agents.logging_config import get_logger
 
 logger = get_logger(__name__)
-
-try:
-    from langchain_google_genai import ChatGoogleGenerativeAI
-except ImportError:  # pragma: no cover
-    ChatGoogleGenerativeAI = None  # type: ignore[assignment, misc]
 
 
 MetricFamily = Literal["task_accuracy", "instruction_following", "generation_quality"]
@@ -145,7 +146,7 @@ def _fallback_seeds(domain_input: str) -> list[TaskSeed]:
 
     Three placeholder tasks (classification, instruction-following,
     generation) — labels make it clear they're fallback so the user knows to
-    re-run with GEMINI_API_KEY set for real domain grounding. Keeps the
+    re-run with an LLM API key set for real domain grounding. Keeps the
     candidate pool large enough to be useful for review even without an LLM.
     """
     base_slug = _slugify(domain_input) or "domain"
@@ -156,7 +157,7 @@ def _fallback_seeds(domain_input: str) -> list[TaskSeed]:
             task_label=f"Classification Task in {domain_label.title()}",
             task_description=(
                 f"Train an LM to classify text inputs related to "
-                f"\"{domain_label}\". Placeholder task — Gemini was unavailable, "
+                f"\"{domain_label}\". Placeholder task — the configured LLM was unavailable, "
                 f"so no domain-specific decomposition was performed."
             ),
             modality="text_classification",
@@ -168,7 +169,7 @@ def _fallback_seeds(domain_input: str) -> list[TaskSeed]:
             task_label=f"Instruction-Following Task in {domain_label.title()}",
             task_description=(
                 f"Train an LM to follow constrained instructions in "
-                f"\"{domain_label}\" (placeholder — set GEMINI_API_KEY for "
+                f"\"{domain_label}\" (placeholder — set an LLM API key for "
                 f"domain-grounded task generation)."
             ),
             modality="generation",
@@ -180,7 +181,7 @@ def _fallback_seeds(domain_input: str) -> list[TaskSeed]:
             task_label=f"Generation Task in {domain_label.title()}",
             task_description=(
                 f"Train an LM to produce free-form text in "
-                f"\"{domain_label}\" (placeholder — set GEMINI_API_KEY for "
+                f"\"{domain_label}\" (placeholder — set an LLM API key for "
                 f"domain-grounded task generation)."
             ),
             modality="generation",
@@ -207,16 +208,15 @@ class TaskSeedGenerator:
         ).lower() not in ("false", "0", "no")
         model_name = os.getenv(
             "LLM_DOMAIN_TASK_MODEL",
-            os.getenv("GEMINI_FAST_MODEL", "gemini-2.0-flash-lite"),
+            get_model_name("fast"),
         )
         self._llm: Any | None = None
         if (
             self._enabled
-            and ChatGoogleGenerativeAI is not None
-            and os.getenv("GEMINI_API_KEY")
+            and has_llm_credentials()
         ):
             try:
-                self._llm = ChatGoogleGenerativeAI(model=model_name, temperature=0.4)
+                self._llm = create_chat_model("fast", model=model_name, temperature=0.4)
             except Exception as exc:
                 logger.warning("TaskSeedGenerator: LLM init failed (%s)", exc)
                 self._enabled = False
@@ -236,12 +236,11 @@ class TaskSeedGenerator:
             return _fallback_seeds(domain_input)
 
         try:
-            structured = self._llm.with_structured_output(TaskSeedPlan)
             prompt = _SYSTEM_PROMPT + "\n\n" + _USER_PROMPT.format(
                 domain_input=domain_input.strip(),
                 extra_context=extra_context.strip() or "(none)",
             )
-            result = structured.invoke(prompt)
+            result = invoke_structured(self._llm, TaskSeedPlan, prompt)
             tasks = list(result.tasks) if result and result.tasks else []
             if not tasks:
                 logger.warning(

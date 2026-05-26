@@ -2,8 +2,8 @@
 Live Gemini integration test for IdeationAgent / ideation_node.
 
 Requires:
-- GEMINI_API_KEY or GOOGLE_API_KEY set in .env
-- GEMINI_FAST_MODEL and GEMINI_PRO_MODEL set (or use default model names)
+- DEEPSEEK_API_KEY/LLM_API_KEY or selected provider key set in .env
+- LLM_FAST_MODEL and LLM_PRO_MODEL set (or use default model names)
 
 Run only with:
     pytest -m live_llm tests/test_ideation_live.py
@@ -19,15 +19,20 @@ from agents.ideation_agent import ideation_node
 from agents.orchestrator import ResearchState
 
 
-def _require_gemini_env() -> None:
-    """Fail clearly if the Gemini API key is not available."""
+def _require_llm_env() -> None:
+    """Fail clearly if the LLM API key is not available."""
     env_path = Path(__file__).resolve().parent.parent / ".env"
     load_dotenv(env_path)
 
-    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    api_key = (
+        os.getenv("DEEPSEEK_API_KEY")
+        or os.getenv("LLM_API_KEY")
+        or os.getenv("GEMINI_API_KEY")
+        or os.getenv("GOOGLE_API_KEY")
+    )
     if not api_key:
         raise AssertionError(
-            "GEMINI_API_KEY / GOOGLE_API_KEY must be set in .env for live LLM tests."
+            "An LLM API key must be set in .env for live LLM tests."
         )
 
 
@@ -38,7 +43,7 @@ def test_ideation_live_produces_research_plan() -> None:
     non-empty research plan.  Fails if the API key is missing or the
     LLM call errors out.
     """
-    _require_gemini_env()
+    _require_llm_env()
 
     os.makedirs("config", exist_ok=True)
     os.makedirs("output", exist_ok=True)

@@ -78,7 +78,7 @@ def test_all_yaml_configs_are_loadable():
         settings.refine_operations_path,
     ]:
         path = fn()
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = yaml.safe_load(f)
         assert data is not None, f"YAML loaded as None: {path}"
 

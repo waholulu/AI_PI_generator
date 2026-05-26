@@ -2,7 +2,7 @@
 Live Gemini integration test for DrafterAgent / drafter_node.
 
 Requires:
-- GEMINI_API_KEY or GOOGLE_API_KEY set in .env
+- DEEPSEEK_API_KEY/LLM_API_KEY or selected provider key set in .env
 
 Run only with:
     pytest -m live_llm tests/test_drafter_live.py
@@ -21,15 +21,20 @@ from agents.orchestrator import ResearchState
 _FALLBACK_SENTINEL = "Failed to reach API"
 
 
-def _require_gemini_env() -> None:
-    """Fail clearly if the Gemini API key is not available."""
+def _require_llm_env() -> None:
+    """Fail clearly if the LLM API key is not available."""
     env_path = Path(__file__).resolve().parent.parent / ".env"
     load_dotenv(env_path)
 
-    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    api_key = (
+        os.getenv("DEEPSEEK_API_KEY")
+        or os.getenv("LLM_API_KEY")
+        or os.getenv("GEMINI_API_KEY")
+        or os.getenv("GOOGLE_API_KEY")
+    )
     if not api_key:
         raise AssertionError(
-            "GEMINI_API_KEY / GOOGLE_API_KEY must be set in .env for live LLM tests."
+            "An LLM API key must be set in .env for live LLM tests."
         )
 
 
@@ -40,7 +45,7 @@ def test_drafter_live_produces_non_fallback_draft() -> None:
     draft that is NOT the static fallback content.  Fails if the API key
     is missing or the LLM is unreachable.
     """
-    _require_gemini_env()
+    _require_llm_env()
 
     os.makedirs("config", exist_ok=True)
     os.makedirs("output", exist_ok=True)

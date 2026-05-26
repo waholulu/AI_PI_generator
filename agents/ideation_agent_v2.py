@@ -28,6 +28,7 @@ import yaml
 from agents.candidate_evaluator import evaluate_candidate
 from agents.candidate_normalizer import normalize_candidate, compute_executability_status
 from agents.budget_tracker import BudgetExceededError, BudgetTracker
+from agents.llm import create_chat_model
 from agents.logging_config import get_logger
 from agents.memory_retriever import MemoryRetriever
 from agents.openalex_verifier import OpenAlexVerifier
@@ -161,12 +162,9 @@ class IdeationAgentV2:
 
     def _init_llm(self):
         try:
-            from langchain_google_genai import ChatGoogleGenerativeAI
             models_cfg = _load_reflection_models_config()
-            seed_model = models_cfg.get(
-                "seed_generation", os.getenv("GEMINI_FAST_MODEL", "gemini-2.0-flash-lite")
-            )
-            return ChatGoogleGenerativeAI(model=seed_model, temperature=0.7)
+            seed_model = os.getenv("LLM_FAST_MODEL") or models_cfg.get("seed_generation")
+            return create_chat_model("fast", model=seed_model, temperature=0.7)
         except Exception as e:
             logger.warning("LLM init failed: %s — running without LLM", e)
             return None
@@ -224,13 +222,13 @@ class IdeationAgentV2:
     def _persist_screening_and_plan(self, run_id: str, screening: dict, top_candidate: dict) -> tuple[str, str]:
         screening_path = settings.topic_screening_path()
         with open(screening_path, "w", encoding="utf-8") as f:
-            json.dump(screening, f, indent=2, ensure_ascii=False)
+            json.dump(screening, f, indent=2, ensure_ascii=True)
 
         _, plan_dict = self._evaluate_candidate_entry(top_candidate, run_id)
         plan_path = settings.research_plan_path()
         os.makedirs(os.path.dirname(plan_path), exist_ok=True)
         with open(plan_path, "w", encoding="utf-8") as f:
-            json.dump(plan_dict, f, indent=2, ensure_ascii=False)
+            json.dump(plan_dict, f, indent=2, ensure_ascii=True)
         return screening_path, plan_path
 
     # ── Level 1 ───────────────────────────────────────────────────────────────
@@ -243,7 +241,7 @@ class IdeationAgentV2:
 
         # Load and validate topic YAML
         try:
-            with open(user_topic_path) as f:
+            with open(user_topic_path, encoding="utf-8") as f:
                 raw = yaml.safe_load(f)
             topic = Topic.model_validate(raw)
         except FileNotFoundError:
@@ -343,14 +341,14 @@ class IdeationAgentV2:
             "candidates": [candidate_entry],
         }
         screening_path = settings.topic_screening_path()
-        with open(screening_path, "w") as f:
-            json.dump(screening, f, indent=2, ensure_ascii=False)
+        with open(screening_path, "w", encoding="utf-8") as f:
+            json.dump(screening, f, indent=2, ensure_ascii=True)
 
         _, plan = self._evaluate_candidate_entry(candidate_entry, run_id)
         plan_path = settings.research_plan_path()
         os.makedirs(os.path.dirname(plan_path), exist_ok=True)
         with open(plan_path, "w", encoding="utf-8") as f:
-            json.dump(plan, f, indent=2, ensure_ascii=False)
+            json.dump(plan, f, indent=2, ensure_ascii=True)
 
         return {
             "execution_status": "harvesting",
@@ -463,7 +461,7 @@ class IdeationAgentV2:
         if self._llm is None:
             raise IdeationSeedGenerationError(
                 "Ideation LLM is not configured — cannot generate seed topics. "
-                "Verify GEMINI_API_KEY is set in the runtime environment."
+                "Verify DEEPSEEK_API_KEY/LLM_API_KEY or the selected provider key is set."
             )
         try:
             seeds = self._llm_generate_seeds(domain, field_scan_context, memory_context)
@@ -577,8 +575,8 @@ class IdeationAgentV2:
 
         path = settings.tentative_pool_path()
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w") as f:
-            json.dump({"run_id": run_id, "tentative": pool}, f, indent=2, ensure_ascii=False)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"run_id": run_id, "tentative": pool}, f, indent=2, ensure_ascii=True)
         logger.info("Wrote %d tentative topics to %s", len(pool), path)
 
     def _emit_level2_outputs_reflection(
@@ -651,14 +649,14 @@ class IdeationAgentV2:
             "candidates": evaluated_candidates,
         }
         screening_path = settings.topic_screening_path()
-        with open(screening_path, "w") as f:
-            json.dump(screening, f, indent=2, ensure_ascii=False)
+        with open(screening_path, "w", encoding="utf-8") as f:
+            json.dump(screening, f, indent=2, ensure_ascii=True)
 
         plan = first_plan or {}
         plan_path = settings.research_plan_path()
         os.makedirs(os.path.dirname(plan_path), exist_ok=True)
-        with open(plan_path, "w") as f:
-            json.dump(plan, f, indent=2, ensure_ascii=False)
+        with open(plan_path, "w", encoding="utf-8") as f:
+            json.dump(plan, f, indent=2, ensure_ascii=True)
 
         # ideation_run_summary.json
         summary = {
@@ -681,8 +679,8 @@ class IdeationAgentV2:
             ],
         }
         summary_path = settings.ideation_run_summary_path()
-        with open(summary_path, "w") as f:
-            json.dump(summary, f, indent=2, ensure_ascii=False)
+        with open(summary_path, "w", encoding="utf-8") as f:
+            json.dump(summary, f, indent=2, ensure_ascii=True)
 
         context_path = settings.research_context_path()
         context = {
@@ -690,8 +688,8 @@ class IdeationAgentV2:
             "run_id": run_id,
             "selected_topic": evaluated_candidates[0] if evaluated_candidates else {},
         }
-        with open(context_path, "w") as f:
-            json.dump(context, f, indent=2, ensure_ascii=False)
+        with open(context_path, "w", encoding="utf-8") as f:
+            json.dump(context, f, indent=2, ensure_ascii=True)
 
         return {
             "execution_status": "harvesting",
@@ -733,12 +731,12 @@ class IdeationAgentV2:
         }
         screening_path = settings.topic_screening_path()
         with open(screening_path, "w", encoding="utf-8") as f:
-            json.dump(screening, f, indent=2, ensure_ascii=False)
+            json.dump(screening, f, indent=2, ensure_ascii=True)
 
         plan_path = settings.research_plan_path()
         os.makedirs(os.path.dirname(plan_path), exist_ok=True)
         with open(plan_path, "w", encoding="utf-8") as f:
-            json.dump(first_plan or {}, f, indent=2, ensure_ascii=False)
+            json.dump(first_plan or {}, f, indent=2, ensure_ascii=True)
 
         status_counts = {"pass": 0, "warning": 0, "fail": 0}
         for candidate in all_candidates:
@@ -760,7 +758,7 @@ class IdeationAgentV2:
         }
         summary_path = settings.ideation_run_summary_path()
         with open(summary_path, "w", encoding="utf-8") as f:
-            json.dump(summary, f, indent=2, ensure_ascii=False)
+            json.dump(summary, f, indent=2, ensure_ascii=True)
 
         context_path = settings.research_context_path()
         context = {
@@ -769,7 +767,7 @@ class IdeationAgentV2:
             "selected_topic": evaluated_candidates[0] if evaluated_candidates else {},
         }
         with open(context_path, "w", encoding="utf-8") as f:
-            json.dump(context, f, indent=2, ensure_ascii=False)
+            json.dump(context, f, indent=2, ensure_ascii=True)
 
         return {
             "execution_status": "harvesting",
@@ -802,7 +800,7 @@ def _load_field_scan_context(path: str) -> str:
     try:
         import json as _json
         from agents.field_scanner_agent import summarize_field_scan
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = _json.load(f)
         return _json.dumps(summarize_field_scan(data), indent=2)
     except Exception as e:

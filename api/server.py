@@ -1126,7 +1126,7 @@ async def list_outputs(run_id: str):
                 continue
             rel = path.relative_to(root)
             files.append(OutputFile(
-                filename=str(rel),
+                filename=rel.as_posix(),
                 path=str(path),
                 size_bytes=path.stat().st_size,
             ))

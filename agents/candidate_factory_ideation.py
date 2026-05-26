@@ -147,7 +147,7 @@ def _format_training_card(candidate, gate_status: dict | None = None) -> dict:
     domain_input = (getattr(candidate, "outcome_task_domain_input", "") or "").strip()
     method_template = getattr(candidate, "method_template", "") or "paired baseline-vs-treatment"
 
-    # The fallback path injects "(placeholder — set GEMINI_API_KEY for ...)"
+    # The fallback path injects "(placeholder — set an LLM API key for ...)"
     # into task_description. Detect this so the rationale shown to the user
     # stays clean instead of embedding internal warnings as if they were
     # research justification.
@@ -178,7 +178,7 @@ def _format_training_card(candidate, gate_status: dict | None = None) -> dict:
             f"Apply {strategy_phrase} to a {task_label.lower()} derived from "
             f"the user's domain{(' (' + domain_input + ')') if domain_input else ''}, "
             f"comparing against a zero-shot baseline on Colab-tier hardware. "
-            f"Set GEMINI_API_KEY to replace this placeholder task with a "
+            f"Set an LLM API key to replace this placeholder task with a "
             f"domain-grounded set."
         )
 

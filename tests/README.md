@@ -42,9 +42,9 @@ pytest -m live_llm
 ```
 
 Requires in `.env`:
-- `GEMINI_API_KEY` or `GOOGLE_API_KEY`
-- `GEMINI_FAST_MODEL` (e.g. `gemini-1.5-flash`)
-- `GEMINI_PRO_MODEL` (e.g. `gemini-2.5-pro`)
+- `DEEPSEEK_API_KEY` or `LLM_API_KEY`
+- `LLM_FAST_MODEL` (default: `deepseek-v4-pro`)
+- `LLM_PRO_MODEL` (default: `deepseek-v4-pro`)
 
 ### All live tests at once
 
@@ -100,9 +100,10 @@ pytest -m "live_openalex or live_llm"
 
 ```
 # .env (project root)
-GEMINI_API_KEY=...                       # or GOOGLE_API_KEY
-GEMINI_FAST_MODEL=gemini-2.0-flash-lite
-GEMINI_PRO_MODEL=gemini-2.5-pro
+LLM_PROVIDER=deepseek
+DEEPSEEK_API_KEY=...
+LLM_FAST_MODEL=deepseek-v4-pro
+LLM_PRO_MODEL=deepseek-v4-pro
 
 OPENALEX_API_KEY=...                     # polite-pool key
 OPENALEX_EMAIL=you@example.com
@@ -111,7 +112,7 @@ OPENALEX_EMAIL=you@example.com
 OPENALEX_QUERY_REWRITE_ENABLED=true      # "false" to skip LLM and use raw domain_input
 OPENALEX_QUERY_REWRITE_MAX_QUERIES=10    # max queries per scan
 OPENALEX_QUERY_REWRITE_PER_QUERY_LIMIT=20 # results fetched per query
-# OPENALEX_QUERY_REWRITE_MODEL=...       # defaults to GEMINI_FAST_MODEL
+# OPENALEX_QUERY_REWRITE_MODEL=...       # defaults to LLM_FAST_MODEL
 
 # Literature harvester
 LITERATURE_FINAL_LIMIT=3                 # papers kept after dedup

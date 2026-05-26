@@ -1,52 +1,62 @@
 import os
 from pathlib import Path
 
+import pytest
 from dotenv import load_dotenv
 
-# Load .env from project root so model names (GEMINI_FAST_MODEL, GEMINI_PRO_MODEL) are used
+# Load .env from project root so model/provider settings are used.
 _env_path = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(_env_path)
 
-def test_gemini():
-    print("=== Testing Gemini API Key ===")
-    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+def check_llm_provider() -> bool:
+    print("=== Testing configured LLM provider ===")
+    provider = os.getenv("LLM_PROVIDER", "deepseek")
+    api_key = (
+        os.getenv("DEEPSEEK_API_KEY")
+        or os.getenv("LLM_API_KEY")
+        or os.getenv("GEMINI_API_KEY")
+        or os.getenv("GOOGLE_API_KEY")
+    )
     if not api_key:
-        print("❌ GEMINI_API_KEY / GOOGLE_API_KEY is not set in .env")
+        print("FAIL: No LLM API key is set in .env")
         return False
-        
+
     try:
-        from langchain_google_genai import ChatGoogleGenerativeAI
-        # Model names from .env (loaded above)
-        fast_model = os.getenv("GEMINI_FAST_MODEL", "gemini-3.1-flash-lite-preview")
-        pro_model = os.getenv("GEMINI_PRO_MODEL", "gemini-2.5-pro")
-        models_to_test = [fast_model, pro_model]
+        from agents.llm import create_chat_model, get_model_name
+
+        models_to_test = [get_model_name("fast"), get_model_name("pro")]
         all_passed = True
-        for model in models_to_test:
-            print(f"Testing model: {model}...")
-            llm = ChatGoogleGenerativeAI(model=model, temperature=0.0)
+        for role, model in zip(("fast", "pro"), models_to_test):
+            print(f"Testing {provider} model: {model}...")
+            llm = create_chat_model(role, model=model, temperature=0.0)
             response = llm.invoke("Hi, please reply with 'OK' and nothing else.")
             content_str = str(response.content)
             if "OK" in content_str.upper():
-                print(f"✅ Model {model} is working!")
+                print(f"PASS: Model {model} is working!")
             else:
-                print(f"⚠️ Model {model} responded, but output was unexpected: {content_str}")
+                print(f"WARN: Model {model} responded, but output was unexpected: {content_str}")
                 all_passed = False
         return all_passed
     except ImportError:
-        print("❌ langchain_google_genai is not installed.")
+        print("FAIL: Required LangChain provider package is not installed.")
         return False
     except Exception as e:
-        print(f"❌ Gemini API test failed: {e}")
+        print(f"FAIL: LLM API test failed: {e}")
         return False
+
+
+@pytest.mark.live_llm
+def test_llm_provider():
+    assert check_llm_provider()
 
 
 if __name__ == "__main__":
 
-    gemini_ok = test_gemini()
+    llm_ok = check_llm_provider()
     
     print("\n=== Final Report ===")
-    if gemini_ok:
-        print("🎉 Gemini API Key is working perfectly!")
+    if llm_ok:
+        print("PASS: LLM API key is working perfectly!")
     else:
-        print("⚠️ Please check the errors above.")
+        print("WARN: Please check the errors above.")
 

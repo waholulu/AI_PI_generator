@@ -57,7 +57,7 @@ class RuleEngine:
         if self._spatial_units is not None:
             return self._spatial_units
         try:
-            with open(spatial_units_path()) as f:
+            with open(spatial_units_path(), encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
             result: dict[str, int] = {}
             for entry in data.get("spatial_units", []):
@@ -76,7 +76,7 @@ class RuleEngine:
         if self._data_sources is not None:
             return self._data_sources
         try:
-            with open(data_sources_yaml_path()) as f:
+            with open(data_sources_yaml_path(), encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
             self._data_sources = data.get("data_sources", [])
             return self._data_sources
@@ -90,7 +90,7 @@ class RuleEngine:
         if self._skill_registry is not None:
             return self._skill_registry, self._identification_skill_map  # type: ignore[return-value]
         try:
-            with open(skill_registry_path()) as f:
+            with open(skill_registry_path(), encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
             skill_status = {s["id"]: s["status"] for s in data.get("skills", [])}
             id_map = data.get("identification_skill_map", {})

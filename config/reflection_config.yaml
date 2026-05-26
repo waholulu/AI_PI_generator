@@ -8,9 +8,9 @@ reflection:
   oscillation_window: 3          # consecutive rounds with same 4-tuple → force TENTATIVE
 
 models:
-  seed_generation: "gemini-2.0-flash-lite"
-  critique: "gemini-2.0-flash-lite"
-  refine: "gemini-1.5-pro-latest"
+  seed_generation: "deepseek-v4-pro"
+  critique: "deepseek-v4-pro"
+  refine: "deepseek-v4-pro"
 
 openalex:
   top_k: 50
