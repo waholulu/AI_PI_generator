@@ -198,6 +198,42 @@ def test_candidates_list_handles_missing_declared_sources(monkeypatch, tmp_path)
     assert card["outcome_source"] == ""
 
 
+def test_candidates_list_falls_back_to_evaluation_fields(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("AUTOPI_DATA_ROOT", str(tmp_path))
+    run_id = "run-contract-evaluation"
+    _write_cards(
+        run_id,
+        {
+            "candidates": [
+                {
+                    "candidate_id": "cand_eval",
+                    "title": "Nighttime Lights and Cardiovascular Disease",
+                    "research_question": "RQ",
+                    "exposure_source": "VIIRS",
+                    "outcome_source": "CDC_PLACES",
+                    "method": "cross_sectional_spatial_association",
+                    "claim_strength": None,
+                    "shortlist_status": "review",
+                    "gate_status": {"overall": "warning", "warnings": ["aggregation"], "failed_gates": []},
+                    "evaluation": {
+                        "score": 0.823,
+                        "readiness": "needs_review",
+                        "user_visible_reasons": ["raster_500m_to_census_tract_aggregation_required"],
+                    },
+                }
+            ]
+        },
+    )
+    monkeypatch.setattr(server.run_manager, "get_run", lambda _: _Run(run_id))
+
+    listed = asyncio.run(server.list_candidates(run_id))
+    card = listed["candidates"][0]
+    assert card["claim_strength"] == "associational"
+    assert card["readiness"] == "needs_review"
+    assert card["user_visible_reasons"] == ["raster_500m_to_census_tract_aggregation_required"]
+    assert abs(card["scores"]["overall"] - 0.823) < 0.001
+
+
 def test_candidates_list_returns_empty_for_no_files(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("AUTOPI_DATA_ROOT", str(tmp_path))
     run_id = "run-no-files"

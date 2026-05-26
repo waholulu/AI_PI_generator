@@ -473,6 +473,7 @@ def _source_at(candidate: dict[str, Any], index: int) -> str:
 def _normalize_candidate_card(candidate: dict[str, Any], fallback_idx: int) -> dict[str, Any]:
     gate_status = candidate.get("gate_status") or {}
     scores = candidate.get("scores") or {}
+    evaluation = candidate.get("evaluation") or {}
     readiness_summary = candidate.get("readiness_summary") or {}
     overall_gate = gate_status.get("overall", "pending")
     gate_summary = {
@@ -505,7 +506,7 @@ def _normalize_candidate_card(candidate: dict[str, Any], fallback_idx: int) -> d
         or _source_at(candidate, 1),
         "unit_of_analysis": candidate.get("unit_of_analysis", ""),
         "method": candidate.get("method") or candidate.get("method_template", ""),
-        "claim_strength": candidate.get("claim_strength", "associational"),
+        "claim_strength": candidate.get("claim_strength") or "associational",
         "technology_tags": candidate.get("technology_tags", []),
         "required_secrets": gate_status.get("required_secrets", candidate.get("required_secrets", [])),
         "automation_risk": candidate.get("automation_risk", "unknown"),
@@ -515,6 +516,8 @@ def _normalize_candidate_card(candidate: dict[str, Any], fallback_idx: int) -> d
         "readiness": (
             readiness_summary.get("readiness")
             or candidate.get("readiness")
+            or evaluation.get("readiness")
+            or evaluation.get("executability_status")
             or shortlist_status
         ),
         "data_status": readiness_summary.get("data_status", "unknown"),
@@ -523,6 +526,8 @@ def _normalize_candidate_card(candidate: dict[str, Any], fallback_idx: int) -> d
         "user_visible_reasons": (
             readiness_summary.get("user_visible_reasons")
             or candidate.get("user_visible_reasons")
+            or evaluation.get("user_visible_reasons")
+            or evaluation.get("reasons")
             or []
         ),
         "scores": {
@@ -531,7 +536,7 @@ def _normalize_candidate_card(candidate: dict[str, Any], fallback_idx: int) -> d
             "identification_quality": _safe_float(scores.get("identification_quality")),
             "novelty": _safe_float(scores.get("novelty")),
             "technology_innovation": _safe_float(scores.get("technology_innovation")),
-            "overall": _safe_float(scores.get("overall")),
+            "overall": _safe_float(scores.get("overall", evaluation.get("score"))),
         },
         "gate_summary": gate_summary,
         "development_pack_status": candidate.get("development_pack_status", "not_generated"),
