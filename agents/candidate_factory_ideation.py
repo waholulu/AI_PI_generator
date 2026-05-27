@@ -27,9 +27,10 @@ from agents.candidate_output_writer import (
     write_gate_trace,
 )
 from agents.candidate_repair import repair_candidate
+from agents.candidate_reranker import rerank_candidates
 from agents.identification_template_filler import ensure_identification_metadata
 from agents.development_pack_status import evaluate_development_pack_readiness
-from agents.final_ranker import rank_candidates, score_candidate
+from agents.final_ranker import score_candidate
 from agents.logging_config import get_logger
 from agents.research_template_loader import load_research_template
 from agents.training_feasibility import evaluate_training_candidate
@@ -386,6 +387,8 @@ def _card_to_screening_entry(card: dict) -> dict:
         "topic_id": card["candidate_id"],
         "title": card["title"],
         "display": display,
+        "polished_title": card.get("polished_title"),
+        "rerank": card.get("rerank", {}),
         "rank": card.get("rank", 0),
         "research_question": card["research_question"],
         "novelty_status": card.get("novelty_status", "pending_literature_check"),
@@ -421,6 +424,7 @@ def _card_to_screening_entry(card: dict) -> dict:
             "readiness": card.get("readiness", "needs_review"),
             "user_visible_reasons": card.get("user_visible_reasons", []),
             "score": round(float(scores.get("overall", 0.0)), 3),
+            "rerank": card.get("rerank", {}),
         },
         "debug": {
             "gate_reasons": gs.get("reasons", []),
@@ -634,8 +638,18 @@ def run_candidate_factory_ideation(state: dict) -> dict:
             )
         )
 
-    # Rank full pool (readiness → risk → score).
-    ranked_cards = rank_candidates(cards)
+    field_scan_summary = {}
+    field_scan_path = state.get("field_scan_path") or settings.field_scan_path()
+    try:
+        with open(field_scan_path, "r", encoding="utf-8") as fh:
+            field_scan_summary = json.load(fh)
+    except Exception:
+        field_scan_summary = {}
+
+    # Rerank full pool with domain-fit + research-value signals. This keeps
+    # deterministic feasibility checks intact while improving the user-visible
+    # shortlist for the requested domain.
+    ranked_cards = rerank_candidates(cards, domain_input, field_scan_summary)
 
     # Diverse shortlist selection: max 2 per exposure_family, max 2 per
     # outcome_family.  Blocked candidates are never eligible — they live in

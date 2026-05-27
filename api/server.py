@@ -492,6 +492,8 @@ def _normalize_candidate_card(candidate: dict[str, Any], fallback_idx: int) -> d
     return {
         "candidate_id": candidate.get("candidate_id") or candidate.get("topic_id") or f"legacy_{fallback_idx:03d}",
         "title": candidate.get("title", ""),
+        "polished_title": candidate.get("polished_title") or display.get("display_title"),
+        "rerank": candidate.get("rerank") or evaluation.get("rerank") or {},
         # Layer 1 / Layer 2 display block produced by format_display_card().
         # UI consumes display.display_title and display.execution_summary;
         # falls back to title/research_question for legacy/V0 candidates.

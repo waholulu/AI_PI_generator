@@ -146,11 +146,15 @@ def test_topic_screening_written(factory_result):
         assert "candidate_id" in c, "candidate_id missing from screening entry"
         assert "title" in c
         assert "research_question" in c
+        assert "rerank" in c, "rerank block missing from screening entry"
+        assert "rerank_score" in c["rerank"], "rerank_score missing from screening entry"
+        assert "polished_title" in c, "polished_title missing from screening entry"
         # evaluation block must use user_visible_reasons, not raw gate flags
         assert "evaluation" in c, "evaluation block missing from screening entry"
         eval_block = c["evaluation"]
         assert "user_visible_reasons" in eval_block, "evaluation must have user_visible_reasons"
         assert "score" in eval_block, "evaluation must have score"
+        assert "rerank" in eval_block, "evaluation must expose rerank diagnostics"
         # raw gate reasons must NOT appear at the top level
         assert "reasons" not in c, "raw gate reasons must not appear at top level of screening entry"
 

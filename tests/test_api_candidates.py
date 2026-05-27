@@ -219,7 +219,9 @@ def test_candidates_list_falls_back_to_evaluation_fields(monkeypatch, tmp_path) 
                         "score": 0.823,
                         "readiness": "needs_review",
                         "user_visible_reasons": ["raster_500m_to_census_tract_aggregation_required"],
+                        "rerank": {"rerank_score": 0.823, "domain_fit_score": 0.9},
                     },
+                    "polished_title": "How Do Nighttime Lights Shape Urban Health Risk?",
                 }
             ]
         },
@@ -232,6 +234,8 @@ def test_candidates_list_falls_back_to_evaluation_fields(monkeypatch, tmp_path) 
     assert card["readiness"] == "needs_review"
     assert card["user_visible_reasons"] == ["raster_500m_to_census_tract_aggregation_required"]
     assert abs(card["scores"]["overall"] - 0.823) < 0.001
+    assert card["rerank"]["domain_fit_score"] == 0.9
+    assert card["polished_title"] == "How Do Nighttime Lights Shape Urban Health Risk?"
 
 
 def test_candidates_list_returns_empty_for_no_files(monkeypatch, tmp_path) -> None:
