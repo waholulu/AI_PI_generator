@@ -148,7 +148,10 @@ def test_topic_screening_written(factory_result):
         assert "research_question" in c
         assert "rerank" in c, "rerank block missing from screening entry"
         assert "rerank_score" in c["rerank"], "rerank_score missing from screening entry"
+        assert "empirical_value_score" in c["rerank"], "empirical value missing from rerank"
         assert "polished_title" in c, "polished_title missing from screening entry"
+        assert "tech_lens_type" in c, "tech_lens_type missing from screening entry"
+        assert "empirical_deepening_claim" in c, "empirical_deepening_claim missing from screening entry"
         # evaluation block must use user_visible_reasons, not raw gate flags
         assert "evaluation" in c, "evaluation block missing from screening entry"
         eval_block = c["evaluation"]

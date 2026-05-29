@@ -494,6 +494,12 @@ def _normalize_candidate_card(candidate: dict[str, Any], fallback_idx: int) -> d
         "title": candidate.get("title", ""),
         "polished_title": candidate.get("polished_title") or display.get("display_title"),
         "rerank": candidate.get("rerank") or evaluation.get("rerank") or {},
+        "tech_lens_type": candidate.get("tech_lens_type") or evaluation.get("tech_lens_type"),
+        "empirical_deepening_claim": (
+            candidate.get("empirical_deepening_claim")
+            or evaluation.get("empirical_deepening_claim")
+        ),
+        "empirical_value_score": _safe_float(candidate.get("empirical_value_score")),
         # Layer 1 / Layer 2 display block produced by format_display_card().
         # UI consumes display.display_title and display.execution_summary;
         # falls back to title/research_question for legacy/V0 candidates.

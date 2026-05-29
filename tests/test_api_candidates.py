@@ -220,8 +220,11 @@ def test_candidates_list_falls_back_to_evaluation_fields(monkeypatch, tmp_path) 
                         "readiness": "needs_review",
                         "user_visible_reasons": ["raster_500m_to_census_tract_aggregation_required"],
                         "rerank": {"rerank_score": 0.823, "domain_fit_score": 0.9},
+                        "empirical_deepening_claim": "Technology improves measurement of X.",
                     },
                     "polished_title": "How Do Nighttime Lights Shape Urban Health Risk?",
+                    "tech_lens_type": "better_measurement_of_x",
+                    "empirical_value_score": 0.81,
                 }
             ]
         },
@@ -236,6 +239,9 @@ def test_candidates_list_falls_back_to_evaluation_fields(monkeypatch, tmp_path) 
     assert abs(card["scores"]["overall"] - 0.823) < 0.001
     assert card["rerank"]["domain_fit_score"] == 0.9
     assert card["polished_title"] == "How Do Nighttime Lights Shape Urban Health Risk?"
+    assert card["tech_lens_type"] == "better_measurement_of_x"
+    assert card["empirical_deepening_claim"] == "Technology improves measurement of X."
+    assert abs(card["empirical_value_score"] - 0.81) < 0.001
 
 
 def test_candidates_list_returns_empty_for_no_files(monkeypatch, tmp_path) -> None:

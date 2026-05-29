@@ -389,6 +389,9 @@ def _card_to_screening_entry(card: dict) -> dict:
         "display": display,
         "polished_title": card.get("polished_title"),
         "rerank": card.get("rerank", {}),
+        "tech_lens_type": card.get("tech_lens_type"),
+        "empirical_deepening_claim": card.get("empirical_deepening_claim"),
+        "empirical_value_score": card.get("empirical_value_score"),
         "rank": card.get("rank", 0),
         "research_question": card["research_question"],
         "novelty_status": card.get("novelty_status", "pending_literature_check"),
@@ -425,6 +428,7 @@ def _card_to_screening_entry(card: dict) -> dict:
             "user_visible_reasons": card.get("user_visible_reasons", []),
             "score": round(float(scores.get("overall", 0.0)), 3),
             "rerank": card.get("rerank", {}),
+            "empirical_deepening_claim": card.get("empirical_deepening_claim"),
         },
         "debug": {
             "gate_reasons": gs.get("reasons", []),
@@ -447,7 +451,7 @@ def _select_shortlist(ranked_cards: list[dict], shortlist_size: int = 5) -> list
 def select_diverse_shortlist(
     ranked_cards: list[dict],
     shortlist_size: int = 5,
-    max_per_exposure: int = 2,
+    max_per_exposure: int = 1,
     max_per_outcome: int = 2,
 ) -> list[dict]:
     """Greedy diverse shortlist selection.

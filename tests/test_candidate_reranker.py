@@ -47,3 +47,24 @@ def test_rerank_preserves_blocked_candidates_at_bottom() -> None:
 
     assert ranked[0]["candidate_id"] == "ready_candidate"
     assert ranked[-1]["candidate_id"] == "blocked_candidate"
+
+
+def test_empirical_deepening_rewards_measurement_gain_over_generic_tech() -> None:
+    common = _card("green_space", ["remote_sensing"], 0.88, readiness="needs_review")
+    common["exposure_source"] = "NLCD"
+    common["outcome_label"] = "asthma"
+
+    richer = _card("nighttime_lights", ["remote_sensing"], 0.82, readiness="needs_review")
+    richer["exposure_source"] = "VIIRS"
+    richer["outcome_label"] = "cardiovascular_disease"
+
+    ranked = rerank_candidates(
+        [common, richer],
+        domain_input="new technologies that deepen traditional empirical X to Y research",
+    )
+
+    assert ranked[0]["candidate_id"] == "nighttime_lights"
+    assert ranked[0]["tech_lens_type"] == "better_measurement_of_x"
+    assert "traditional nighttime light intensity -> cardiovascular disease" in ranked[0]["empirical_deepening_claim"]
+    assert ranked[0]["rerank"]["empirical_value_score"] > ranked[1]["rerank"]["empirical_value_score"]
+    assert ranked[0]["polished_title"].startswith("What Does Satellite-Measured")
