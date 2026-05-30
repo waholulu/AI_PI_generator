@@ -7,7 +7,7 @@ import pytest
 
 from agents.field_scanner_agent import FieldScannerAgent, field_scanner_node, summarize_field_scan
 from agents.orchestrator import ResearchState
-from agents import openalex_utils
+from agents import openalex_utils, settings
 
 
 # ---------------------------------------------------------------------------
@@ -92,6 +92,12 @@ def _patch_planner(scanner: FieldScannerAgent, queries: List[str], used_fallback
     scanner._planner.plan.return_value = mock_plan
 
 
+def _load_field_scan(path: str | None = None) -> Dict[str, Any]:
+    scan_path = path or settings.field_scan_path()
+    with open(scan_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -110,10 +116,8 @@ def test_field_scanner_node_offline(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert new_state["execution_status"] == "ideation"
     assert "field_scan_path" in new_state
-    assert os.path.exists("output/field_scan.json")
-
-    with open("output/field_scan.json", "r", encoding="utf-8") as f:
-        data = json.load(f)
+    assert os.path.exists(new_state["field_scan_path"])
+    data = _load_field_scan(new_state["field_scan_path"])
 
     assert data["domain_scanned"] == "GeoAI and Urban Planning"
     assert "openalex_traction" in data
@@ -143,8 +147,7 @@ def test_field_scanner_multi_query_expands_results(monkeypatch: pytest.MonkeyPat
     state = {"domain_input": "broad multi-topic domain", "execution_status": "starting"}
     scanner.run(state)
 
-    with open("output/field_scan.json", "r", encoding="utf-8") as f:
-        data = json.load(f)
+    data = _load_field_scan()
 
     top_results = data["openalex_traction"]["top_results"]
     # Each distinct query should contribute at least one unique paper
@@ -171,8 +174,7 @@ def test_field_scanner_deduplicates_results(monkeypatch: pytest.MonkeyPatch) -> 
     state = {"domain_input": "duplicate test domain", "execution_status": "starting"}
     scanner.run(state)
 
-    with open("output/field_scan.json", "r", encoding="utf-8") as f:
-        data = json.load(f)
+    data = _load_field_scan()
 
     top_results = data["openalex_traction"]["top_results"]
     ids = [r["openalex_id"] for r in top_results]
@@ -196,8 +198,7 @@ def test_field_scan_includes_search_strategy(monkeypatch: pytest.MonkeyPatch) ->
     state = {"domain_input": "public health urban", "execution_status": "starting"}
     scanner.run(state)
 
-    with open("output/field_scan.json", "r", encoding="utf-8") as f:
-        data = json.load(f)
+    data = _load_field_scan()
 
     assert "search_strategy" in data
     strategy = data["search_strategy"]
@@ -229,8 +230,7 @@ def test_field_scanner_fallback_path(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert result["execution_status"] == "ideation"
 
-    with open("output/field_scan.json", "r", encoding="utf-8") as f:
-        data = json.load(f)
+    data = _load_field_scan()
 
     assert data["search_strategy"]["used_fallback"] is True
 

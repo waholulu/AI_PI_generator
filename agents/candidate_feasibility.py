@@ -26,6 +26,7 @@ Subchecks run in order:
   join_recipe_exists         — a join recipe exists when aggregation is required
   aggregation_method_defined — aggregation method declared when aggregation is required
   time_cross_sectional_justified — warns when single-year source is used in multi-year plan
+  method_data_compatibility — warns/fails if the selected method is not data-compatible
 
 Overall verdict:
   pass    → all subchecks pass   → shortlist_status = "ready"
@@ -226,6 +227,23 @@ def precheck_candidate(candidate: ComposedCandidate) -> dict:
         else:
             subchecks["identification_threats"] = "warning"
             reasons.append(f"threat_mitigation_coverage_low:{ratio:.0%}")
+
+    # ── 7b. method_data_compatibility ────────────────────────────────────────
+    method_screening = candidate.method_screening or {}
+    screened_methods = method_screening.get("methods") or {}
+    selected_method_status = screened_methods.get(candidate.method_template) or {}
+    selected_status = selected_method_status.get("status")
+    selected_reason = selected_method_status.get("reason", "")
+    if selected_status == "eligible":
+        subchecks["method_data_compatibility"] = "pass"
+    elif selected_status == "review":
+        subchecks["method_data_compatibility"] = "warning"
+        reasons.append(f"method_data_compatibility_review:{candidate.method_template}:{selected_reason}")
+    elif selected_status == "rejected":
+        subchecks["method_data_compatibility"] = "fail"
+        reasons.append(f"method_data_mismatch:{candidate.method_template}:{selected_reason}")
+    else:
+        subchecks["method_data_compatibility"] = "pass"
 
     # ── 8–13. Implementation-level checks (data catalog required) ────────────
     # These checks only fire when the exposure source has a rich data catalog

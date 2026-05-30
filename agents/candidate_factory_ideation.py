@@ -252,18 +252,35 @@ def format_display_card(candidate, gate_status: dict | None = None) -> dict:
         unit=unit_phrase,
     )
 
-    research_question = (
-        f"At the US {unit_phrase.lower()} level, is {exposure_phrase.lower()} "
-        f"associated with {outcome_phrase.lower()} outcomes after controlling "
-        f"for sociodemographic confounders?"
-    )
+    is_quasi_causal = claim_strength == "quasi_causal"
+    if is_quasi_causal:
+        research_question = (
+            f"At the US {unit_phrase.lower()} level, what is the estimated "
+            f"quasi-causal effect of {exposure_phrase.lower()} on "
+            f"{outcome_phrase.lower()} outcomes under a "
+            f"{_humanize(method_template).lower()} design?"
+        )
+    else:
+        research_question = (
+            f"At the US {unit_phrase.lower()} level, is {exposure_phrase.lower()} "
+            f"associated with {outcome_phrase.lower()} outcomes after controlling "
+            f"for sociodemographic confounders?"
+        )
 
-    rationale = (
-        f"Linking {exposure_phrase.lower()} to {outcome_phrase.lower()} at the "
-        f"{unit_phrase.lower()} grain offers a policy-actionable lens: small-area "
-        f"variation in built-environment features is hypothesized to drive measurable "
-        f"differences in population health, and both inputs are publicly available."
-    )
+    if is_quasi_causal:
+        rationale = (
+            f"Treating {exposure_phrase.lower()} as a target-trial exposure at the "
+            f"{unit_phrase.lower()} grain makes the X -> Y claim explicit: define "
+            f"time zero, baseline covariates, exposure contrast, follow-up, and "
+            f"diagnostics before estimating effects with public data."
+        )
+    else:
+        rationale = (
+            f"Linking {exposure_phrase.lower()} to {outcome_phrase.lower()} at the "
+            f"{unit_phrase.lower()} grain offers a policy-actionable lens: small-area "
+            f"variation in built-environment features is hypothesized to drive measurable "
+            f"differences in population health, and both inputs are publicly available."
+        )
 
     contribution_angle = (
         f"Combines {exposure_source or 'a public exposure dataset'} with "
@@ -271,6 +288,14 @@ def format_display_card(candidate, gate_status: dict | None = None) -> dict:
         f"prior work, using a {_humanize(method_template).lower() or 'cross-sectional'} "
         f"design with a {claim_strength} claim."
     )
+    method_screening = getattr(candidate, "method_screening", {}) or {}
+    primary_reason = method_screening.get("primary_reason", "")
+    if is_quasi_causal and primary_reason:
+        contribution_angle = (
+            f"Recommended {_humanize(method_template).lower()} because "
+            f"{primary_reason}; other quasi-causal designs are retained in "
+            f"method_screening for audit."
+        )
 
     execution_summary = (
         f"Sources: {exposure_source or '(exposure source TBD)'} + "
@@ -320,6 +345,7 @@ def _to_card(
         "unit_of_analysis": c.unit_of_analysis,
         "method": c.method_template,
         "claim_strength": c.claim_strength,
+        "method_screening": c.method_screening,
         "technology_tags": c.technology_tags,
         "required_secrets": gs.get("required_secrets", c.required_secrets),
         "automation_risk": c.automation_risk,
@@ -376,6 +402,12 @@ def _card_to_screening_entry(card: dict) -> dict:
             f"Test whether {strategy_phrase} of an open base LM improves "
             f"{out} on the task \"{task_label}\" against a zero-shot baseline."
         )
+    elif card.get("claim_strength") == "quasi_causal":
+        brief_rationale = (
+            f"Estimate the quasi-causal effect of {exp} on {out} using "
+            f"{card.get('method', '')}, grounded in "
+            f"{card.get('exposure_source', '')} and {card.get('outcome_source', '')}."
+        )
     else:
         brief_rationale = (
             f"Assess whether {exp} is empirically associated with {out} "
@@ -400,6 +432,8 @@ def _card_to_screening_entry(card: dict) -> dict:
         "geography": geography,
         "unit_of_analysis": card.get("unit_of_analysis", ""),
         "method": card.get("method", ""),
+        "claim_strength": card.get("claim_strength", "associational"),
+        "method_screening": raw.get("method_screening", card.get("method_screening", {})),
         "key_threats": raw.get("key_threats", []),
         "mitigations": raw.get("mitigations", {}),
         "declared_sources": [card.get("exposure_source", ""), card.get("outcome_source", "")],

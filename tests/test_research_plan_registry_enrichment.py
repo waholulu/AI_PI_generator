@@ -33,3 +33,31 @@ def test_research_plan_sources_enriched_from_registry() -> None:
 
     assert plan.exposure.family
     assert plan.outcome.family
+
+
+def test_research_plan_preserves_quasi_causal_claim_strength() -> None:
+    candidate = {
+        "candidate_id": "tte_001",
+        "title": "Walkability and inactivity",
+        "research_question": "Does walkability affect inactivity under a target trial emulation design?",
+        "exposure_variable": "walkability",
+        "outcome_variable": "physical_inactivity",
+        "exposure_family": "walkability",
+        "outcome_family": "physical_inactivity",
+        "exposure_source": "EPA_National_Walkability_Index",
+        "outcome_source": "CDC_PLACES",
+        "join_plan": {"controls": ["ACS"], "boundary_source": ["TIGER_Lines"]},
+        "method": "target_trial_emulation_overlap_weighting",
+        "claim_strength": "quasi_causal",
+        "key_threats": ["baseline_confounding", "limited_common_support", "immortal_time_bias"],
+        "mitigations": {
+            "baseline_confounding": "m1",
+            "limited_common_support": "m2",
+            "immortal_time_bias": "m3",
+        },
+    }
+
+    plan = build_research_plan_from_candidate(candidate, evaluation=None, run_id="r1")
+
+    assert plan.identification.causal_claim_strength == "quasi_causal"
+    assert "quasi-causal effect" in plan.hypotheses[0]

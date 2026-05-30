@@ -23,6 +23,13 @@ def test_built_environment_health_passes_role_check() -> None:
     assert errors == [], f"Role compatibility errors found:\n" + "\n".join(errors)
 
 
+def test_built_environment_health_tte_passes_role_check() -> None:
+    """The TTE template reuses the production source registry roles."""
+    template = load_research_template("built_environment_health_tte")
+    errors = validate_template_role_compatibility(template)
+    assert errors == [], f"Role compatibility errors found:\n" + "\n".join(errors)
+
+
 # ── exposure role mismatch ────────────────────────────────────────────────────
 
 def test_outcome_source_as_exposure_flagged() -> None:

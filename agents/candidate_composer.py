@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from agents.method_data_compatibility import select_methods_for_candidate
 from agents.research_template_loader import load_research_template
 from agents.source_registry import SourceRegistry
 from agents.task_seed_generator import TaskSeed, TaskSeedGenerator
@@ -236,6 +237,17 @@ def _compose_training_research(
     return candidates
 
 
+def _template_uses_method_round_robin(template: dict) -> bool:
+    return (
+        template.get("kind") == "quasi_causal_research"
+        or template.get("method_selection") == "round_robin"
+    )
+
+
+def _template_uses_method_compatibility(template: dict) -> bool:
+    return template.get("method_selection") == "data_compatibility"
+
+
 def compose_candidates(req: ComposeRequest) -> list[ComposedCandidate]:
     template = load_research_template(req.template_id)
     registry = SourceRegistry.load()
@@ -270,15 +282,19 @@ def compose_candidates(req: ComposeRequest) -> list[ComposedCandidate]:
     candidates: list[ComposedCandidate] = []
     serial = 1
     seen: set[tuple[str, str, str]] = set()
+    use_method_compatibility = _template_uses_method_compatibility(template)
 
     def _add(exp_name: str, out_name: str, method_name: str) -> bool:
         nonlocal serial
-        key = (exp_name, out_name, method_name)
+        key = (
+            (exp_name, out_name, "selected_method")
+            if use_method_compatibility
+            else (exp_name, out_name, method_name)
+        )
         if key in seen:
             return False
         if exp_name not in eligible_exposures or out_name not in outcomes or method_name not in eligible_methods:
             return False
-        seen.add(key)
         c = _build_candidate(
             serial, exp_name, out_name, method_name,
             eligible_exposures[exp_name], outcomes[out_name], eligible_methods[method_name],
@@ -286,19 +302,54 @@ def compose_candidates(req: ComposeRequest) -> list[ComposedCandidate]:
         )
         if c is None:
             return False
+        if use_method_compatibility:
+            screening = select_methods_for_candidate(c, eligible_methods, registry)
+            selected_method = screening.get("primary_method") or method_name
+            selected_spec = eligible_methods.get(selected_method, eligible_methods[method_name])
+            c = c.model_copy(
+                update={
+                    "method_template": selected_method,
+                    "claim_strength": selected_spec.get(
+                        "claim_strength",
+                        template.get("default_claim_strength", "quasi_causal"),
+                    ),
+                    "key_threats": list(selected_spec.get("key_threats", [])),
+                    "mitigations": dict(selected_spec.get("mitigations", {})),
+                    "method_screening": screening,
+                }
+            )
+        seen.add(key)
         candidates.append(c)
         serial += 1
         return True
 
-    method_name = next(iter(eligible_methods), None)
-    if method_name is None:
+    first_method_name = next(iter(eligible_methods), None)
+    if first_method_name is None:
         return []
+    method_names = (
+        list(eligible_methods.keys())
+        if _template_uses_method_round_robin(template)
+        else [first_method_name]
+    )
+    if use_method_compatibility:
+        method_names = [first_method_name]
 
-    # Round 1: high-pass pairs — always attempt these first
-    for exp_name, out_name in _HIGH_PASS_PAIRS:
-        if len(candidates) >= req.max_candidates:
-            break
-        _add(exp_name, out_name, method_name)
+    # Round 1: high-pass pairs. Quasi-causal templates use a diagonal
+    # round-robin so the early pool covers both X/Y pairs and methods instead
+    # of emitting one X/Y pair with every possible estimator first.
+    if _template_uses_method_round_robin(template):
+        high_pass_rounds = max(len(_HIGH_PASS_PAIRS), len(method_names))
+        for i in range(high_pass_rounds):
+            if len(candidates) >= req.max_candidates:
+                break
+            exp_name, out_name = _HIGH_PASS_PAIRS[i % len(_HIGH_PASS_PAIRS)]
+            method_name = method_names[i % len(method_names)]
+            _add(exp_name, out_name, method_name)
+    else:
+        for exp_name, out_name in _HIGH_PASS_PAIRS:
+            if len(candidates) >= req.max_candidates:
+                break
+            _add(exp_name, out_name, first_method_name)
 
     # Round 2: ensure every eligible exposure family has at least one candidate
     outcome_list = list(outcomes.keys())
@@ -306,7 +357,12 @@ def compose_candidates(req: ComposeRequest) -> list[ComposedCandidate]:
         if len(candidates) >= req.max_candidates:
             break
         for out_name in outcome_list:
-            if _add(exp_name, out_name, method_name):
+            added = False
+            for method_name in method_names:
+                if _add(exp_name, out_name, method_name):
+                    added = True
+                    break
+            if added:
                 break  # one per family in this round
 
     # Round 3: fill remaining slots with remaining (exposure, outcome) combos,
@@ -315,7 +371,10 @@ def compose_candidates(req: ComposeRequest) -> list[ComposedCandidate]:
         for exp_name in eligible_exposures:
             if len(candidates) >= req.max_candidates:
                 break
-            _add(exp_name, out_name, method_name)
+            for method_name in method_names:
+                if len(candidates) >= req.max_candidates:
+                    break
+                _add(exp_name, out_name, method_name)
         if len(candidates) >= req.max_candidates:
             break
 

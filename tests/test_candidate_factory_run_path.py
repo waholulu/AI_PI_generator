@@ -209,6 +209,30 @@ def test_experimental_only_template_does_not_crash_when_all_blocked(tmp_path, mo
     assert screening["speculative_candidates"]
 
 
+def test_tte_factory_writes_method_screening(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTOPI_DATA_ROOT", str(tmp_path))
+    token = settings.activate_run_scope("test-run-tte")
+    try:
+        result = run_candidate_factory_ideation({
+            "domain_input": "Built environment and health",
+            "template_id": "built_environment_health_tte",
+            "candidate_factory_enabled": True,
+            "enable_experimental": False,
+            "max_candidates": 20,
+            "execution_status": "starting",
+        })
+    finally:
+        settings.deactivate_run_scope(token)
+
+    screening = json.loads(Path(result["candidate_topics_path"]).read_text(encoding="utf-8"))
+    assert screening["candidates"]
+    for candidate in screening["candidates"]:
+        method_screening = candidate.get("method_screening") or {}
+        assert method_screening.get("primary_method") == candidate["method"]
+        assert method_screening["methods"][candidate["method"]]["status"] == "eligible"
+        assert method_screening["methods"]["instrumental_variable"]["status"] == "rejected"
+
+
 # ── test 5: a candidate from the shortlist can be selected via candidate_id ───
 
 def test_candidate_selection(factory_result):

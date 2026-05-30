@@ -11,10 +11,34 @@ from models.research_plan_schema import (
     VariableSpec,
 )
 
+_QUASI_CAUSAL_METHODS = {
+    "target_trial_emulation_iptw",
+    "target_trial_emulation_overlap_weighting",
+    "target_trial_emulation_tmle",
+    "target_trial_emulation_aipw",
+    "target_trial_emulation_matching",
+    "causal_forest_heterogeneous_treatment_effects",
+    "regression_discontinuity",
+    "interrupted_time_series",
+    "instrumental_variable",
+    "diff_in_diff_event_study",
+    "synthetic_control",
+}
+
 
 def _as_nonempty(value: Any, fallback: str) -> str:
     text = str(value or "").strip()
     return text or fallback
+
+
+def _claim_strength(candidate: dict[str, Any], method: str) -> str:
+    value = str(candidate.get("claim_strength") or "").strip()
+    allowed = {"descriptive", "associational", "quasi_causal", "causal"}
+    if value in allowed:
+        return value
+    if method in _QUASI_CAUSAL_METHODS:
+        return "quasi_causal"
+    return "associational"
 
 
 def _candidate_data_sources(candidate: dict[str, Any]) -> list[DataSourceSpec]:
@@ -90,7 +114,8 @@ def build_research_plan_from_candidate(
     exposure_name = _as_nonempty(candidate.get("exposure_variable"), "Exposure variable")
     outcome_name = _as_nonempty(candidate.get("outcome_variable"), "Outcome variable")
     geography = _as_nonempty(candidate.get("geography"), "Unknown geography")
-    method = _as_nonempty(candidate.get("method"), "descriptive")
+    method = _as_nonempty(candidate.get("method") or candidate.get("method_template"), "descriptive")
+    claim_strength = _claim_strength(candidate, method)
 
     question = _as_nonempty(
         candidate.get("research_question"),
@@ -122,6 +147,7 @@ def build_research_plan_from_candidate(
     )
     identification = IdentificationSpec(
         primary_method=method,
+        causal_claim_strength=claim_strength,
         key_threats=list(candidate.get("key_threats") or []),
         mitigations=dict(candidate.get("mitigations") or {}),
     )
@@ -129,7 +155,15 @@ def build_research_plan_from_candidate(
     literature_queries = candidate.get("literature_queries") or _fallback_queries(
         title, exposure_name, outcome_name, geography
     )
-    hypotheses = list(candidate.get("hypotheses") or [f"H1: {exposure_name} is associated with {outcome_name}."])
+    if claim_strength == "causal":
+        default_hypothesis = f"H1: {exposure_name} has a causal effect on {outcome_name}."
+    elif claim_strength == "quasi_causal":
+        default_hypothesis = (
+            f"H1: {exposure_name} has a quasi-causal effect on {outcome_name}."
+        )
+    else:
+        default_hypothesis = f"H1: {exposure_name} is associated with {outcome_name}."
+    hypotheses = list(candidate.get("hypotheses") or [default_hypothesis])
 
     eval_dict = evaluation or {}
     overall = str(eval_dict.get("overall_verdict") or "warning")

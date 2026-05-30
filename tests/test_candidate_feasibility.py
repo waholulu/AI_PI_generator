@@ -260,3 +260,59 @@ def test_source_without_catalog_profile_skips_new_checks():
             f"{new_check} should be 'pass' for OSMnx (no catalog profile), "
             f"got {result['subchecks'].get(new_check)}"
         )
+
+
+def test_method_data_compatibility_subcheck_passes_for_selected_tte_method():
+    candidate = _make(
+        exposure_family="walkability",
+        exposure_source="EPA_National_Walkability_Index",
+        outcome_family="physical_inactivity",
+        outcome_source="CDC_PLACES",
+    ).model_copy(
+        update={
+            "template_id": "built_environment_health_tte_v1",
+            "method_template": "target_trial_emulation_overlap_weighting",
+            "claim_strength": "quasi_causal",
+            "method_screening": {
+                "methods": {
+                    "target_trial_emulation_overlap_weighting": {
+                        "status": "eligible",
+                        "reason": "baseline covariates and common support are available",
+                    }
+                }
+            },
+        }
+    )
+
+    result = precheck_candidate(candidate)
+
+    assert result["subchecks"]["method_data_compatibility"] == "pass"
+
+
+def test_method_data_compatibility_subcheck_fails_for_rejected_primary_method():
+    candidate = _make(
+        exposure_family="walkability",
+        exposure_source="EPA_National_Walkability_Index",
+        outcome_family="physical_inactivity",
+        outcome_source="CDC_PLACES",
+    ).model_copy(
+        update={
+            "template_id": "built_environment_health_tte_v1",
+            "method_template": "instrumental_variable",
+            "claim_strength": "quasi_causal",
+            "method_screening": {
+                "methods": {
+                    "instrumental_variable": {
+                        "status": "rejected",
+                        "reason": "no named instrument declared",
+                    }
+                }
+            },
+        }
+    )
+
+    result = precheck_candidate(candidate)
+
+    assert result["subchecks"]["method_data_compatibility"] == "fail"
+    assert result["shortlist_status"] == "blocked"
+    assert any("method_data_mismatch:instrumental_variable" in r for r in result["reasons"])
