@@ -117,11 +117,31 @@ _OUTCOME_SYNONYMS: dict[str, tuple[str, str]] = {
 # Methods that support quasi-causal claims; all others → associational
 _QUASI_CAUSAL_METHODS = {
     "diff_in_diff",
+    "diff_in_diff_event_study",
+    "did",
     "regression_discontinuity",
+    "rd",
     "instrumental_variable",
     "iv",
     "synthetic_control",
     "event_study",
+    "interrupted_time_series",
+    "its",
+    "target_trial_emulation",
+    "target_trial_emulation_iptw",
+    "iptw",
+    "target_trial_emulation_overlap_weighting",
+    "overlap_weighting",
+    "ow",
+    "target_trial_emulation_tmle",
+    "tmle",
+    "target_trial_emulation_aipw",
+    "aipw",
+    "target_trial_emulation_matching",
+    "propensity_score_matching",
+    "propensity_score_weighting",
+    "causal_forest",
+    "causal_forest_heterogeneous_treatment_effects",
 }
 
 # Default threats/mitigations per method template
@@ -131,10 +151,20 @@ _METHOD_THREATS: dict[str, dict[str, str]] = {
         "confounding": "unit and time fixed effects absorb time-invariant and common-trend confounders",
         "spatial_autocorrelation": "cluster standard errors at the county level",
     },
+    "diff_in_diff_event_study": {
+        "parallel_trends_violation": "estimate pre-treatment event-study leads",
+        "treatment_timing_heterogeneity": "use staggered-adoption robust estimators where applicable",
+        "spillover": "exclude neighboring areas or model exposure buffers",
+    },
     "regression_discontinuity": {
         "manipulation": "McCrary density test at the cutoff",
         "confounding": "local polynomial with optimal bandwidth; placebo cutoffs",
         "spillover": "donut RD excluding units within 0.5 SD of cutoff",
+    },
+    "interrupted_time_series": {
+        "pre_existing_trends": "model and visualize pre-intervention trends",
+        "seasonality": "include month or seasonal fixed effects where applicable",
+        "autocorrelation": "use HAC or autoregressive error corrections",
     },
     "instrumental_variable": {
         "instrument_relevance": "first-stage F-statistic > 10",
@@ -146,11 +176,58 @@ _METHOD_THREATS: dict[str, dict[str, str]] = {
         "inference": "permutation-based p-values across donor pool",
         "confounding": "match on pre-treatment outcome trajectories",
     },
+    "target_trial_emulation_iptw": {
+        "baseline_confounding": "estimate propensity scores using baseline-only covariates",
+        "immortal_time_bias": "align eligibility, exposure assignment, and follow-up at time zero",
+        "positivity_violation": "inspect propensity overlap and truncate extreme IPTW weights",
+    },
+    "target_trial_emulation_overlap_weighting": {
+        "baseline_confounding": "estimate overlap weights from pre-exposure covariates",
+        "limited_common_support": "report the overlap-population estimand and effective sample size",
+        "immortal_time_bias": "define time zero before exposure and outcome follow-up",
+    },
+    "target_trial_emulation_tmle": {
+        "nuisance_model_misspecification": "use cross-fitting for outcome and propensity nuisance models",
+        "baseline_confounding": "adjust only for pre-exposure baseline covariates",
+        "positivity_violation": "check propensity overlap and truncation sensitivity",
+    },
+    "target_trial_emulation_aipw": {
+        "nuisance_model_misspecification": "estimate both treatment and outcome models and compare specifications",
+        "baseline_confounding": "use baseline-only socioeconomic and demographic controls",
+        "positivity_violation": "inspect support and trim unstable weights",
+    },
+    "target_trial_emulation_matching": {
+        "baseline_confounding": "match on pre-exposure ACS and geography covariates",
+        "poor_match_quality": "report standardized mean differences before and after matching",
+        "limited_common_support": "drop unmatched units and describe the matched target population",
+    },
+    "causal_forest_heterogeneous_treatment_effects": {
+        "baseline_confounding": "include rich baseline covariates and compare with weighted average effects",
+        "positivity_violation": "restrict heterogeneity claims to regions with common support",
+        "overfitting_heterogeneity": "use honest forests or cross-fitting and validate subgroup effects",
+    },
     "default": {
         "confounding": "adjust for ACS race, income, education, and housing age controls",
         "spatial_autocorrelation": "use spatially-clustered standard errors or spatial-lag term",
         "ecological_bias": "state explicitly that inference is area-level, not individual-level",
     },
+}
+
+_METHOD_ALIASES = {
+    "did": "diff_in_diff",
+    "event_study": "diff_in_diff_event_study",
+    "rd": "regression_discontinuity",
+    "iv": "instrumental_variable",
+    "its": "interrupted_time_series",
+    "target_trial_emulation": "target_trial_emulation_iptw",
+    "iptw": "target_trial_emulation_iptw",
+    "overlap_weighting": "target_trial_emulation_overlap_weighting",
+    "ow": "target_trial_emulation_overlap_weighting",
+    "tmle": "target_trial_emulation_tmle",
+    "aipw": "target_trial_emulation_aipw",
+    "propensity_score_matching": "target_trial_emulation_matching",
+    "propensity_score_weighting": "target_trial_emulation_iptw",
+    "causal_forest": "causal_forest_heterogeneous_treatment_effects",
 }
 
 # Sources that are always added regardless of topic
@@ -329,7 +406,8 @@ def _ensure_declared_sources(candidate: dict) -> dict:
 
 def _fill_threats_and_mitigations(candidate: dict) -> dict:
     """Fill key_threats and mitigations from the method template when absent."""
-    method = str(candidate.get("method") or "").strip().lower()
+    method = str(candidate.get("method") or candidate.get("method_template") or "").strip().lower()
+    method = _METHOD_ALIASES.get(method, method)
     existing_threats: list[str] = list(candidate.get("key_threats") or [])
     existing_mitigations: dict[str, str] = dict(candidate.get("mitigations") or {})
 
@@ -352,7 +430,8 @@ def _fill_threats_and_mitigations(candidate: dict) -> dict:
 
 def _normalize_claim_strength(candidate: dict) -> dict:
     """Set claim_strength based on the identification method."""
-    method = str(candidate.get("method") or "").strip().lower()
+    method = str(candidate.get("method") or candidate.get("method_template") or "").strip().lower()
+    method = _METHOD_ALIASES.get(method, method)
     current = str(candidate.get("claim_strength") or "").strip().lower()
 
     if method in _QUASI_CAUSAL_METHODS:

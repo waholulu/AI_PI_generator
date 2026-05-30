@@ -1,0 +1,362 @@
+template_id: built_environment_health_tte_v1
+kind: quasi_causal_research
+description: >
+  Built environment exposure X to small-area health outcome Y using target
+  trial emulation and quasi-causal effect estimation methods.
+default_geography: United States
+default_unit_of_analysis: census_tract
+default_time_window: 2016-2024
+default_claim_strength: quasi_causal
+method_selection: data_compatibility
+
+required_roles:
+  exposure: true
+  outcome: true
+  control: true
+  boundary: true
+
+target_trial_requirements:
+  - eligibility_criteria
+  - time_zero
+  - treatment_or_exposure_contrast
+  - baseline_covariates
+  - follow_up_window
+  - outcome_measurement
+  - estimand
+
+allowed_exposure_families:
+  walkability:
+    preferred_sources:
+      - EPA_National_Walkability_Index
+      - EPA_Smart_Location_Database
+      - OSMnx_OpenStreetMap
+    allowed_units: [block_group, tract, street_segment]
+    derived_features: [walkability_index, intersection_density, land_use_mix, transit_stop_density]
+
+  street_network:
+    preferred_sources:
+      - OSMnx_OpenStreetMap
+    allowed_units: [street_segment, tract, city]
+    derived_features: [node_density, edge_density, average_circuity, intersection_density]
+
+  green_space:
+    preferred_sources:
+      - NLCD
+      - EPA_EnviroAtlas
+    allowed_units: [raster_30m, tract, block_group]
+    derived_features: [green_space_share, ndvi_proxy]
+
+  impervious_surface:
+    preferred_sources:
+      - NLCD
+    allowed_units: [raster_30m, tract]
+    derived_features: [impervious_surface_share]
+
+  tree_canopy:
+    preferred_sources:
+      - EPA_EnviroAtlas
+    allowed_units: [block_group, tract]
+    derived_features: [tree_canopy_share]
+
+  park_access:
+    preferred_sources:
+      - EPA_EnviroAtlas
+      - OSMnx_OpenStreetMap
+    allowed_units: [tract, city]
+    derived_features: [park_access_index, avg_distance_to_park]
+
+  transit_access:
+    preferred_sources:
+      - GTFS
+      - EPA_Smart_Location_Database
+    allowed_units: [stop, tract, city]
+    derived_features: [transit_stop_density, frequent_service_access]
+
+  destination_accessibility:
+    preferred_sources:
+      - EPA_Smart_Location_Database
+      - OSMnx_OpenStreetMap
+    allowed_units: [block_group, tract]
+    derived_features: [destination_accessibility_index, amenity_density]
+
+  building_density:
+    preferred_sources:
+      - Microsoft_Building_Footprints
+      - EPA_Smart_Location_Database
+    allowed_units: [polygon, tract]
+    derived_features: [building_density, floor_area_proxy]
+
+  nighttime_lights:
+    preferred_sources:
+      - VIIRS
+    allowed_units: [raster, tract]
+    derived_features: [night_lights_mean, night_lights_variance]
+
+allowed_outcome_families:
+  physical_inactivity:
+    preferred_sources: [CDC_PLACES]
+    allowed_units: [tract, county, place, zcta]
+  obesity:
+    preferred_sources: [CDC_PLACES]
+    allowed_units: [tract, county, place, zcta]
+  diabetes:
+    preferred_sources: [CDC_PLACES]
+    allowed_units: [tract, county, place, zcta]
+  asthma:
+    preferred_sources: [CDC_PLACES]
+    allowed_units: [tract, county, place, zcta]
+  poor_mental_health:
+    preferred_sources: [CDC_PLACES]
+    allowed_units: [tract, county, place, zcta]
+  poor_physical_health:
+    preferred_sources: [CDC_PLACES]
+    allowed_units: [tract, county, place, zcta]
+  cardiovascular_disease:
+    preferred_sources: [CDC_PLACES]
+    allowed_units: [tract, county, place, zcta]
+
+default_controls: [ACS]
+default_boundary_source: [TIGER_Lines]
+
+allowed_methods:
+  target_trial_emulation_iptw:
+    claim_strength: quasi_causal
+    applicability: >
+      Use when baseline covariates can support exchangeability and a treatment
+      or exposure contrast can be defined at time zero.
+    estimand: average_treatment_effect
+    key_threats:
+      - baseline_confounding
+      - immortal_time_bias
+      - positivity_violation
+      - exposure_measurement_error
+      - spatial_autocorrelation
+    mitigations:
+      baseline_confounding: Estimate propensity scores with baseline-only ACS and geography covariates.
+      immortal_time_bias: Align eligibility, exposure assignment, and follow-up at the same time zero.
+      positivity_violation: Inspect propensity overlap and truncate extreme inverse probability weights.
+      exposure_measurement_error: Run alternative exposure definitions and lag windows.
+      spatial_autocorrelation: Use clustered or spatially robust standard errors.
+    minimum_diagnostics: [covariate_balance_smd, weight_distribution, propensity_overlap]
+    robustness_checks: [weight_truncation, negative_control_outcome, lagged_exposure]
+
+  target_trial_emulation_overlap_weighting:
+    claim_strength: quasi_causal
+    applicability: >
+      Use when treated and control units have imperfect overlap and the target
+      estimand should be the overlap population.
+    estimand: average_treatment_effect_in_overlap_population
+    key_threats:
+      - baseline_confounding
+      - limited_common_support
+      - immortal_time_bias
+      - exposure_measurement_error
+      - spatial_autocorrelation
+    mitigations:
+      baseline_confounding: Estimate propensity scores from pre-exposure covariates only.
+      limited_common_support: Report overlap weights and define the estimand as the overlap population.
+      immortal_time_bias: Define eligibility and follow-up from a single aligned time zero.
+      exposure_measurement_error: Test alternative exposure thresholds.
+      spatial_autocorrelation: Cluster by county or metro area where possible.
+    minimum_diagnostics: [propensity_overlap, effective_sample_size, covariate_balance_smd]
+    robustness_checks: [alternative_propensity_models, overlap_trim_sensitivity, placebo_exposure]
+
+  target_trial_emulation_tmle:
+    claim_strength: quasi_causal
+    applicability: >
+      Use when flexible nuisance models and double robustness are preferred for
+      the target trial contrast.
+    estimand: average_treatment_effect
+    key_threats:
+      - nuisance_model_misspecification
+      - baseline_confounding
+      - positivity_violation
+      - immortal_time_bias
+      - exposure_measurement_error
+    mitigations:
+      nuisance_model_misspecification: Use cross-fitting or sample splitting for outcome and propensity nuisance models.
+      baseline_confounding: Restrict adjustment variables to pre-exposure covariates.
+      positivity_violation: Check propensity overlap and report truncation sensitivity.
+      immortal_time_bias: Anchor treatment assignment and follow-up at time zero.
+      exposure_measurement_error: Compare alternative feature construction pipelines.
+    minimum_diagnostics: [cross_fit_folds, propensity_overlap, covariate_balance_smd]
+    robustness_checks: [alternative_learners, truncation_sensitivity, negative_control_outcome]
+
+  target_trial_emulation_aipw:
+    claim_strength: quasi_causal
+    applicability: >
+      Use as a doubly robust estimator when both outcome and treatment models
+      can be specified from baseline covariates.
+    estimand: average_treatment_effect
+    key_threats:
+      - nuisance_model_misspecification
+      - baseline_confounding
+      - positivity_violation
+      - immortal_time_bias
+      - spatial_autocorrelation
+    mitigations:
+      nuisance_model_misspecification: Estimate both treatment and outcome models and report doubly robust sensitivity.
+      baseline_confounding: Use baseline-only socioeconomic and demographic controls.
+      positivity_violation: Inspect support and trim unstable weights.
+      immortal_time_bias: Align exposure assignment and follow-up windows.
+      spatial_autocorrelation: Use clustered or spatially robust inference.
+    minimum_diagnostics: [propensity_overlap, outcome_model_fit, covariate_balance_smd]
+    robustness_checks: [alternative_nuisance_models, weight_truncation, placebo_outcome]
+
+  target_trial_emulation_matching:
+    claim_strength: quasi_causal
+    applicability: >
+      Use when a transparent matched comparison set is preferable and common
+      support can be established.
+    estimand: average_treatment_effect_on_matched_units
+    key_threats:
+      - baseline_confounding
+      - poor_match_quality
+      - limited_common_support
+      - immortal_time_bias
+      - exposure_measurement_error
+    mitigations:
+      baseline_confounding: Match on pre-exposure ACS and geography covariates.
+      poor_match_quality: Report standardized mean differences before and after matching.
+      limited_common_support: Drop unmatched units and describe the matched target population.
+      immortal_time_bias: Define exposure and follow-up from a common time zero.
+      exposure_measurement_error: Test alternative exposure thresholds or continuous contrasts.
+    minimum_diagnostics: [standardized_mean_differences, match_rate, common_support]
+    robustness_checks: [caliper_sensitivity, exact_geography_matching, placebo_outcome]
+
+  causal_forest_heterogeneous_treatment_effects:
+    claim_strength: quasi_causal
+    applicability: >
+      Use when treatment-effect heterogeneity across neighborhoods is central
+      and a defensible treatment contrast is available.
+    estimand: conditional_average_treatment_effect
+    key_threats:
+      - baseline_confounding
+      - positivity_violation
+      - overfitting_heterogeneity
+      - exposure_measurement_error
+      - spatial_autocorrelation
+    mitigations:
+      baseline_confounding: Include rich baseline covariates and compare with weighted average effects.
+      positivity_violation: Restrict heterogeneity claims to regions with common support.
+      overfitting_heterogeneity: Use honest forests or cross-fitting and validate subgroup effects.
+      exposure_measurement_error: Check alternative treatment definitions.
+      spatial_autocorrelation: Cluster inference or aggregate CATEs by geography.
+    minimum_diagnostics: [overlap_check, variable_importance, heterogeneity_validation]
+    robustness_checks: [honest_forest, subgroup_placebo, alternative_treatment_thresholds]
+
+  regression_discontinuity:
+    claim_strength: quasi_causal
+    applicability: >
+      Use only when assignment changes sharply at a known eligibility cutoff,
+      policy threshold, boundary, or score.
+    estimand: local_average_treatment_effect_at_cutoff
+    key_threats:
+      - cutoff_manipulation
+      - bandwidth_sensitivity
+      - covariate_imbalance
+      - spillover
+      - spatial_sorting
+    mitigations:
+      cutoff_manipulation: Run density or manipulation checks around the cutoff.
+      bandwidth_sensitivity: Report estimates across multiple bandwidths and kernels.
+      covariate_imbalance: Test pre-treatment covariate continuity.
+      spillover: Use donut RD or exclude units immediately around contaminated boundaries.
+      spatial_sorting: Include local geography controls and discuss sorting risks.
+    minimum_diagnostics: [density_test, bandwidth_table, covariate_continuity]
+    robustness_checks: [donut_rd, placebo_cutoffs, alternative_polynomial_orders]
+
+  interrupted_time_series:
+    claim_strength: quasi_causal
+    applicability: >
+      Use when a clear intervention date or shock exists and repeated outcome
+      observations are available before and after the intervention.
+    estimand: level_or_slope_change_after_intervention
+    key_threats:
+      - pre_existing_trends
+      - seasonality
+      - autocorrelation
+      - concurrent_interventions
+      - measurement_change
+    mitigations:
+      pre_existing_trends: Model and visualize pre-intervention level and trend.
+      seasonality: Include month or seasonal fixed effects where applicable.
+      autocorrelation: Use HAC or autoregressive error corrections.
+      concurrent_interventions: Document and adjust for overlapping policy changes.
+      measurement_change: Check outcome definition stability across the series.
+    minimum_diagnostics: [pretrend_plot, autocorrelation_check, seasonality_controls]
+    robustness_checks: [placebo_intervention_dates, alternative_pre_periods, segmented_regression]
+
+  instrumental_variable:
+    claim_strength: quasi_causal
+    applicability: >
+      Use only when a credible instrument shifts built-environment exposure but
+      affects the outcome only through that exposure.
+    estimand: local_average_treatment_effect
+    key_threats:
+      - weak_instrument
+      - exclusion_restriction_violation
+      - monotonicity_violation
+      - spatial_spillover
+      - baseline_confounding
+    mitigations:
+      weak_instrument: Report first-stage strength and weak-instrument robust inference.
+      exclusion_restriction_violation: Provide a domain argument and negative-control checks.
+      monotonicity_violation: State the complier interpretation and test alternative instruments if available.
+      spatial_spillover: Test buffer exclusions or neighboring-area controls.
+      baseline_confounding: Include pre-exposure controls and geography fixed effects.
+    minimum_diagnostics: [first_stage_f_stat, reduced_form, exclusion_argument]
+    robustness_checks: [alternative_instruments, overidentification_if_available, negative_control_outcome]
+
+  diff_in_diff_event_study:
+    claim_strength: quasi_causal
+    applicability: >
+      Use when treated and comparison units have before/after observations and
+      the exposure changes at different times or places.
+    estimand: average_treatment_effect_on_treated
+    key_threats:
+      - parallel_trends_violation
+      - treatment_timing_heterogeneity
+      - spillover
+      - anticipation_effects
+      - compositional_change
+    mitigations:
+      parallel_trends_violation: Estimate pre-treatment event-study leads.
+      treatment_timing_heterogeneity: Use staggered-adoption robust estimators where applicable.
+      spillover: Exclude neighboring areas or model exposure buffers.
+      anticipation_effects: Include leads and sensitivity to pre-period exclusions.
+      compositional_change: Check population and boundary stability.
+    minimum_diagnostics: [event_study_leads, treated_control_balance, timing_distribution]
+    robustness_checks: [alternative_control_groups, placebo_timing, cluster_robust_se]
+
+  synthetic_control:
+    claim_strength: quasi_causal
+    applicability: >
+      Use for a small number of treated geographies or policy shocks with a
+      donor pool and sufficient pre-treatment history.
+    estimand: treated_unit_counterfactual_gap
+    key_threats:
+      - poor_pre_treatment_fit
+      - donor_pool_contamination
+      - concurrent_interventions
+      - extrapolation
+      - spillover
+    mitigations:
+      poor_pre_treatment_fit: Report pre-treatment RMSPE and fit plots.
+      donor_pool_contamination: Exclude donors exposed to related policies or shocks.
+      concurrent_interventions: Document co-occurring interventions and sensitivity exclusions.
+      extrapolation: Inspect donor weights and predictor balance.
+      spillover: Remove geographically adjacent donors when spillover is plausible.
+    minimum_diagnostics: [pre_treatment_fit, donor_weights, placebo_inference]
+    robustness_checks: [leave_one_out_donors, placebo_units, alternative_predictor_sets]
+
+technology_options:
+  osmnx:
+    default_enabled: true
+    cloud_safe: true
+  remote_sensing:
+    default_enabled: true
+    cloud_safe: true
+  quasi_causal_methods:
+    default_enabled: true
+    cloud_safe: true

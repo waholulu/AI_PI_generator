@@ -32,6 +32,7 @@ class ComposedCandidate(BaseModel):
     claim_strength: str = "associational"
     key_threats: list[str] = Field(default_factory=list)
     mitigations: dict[str, str] = Field(default_factory=dict)
+    method_screening: dict = Field(default_factory=dict)
     technology_tags: list[str] = Field(default_factory=list)
     required_secrets: list[str] = Field(default_factory=list)
     automation_risk: Literal["low", "medium", "high"] = "low"
