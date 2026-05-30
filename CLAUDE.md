@@ -10,7 +10,7 @@ Auto-PI (AI PI Generator) is a multi-agent research automation pipeline that ass
 # Requires Python 3.11–3.12
 uv sync            # or: pip install -e .
 cp .env.example .env
-# Fill in API keys in .env (at minimum GEMINI_API_KEY)
+# Fill in API keys in .env (at minimum DEEPSEEK_API_KEY; set LLM_PROVIDER=google + GEMINI_API_KEY to use Gemini)
 python main.py                         # Level 2 interactive CLI (default)
 python main.py --mode level_1 --user-topic inputs/my_topic.yaml   # Level 1
 python main.py --legacy-ideation       # Legacy pipeline (V0)
@@ -36,7 +36,7 @@ START → ideation → idea_validator → [HITL checkpoint] → literature → d
 - **Ideation** (`agents/ideation_agent.py`) — Thin router → V2 (default) or V0 (legacy). V2 runs 7-gate evaluation + reflection loop; produces `research_plan.json` + `tentative_pool.json`
 - **Idea Validator** (`agents/idea_validator_agent.py`) — Validates top candidates for novelty via OpenAlex recent-paper search and data availability via registry matching; auto-substitutes failed ideas from backup pool
 - **Literature** (`agents/literature_agent.py`) — Multi-query OpenAlex search, dedup, evidence cards, BibTeX
-- **Drafter** (`agents/drafter_agent.py`) — Synthesizes academic draft from plan + literature via Gemini Pro
+- **Drafter** (`agents/drafter_agent.py`) — Synthesizes academic draft from plan + literature via the "pro" model (DeepSeek V4 Pro by default; provider-agnostic through `agents/llm.py`)
 - **Data Fetcher** (`agents/data_fetcher_agent.py`) — Collects/simulates public datasets (currently mock)
 
 ### Module 1 Upgrade (branch: `claude/auto-pi-module1-upgrade-JLv30`)
@@ -88,6 +88,8 @@ Topics with ≤2 refinable gate failures are held in `output/tentative_pool.json
 
 ### Shared Utilities
 
+- **LLM factory** (`agents/llm.py`) — Central provider-agnostic model factory; `create_chat_model(role)` resolves `LLM_PROVIDER` (default `deepseek`) and maps the `fast`/`pro` role to a concrete model (`LLM_FAST_MODEL` / `LLM_PRO_MODEL`). All agents call this rather than instantiating Gemini/DeepSeek clients directly
+- **CandidateReranker** (`agents/candidate_reranker.py`) — Network-free, domain-aware reranking layer applied to the candidate-factory pool. `rerank_candidates(cards, domain_input, field_scan_summary)` scores five dimensions (domain fit, empirical deepening value, identification strength, novelty potential, title quality) and annotates each card with a `rerank` block (incl. `empirical_deepening_claim`, `tech_lens_type`); invoked by `agents/candidate_factory_ideation.py` before shortlist selection
 - **KeywordPlanner** (`agents/keyword_planner.py`) — LLM-based query reformulation for OpenAlex searches
 - **MemoryRetriever** (`agents/memory_retriever.py`) — CSV-based persistent idea memory to avoid repeating failed directions
 - **Settings** (`agents/settings.py`) — Centralized path configuration; all paths relative to `AUTOPI_DATA_ROOT`
@@ -203,11 +205,12 @@ interpretability evaluations.
 
 ## Tech Stack
 
-- **Python 3.10** (strictly pinned)
+- **Python 3.11–3.12** (`requires-python = ">=3.11,<3.13"`)
 - **LangGraph** — Agent orchestration, state graph, checkpointing
 - **LangChain** — LLM abstraction layer
+- **DeepSeek** — Default LLM (`deepseek-v4-pro` for both fast and pro roles), via the central factory in `agents/llm.py`
+- **Google Gemini** — Optional provider (`LLM_PROVIDER=google`; `gemini-2.0-flash-lite` for fast tasks, `gemini-2.5-pro` for complex tasks)
 - **FastAPI + uvicorn** — REST API for cloud management
-- **Google Gemini** — Primary LLM (`gemini-2.0-flash-lite` for fast tasks, `gemini-2.5-pro` for complex tasks)
 - **Anthropic Claude** — Fallback for data fetcher
 - **pyalex** — OpenAlex API client
 - **Pydantic** — Data validation schemas throughout
@@ -219,12 +222,21 @@ See `.env.example` for the full list. Key variables:
 
 | Variable | Purpose |
 |----------|---------|
-| `GEMINI_API_KEY` | Google AI API key (required) |
-| `GEMINI_FAST_MODEL` | Fast model name (default: `gemini-2.0-flash-lite`) |
-| `GEMINI_PRO_MODEL` | Pro model name (default: `gemini-2.5-pro`) |
+| `LLM_PROVIDER` | Active LLM provider: `deepseek` (default) or `google` |
+| `LLM_FAST_MODEL` | Fast-role model name (default: `deepseek-v4-pro`) |
+| `LLM_PRO_MODEL` | Pro-role model name (default: `deepseek-v4-pro`) |
+| `DEEPSEEK_API_KEY` | DeepSeek API key (required when `LLM_PROVIDER=deepseek`) |
+| `DEEPSEEK_BASE_URL` | DeepSeek API base URL (default: `https://api.deepseek.com`) |
+| `GEMINI_API_KEY` | Google AI API key (required when `LLM_PROVIDER=google`) |
+| `GEMINI_FAST_MODEL` | Gemini fast model name (default: `gemini-2.0-flash-lite`) |
+| `GEMINI_PRO_MODEL` | Gemini pro model name (default: `gemini-2.5-pro`) |
 | `OPENALEX_API_KEY` | OpenAlex API key |
 | `OPENALEX_EMAIL` | OpenAlex polite pool email |
+| `UNPAYWALL_EMAIL` | Unpaywall polite pool email |
 | `OPENALEX_QUERY_REWRITE_ENABLED` | Toggle LLM query reformulation |
+| `OPENALEX_QUERY_REWRITE_MAX_QUERIES` | Max queries executed per scan (default: `10`) |
+| `OPENALEX_QUERY_REWRITE_PER_QUERY_LIMIT` | Results per query (default: `20` field scan, `5` literature) |
+| `OPENALEX_QUERY_REWRITE_MODEL` | Override model for reformulation (defaults to `LLM_FAST_MODEL`) |
 | `LITERATURE_FINAL_LIMIT` | Papers kept after dedup (default: 3) |
 | `AUTOPI_DATA_ROOT` | Root dir for all outputs (default: `.`; set to `/app/storage` in cloud) |
 | `DATABASE_URL` | PostgreSQL URL for cloud checkpointing; omit for SQLite |
@@ -363,7 +375,7 @@ curl -O "$AUTOPI_API_URL/runs/<run_id>/outputs/research_context.json"
 ### Manage secrets on Railway
 
 ```bash
-railway variables set GEMINI_API_KEY=...
+railway variables set DEEPSEEK_API_KEY=...   # or GEMINI_API_KEY with LLM_PROVIDER=google
 railway variables set OPENALEX_API_KEY=...
 railway variables set OPENALEX_EMAIL=...
 railway variables list
