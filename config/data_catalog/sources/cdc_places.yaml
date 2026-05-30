@@ -27,7 +27,7 @@ spatial_units:
 # ── Enhanced data catalog fields ─────────────────────────────────────────────
 acquisition:
   method: api
-  url: https://data.cdc.gov/resource/cwsq-ngmh.csv
+  url: https://data.cdc.gov/resource/yjkw-uj5s.csv
   documentation_url: https://www.cdc.gov/places/about/index.html
   expected_format: csv_api_gis
   auth_required: false
@@ -35,9 +35,12 @@ acquisition:
   expected_files:
     - data/raw/cdc_places.csv
   notes: >
-    Download via CDC PLACES API (Socrata endpoint) or direct CSV download.
-    Filter by LocationType='Census Tract' and StateAbbr for target state.
-    Key columns: LocationID (=GEOID 11-digit tract FIPS), MeasureId, Data_Value.
+    Download via CDC PLACES Census Tract Data GIS-friendly Socrata endpoint
+    or direct CSV download. For the 2025 tract GIS-friendly release, key
+    columns are TractFIPS (=GEOID 11-digit tract FIPS) and measure-specific
+    wide columns such as lpa_crudeprev. The long-format Socrata endpoint
+    (cwsq-ngmh) is also usable; there, filter MeasureId='LPA' and join with
+    LocationID.
 
 geography:
   native_unit: census_tract
@@ -50,6 +53,7 @@ geography:
   default_aggregation: ""
   join_keys:
     - GEOID
+    - TractFIPS
     - LocationID
   coverage: nationwide
 
@@ -67,81 +71,81 @@ temporal_coverage:
 variable_families:
   physical_inactivity:
     family_id: physical_inactivity
-    description: Age-adjusted prevalence of physical inactivity among adults
+    description: Crude prevalence of physical inactivity among adults
     variables:
-      - name: LPA
-        description: No leisure-time physical activity among adults (age-adjusted %)
-        unit: percent_age_adjusted
-        dtype: float
-      - name: LPA_CrudePrev
-        description: Crude prevalence of physical inactivity
+      - name: lpa_crudeprev
+        description: No leisure-time physical activity among adults (crude %)
         unit: percent_crude
         dtype: float
+      - name: lpa_crude95ci
+        description: 95% confidence interval for crude physical inactivity prevalence
+        unit: percent_interval
+        dtype: string
     aggregation_allowed_to:
       - county
 
   obesity:
     family_id: obesity
-    description: Age-adjusted prevalence of obesity among adults
+    description: Crude prevalence of obesity among adults
     variables:
-      - name: OBESITY
-        description: Obesity among adults (age-adjusted %)
-        unit: percent_age_adjusted
+      - name: obesity_crudeprev
+        description: Obesity among adults (crude %)
+        unit: percent_crude
         dtype: float
     aggregation_allowed_to:
       - county
 
   diabetes:
     family_id: diabetes
-    description: Age-adjusted prevalence of diagnosed diabetes among adults
+    description: Crude prevalence of diagnosed diabetes among adults
     variables:
-      - name: DIABETES
-        description: Diagnosed diabetes among adults (age-adjusted %)
-        unit: percent_age_adjusted
+      - name: diabetes_crudeprev
+        description: Diagnosed diabetes among adults (crude %)
+        unit: percent_crude
         dtype: float
     aggregation_allowed_to:
       - county
 
   asthma:
     family_id: asthma
-    description: Age-adjusted prevalence of current asthma among adults
+    description: Crude prevalence of current asthma among adults
     variables:
-      - name: CASTHMA
-        description: Current asthma among adults (age-adjusted %)
-        unit: percent_age_adjusted
+      - name: casthma_crudeprev
+        description: Current asthma among adults (crude %)
+        unit: percent_crude
         dtype: float
     aggregation_allowed_to:
       - county
 
   poor_mental_health:
     family_id: poor_mental_health
-    description: Age-adjusted prevalence of frequent mental distress among adults
+    description: Crude prevalence of frequent mental distress among adults
     variables:
-      - name: MHLTH
-        description: Mental health not good for ≥14 days (age-adjusted %)
-        unit: percent_age_adjusted
+      - name: mhlth_crudeprev
+        description: Mental health not good for >=14 days (crude %)
+        unit: percent_crude
         dtype: float
     aggregation_allowed_to:
       - county
 
   poor_physical_health:
     family_id: poor_physical_health
-    description: Age-adjusted prevalence of frequent physical distress among adults
+    description: Crude prevalence of frequent physical distress among adults
     variables:
-      - name: PHLTH
-        description: Physical health not good for ≥14 days (age-adjusted %)
-        unit: percent_age_adjusted
+      - name: phlth_crudeprev
+        description: Physical health not good for >=14 days (crude %)
+        unit: percent_crude
         dtype: float
     aggregation_allowed_to:
       - county
 
   cardiovascular_disease:
     family_id: cardiovascular_disease
-    description: Age-adjusted prevalence of coronary heart disease among adults
+    description: Crude prevalence of coronary heart disease among adults
     variables:
-      - name: CHD
-        description: Coronary heart disease among adults (age-adjusted %)
-        unit: percent_age_adjusted
+      - name: chd_crudeprev
+        description: Coronary heart disease among adults (crude %)
+        unit: percent_crude
         dtype: float
     aggregation_allowed_to:
       - county
@@ -150,28 +154,30 @@ join_recipes:
   - recipe_id: cdc_places_tract_to_study
     left_source: CDC_PLACES
     right_source: TIGER_Lines
-    left_key: LocationID
+    left_key: TractFIPS
     right_key: GEOID
     join_type: inner
     notes: >
       Join CDC PLACES tract-level estimates to TIGER tract boundaries on GEOID.
-      LocationID in CDC PLACES equals 11-digit census tract FIPS (same as TIGER GEOID).
+      TractFIPS in the GIS-friendly release equals 11-digit census tract FIPS
+      (same as TIGER GEOID). If using the long-format endpoint instead, use
+      LocationID as the equivalent key.
     warnings:
-      - Filter LocationType='Census Tract' before joining
+      - Use the Census Tract GIS-friendly release or filter the long-format endpoint to census tracts before joining
 
 validation_rules:
-  - rule_id: locationid_is_11_digits
-    description: LocationID for tract level must be 11-digit census tract FIPS
+  - rule_id: tractfips_is_11_digits
+    description: TractFIPS for tract level must be 11-digit census tract FIPS
     severity: error
   - rule_id: data_value_range
-    description: Data_Value (prevalence) should be between 0 and 100
+    description: Crude prevalence fields should be between 0 and 100
     severity: warning
-  - rule_id: filter_by_location_type
-    description: Always filter LocationType='Census Tract' for tract-level analysis
+  - rule_id: confirm_tract_endpoint
+    description: Use tract GIS-friendly endpoint or filter long-format endpoint to census tracts
     severity: error
 
 known_limitations:
   - "Model-based small-area estimates — not direct survey measurements"
-  - "Suppressed values for small populations; check Data_Value_Footnote"
-  - "Age-adjusted rates assume 2000 US standard population"
+  - "Suppressed values for small populations; check confidence intervals and footnotes"
+  - "GIS-friendly tract release exposes crude prevalence fields; age-adjusted fields may require a different endpoint or release"
   - "Annual model specification changes make strict panel comparison difficult"

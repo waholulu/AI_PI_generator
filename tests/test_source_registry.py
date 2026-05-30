@@ -182,6 +182,25 @@ def test_has_variable_mapping_positive():
     assert registry.has_variable_mapping("CDC_PLACES", "physical_inactivity") is True
 
 
+def test_cdc_places_physical_inactivity_uses_tract_gis_columns():
+    """CDC PLACES physical inactivity should use the concrete tract API fields."""
+    registry = SourceRegistry.load()
+    profile = registry.get_profile("CDC_PLACES")
+    assert profile is not None
+
+    assert profile.acquisition.url.endswith("/yjkw-uj5s.csv")
+    assert "TractFIPS" in profile.geography.join_keys
+
+    physical_inactivity = profile.variable_families["physical_inactivity"]
+    variable_names = [v["name"] for v in physical_inactivity["variables"]]
+    assert "lpa_crudeprev" in variable_names
+    assert "lpa_crude95ci" in variable_names
+
+    recipe = profile.join_recipes[0]
+    assert recipe.left_key == "TractFIPS"
+    assert recipe.right_key == "GEOID"
+
+
 def test_has_variable_mapping_negative():
     """has_variable_mapping returns False for missing families."""
     registry = SourceRegistry.load()
