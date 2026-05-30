@@ -74,6 +74,10 @@ def _technology_tags(exp_source: str, exp_family: str, exp_spec: dict) -> list[s
         tags.append("mobility")
     if exp_spec.get("tier") == "experimental" or exp_family == "streetview_built_form":
         tags.append("experimental")
+    if exp_family == "streetview_built_form" or (
+        "street" in source and "image" in source
+    ):
+        tags.extend(["vision", "streetview_cv"])
     return tags
 
 

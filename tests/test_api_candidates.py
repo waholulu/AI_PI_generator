@@ -19,6 +19,13 @@ def _write_cards(run_id: str, payload: dict) -> None:
     output_file.write_text(json.dumps(payload), encoding="utf-8")
 
 
+def _write_speculative(run_id: str, payload: dict) -> None:
+    run_root = settings.run_root(run_id, create=True)
+    output_file = run_root / "output" / "speculative_candidates.json"
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    output_file.write_text(json.dumps(payload), encoding="utf-8")
+
+
 _FULL_CANDIDATE = {
     "candidate_id": "beh_001",
     "title": "Street Network Connectivity and Adult Physical Inactivity",
@@ -254,3 +261,47 @@ def test_candidates_list_returns_empty_for_no_files(monkeypatch, tmp_path) -> No
     listed = asyncio.run(server.list_candidates(run_id))
     assert listed["count"] == 0
     assert listed["candidates"] == []
+
+
+def test_candidates_list_speculative_view(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("AUTOPI_DATA_ROOT", str(tmp_path))
+    run_id = "run-speculative-view"
+    _write_speculative(
+        run_id,
+        {
+            "candidates": [
+                {
+                    "candidate_id": "spec_streetview_beh_001",
+                    "title": "Street-view CV and physical inactivity",
+                    "research_question": "RQ",
+                    "exposure_family": "streetview_built_form",
+                    "exposure_source": "Mapillary_Street_Images",
+                    "outcome_family": "physical_inactivity",
+                    "outcome_source": "CDC_PLACES",
+                    "unit_of_analysis": "census_tract",
+                    "method": "cross_sectional_spatial_association",
+                    "technology_tags": ["experimental", "vision", "streetview_cv"],
+                    "required_secrets": ["Mapillary_Street_Images:api_key"],
+                    "automation_risk": "high",
+                    "readiness": "blocked",
+                    "shortlist_status": "blocked",
+                    "speculative_status": "review_only",
+                    "selectable": False,
+                    "unlock_requirements": ["Provide Mapillary token"],
+                    "why_speculative": "Street-view CV requires review.",
+                }
+            ]
+        },
+    )
+    monkeypatch.setattr(server.run_manager, "get_run", lambda _: _Run(run_id))
+
+    listed = asyncio.run(server.list_candidates(run_id, view="speculative"))
+    assert listed["view"] == "speculative"
+    assert listed["count"] == 1
+    card = listed["candidates"][0]
+    assert card["candidate_id"] == "spec_streetview_beh_001"
+    assert card["readiness"] == "blocked"
+    assert card["speculative_status"] == "review_only"
+    assert card["selectable"] is False
+    assert card["unlock_requirements"] == ["Provide Mapillary token"]
+    assert "streetview_cv" in card["technology_tags"]

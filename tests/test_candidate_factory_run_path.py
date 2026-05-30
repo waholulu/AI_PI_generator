@@ -131,7 +131,7 @@ def test_topic_screening_written(factory_result):
     screening_path = Path(result["candidate_topics_path"])
     assert screening_path.exists(), "topic_screening.json was not created"
 
-    screening = json.loads(screening_path.read_text())
+    screening = json.loads(screening_path.read_text(encoding="utf-8"))
     assert screening.get("ideation_mode") == "candidate_factory", \
         "topic_screening.json must carry ideation_mode=candidate_factory"
 
@@ -163,9 +163,50 @@ def test_topic_screening_written(factory_result):
 
     # Full pool must still be in candidate_cards.json (not merged into topic_screening)
     cards_path = Path(result["candidate_cards_path"])
-    cards = json.loads(cards_path.read_text())
+    cards = json.loads(cards_path.read_text(encoding="utf-8"))
     assert len(cards) > len(candidates), \
         "candidate_cards.json (full pool) must have more entries than topic_screening.json (shortlist)"
+
+
+def test_speculative_streetview_candidates_written(factory_result):
+    """Stable runs should surface review-only street-view ideas in a side lane."""
+    result = factory_result
+    speculative_path = Path(result["speculative_candidates_path"])
+    assert speculative_path.exists(), "speculative_candidates.json was not created"
+
+    screening = json.loads(Path(result["candidate_topics_path"]).read_text(encoding="utf-8"))
+    speculative = screening.get("speculative_candidates", [])
+    assert speculative, "Expected at least one speculative candidate"
+    assert all(c.get("selectable") is False for c in speculative)
+    assert all(c.get("readiness") == "blocked" for c in speculative)
+    assert any(c.get("exposure_family") == "streetview_built_form" for c in speculative)
+    assert any("streetview_cv" in (c.get("technology_tags") or []) for c in speculative)
+    assert not {
+        c["candidate_id"] for c in screening["candidates"]
+    } & {
+        c["candidate_id"] for c in speculative
+    }, "Speculative candidate IDs must not collide with safe shortlist IDs"
+
+
+def test_experimental_only_template_does_not_crash_when_all_blocked(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTOPI_DATA_ROOT", str(tmp_path))
+    token = settings.activate_run_scope("test-run-experimental-only")
+    try:
+        result = run_candidate_factory_ideation({
+            "domain_input": "Built environment and health",
+            "template_id": "built_environment_health_experimental",
+            "candidate_factory_enabled": True,
+            "enable_experimental": True,
+            "technology_options": {"streetview_cv": True},
+            "execution_status": "starting",
+        })
+    finally:
+        settings.deactivate_run_scope(token)
+
+    assert result["execution_status"] == "ideation_complete"
+    screening = json.loads(Path(result["candidate_topics_path"]).read_text(encoding="utf-8"))
+    assert screening["candidates"] == []
+    assert screening["speculative_candidates"]
 
 
 # ── test 5: a candidate from the shortlist can be selected via candidate_id ───
@@ -174,7 +215,7 @@ def test_candidate_selection(factory_result):
     """apply_idea_selection_by_candidate_id works on any shortlist candidate."""
     result = factory_result
     # Pick the first candidate from the shortlist (rank-1 after factory ranking).
-    screening = json.loads(Path(result["candidate_topics_path"]).read_text())
+    screening = json.loads(Path(result["candidate_topics_path"]).read_text(encoding="utf-8"))
     first_id = screening["candidates"][0]["candidate_id"]
 
     from agents.hitl_helpers import apply_idea_selection_by_candidate_id

@@ -504,75 +504,66 @@ def select_diverse_shortlist(
     return selected
 
 
-def run_candidate_factory_ideation(state: dict) -> dict:
-    """Stage 1 of the two-stage candidate flow.
+def _enabled_technologies(state: dict, extra: list[str] | None = None) -> list[str]:
+    enabled = [
+        key for key, value in (state.get("technology_options") or {}).items()
+        if bool(value)
+    ]
+    for item in extra or []:
+        if item not in enabled:
+            enabled.append(item)
+    return enabled
 
-    Pipeline:
-      compose_candidates → normalize/enrich → precheck → repair → export_validate
-      → compute_readiness → score → rank full pool → diverse-select shortlist
-      → format display cards → write outputs
 
-    Stage 1 deliberately does NOT run novelty checks (cards carry
-    novelty_status="pending_literature_check") and does NOT generate
-    development packs.  Both are deferred to Stage 2 nodes that run after
-    the user picks one candidate at the HITL checkpoint.
-
-    candidate_cards.json  — full pool (max_candidates entries), ranked
-    topic_screening.json  — diverse shortlist (≤ shortlist_size entries)
-
-    Returns file-path references for downstream pipeline nodes.
-    """
-    template_id = state["template_id"]
-    domain_input = state["domain_input"]
-    # max_candidates controls the internal generation pool size, NOT the UI display count.
-    max_candidates = state.get("max_candidates", 40)
-    # shortlist_size controls how many candidates appear in topic_screening.json / UI.
-    shortlist_size = state.get("shortlist_size", 5)
-
-    logger.info(
-        "Candidate factory ideation — template: %s  pool: %d  shortlist: %d",
-        template_id, max_candidates, shortlist_size,
-    )
-
-    req = ComposeRequest(
+def _compose_request(
+    state: dict,
+    *,
+    template_id: str,
+    max_candidates: int,
+    enable_experimental: bool | None = None,
+    preferred_technology: list[str] | None = None,
+    automation_risk_tolerance: str | None = None,
+) -> ComposeRequest:
+    return ComposeRequest(
         template_id=template_id,
-        domain_input=domain_input,
+        domain_input=state["domain_input"],
         max_candidates=max_candidates,
         enable_tier2=(state.get("technology_options") or {}).get("remote_sensing", True),
-        enable_experimental=state.get("enable_experimental", False),
+        enable_experimental=(
+            state.get("enable_experimental", False)
+            if enable_experimental is None
+            else enable_experimental
+        ),
         no_paid_api=(state.get("cloud_constraints") or {}).get("no_paid_api", True),
         no_manual_download=(state.get("cloud_constraints") or {}).get("no_manual_download", True),
-        preferred_technology=[
-            key for key, enabled in (state.get("technology_options") or {}).items() if bool(enabled)
-        ],
-        automation_risk_tolerance=state.get("automation_risk_tolerance", "low_medium"),
+        preferred_technology=preferred_technology
+        if preferred_technology is not None
+        else _enabled_technologies(state),
+        automation_risk_tolerance=automation_risk_tolerance
+        or state.get("automation_risk_tolerance", "low_medium"),
     )
-    candidates = compose_candidates(req)
 
-    if not candidates:
-        logger.error(
-            "compose_candidates() returned no candidates for template %s", template_id
-        )
-        return {
-            "execution_status": "failed",
-            "degraded_nodes": ["ideation:no_candidates_from_factory"],
-        }
 
-    # Load the template once so we know whether to layer training-feasibility
-    # checks on top of the standard precheck. `kind == "training_research"`
-    # is the routing flag set on llm_training_research.yaml; spatial templates
-    # leave it unset, so this is a no-op for them.
+def _load_template_dict(template_id: str) -> dict:
     try:
-        template_dict = load_research_template(template_id)
+        return load_research_template(template_id)
     except FileNotFoundError:
-        template_dict = {}
+        return {}
+
+
+def _process_composed_candidates(
+    candidates: list,
+    *,
+    req: ComposeRequest,
+    template_dict: dict,
+    state: dict,
+) -> tuple[list[dict], list[dict]]:
+    """Run the shared precheck/repair/scoring pipeline for composed candidates."""
     is_training_research = template_dict.get("kind") == "training_research"
     runtime_tier = state.get("runtime_tier", "colab_t4")
 
-    # Steps 4–9: per-candidate processing (no rank assigned yet — ranking happens after).
     cards: list[dict] = []
     all_repair_histories: list[dict] = []
-    run_id = settings.current_run_scope() or "unknown"
 
     for c in candidates:
         # Step 4: normalize / enrich metadata (unconditional pre-processing).
@@ -642,6 +633,10 @@ def run_candidate_factory_ideation(state: dict) -> dict:
             )
         )
 
+    return cards, all_repair_histories
+
+
+def _load_field_scan_summary(state: dict) -> dict:
     field_scan_summary = {}
     field_scan_path = state.get("field_scan_path") or settings.field_scan_path()
     try:
@@ -649,6 +644,176 @@ def run_candidate_factory_ideation(state: dict) -> dict:
             field_scan_summary = json.load(fh)
     except Exception:
         field_scan_summary = {}
+    return field_scan_summary
+
+
+def _should_probe_speculative_template(state: dict, template_id: str) -> bool:
+    if "speculative_candidates_enabled" in state:
+        return bool(state.get("speculative_candidates_enabled"))
+    # Default: stable built-environment runs get a parallel high-risk idea lane.
+    return template_id == "built_environment_health"
+
+
+def _select_speculative_cards(ranked_cards: list[dict], limit: int) -> list[dict]:
+    experimental_cards = [
+        c for c in ranked_cards
+        if (
+            "experimental" in set(c.get("technology_tags") or [])
+            or "streetview_cv" in set(c.get("technology_tags") or [])
+            or c.get("automation_risk") == "high"
+            or c.get("readiness") == "blocked"
+        )
+    ]
+    return experimental_cards[:limit]
+
+
+def _speculative_unlocks(card: dict) -> list[str]:
+    unlocks: list[str] = []
+    if "experimental" in set(card.get("technology_tags") or []):
+        unlocks.append("Enable explicit experimental-source review.")
+    if card.get("required_secrets"):
+        unlocks.append(
+            "Provide required API secrets: "
+            + ", ".join(str(s) for s in card.get("required_secrets") or [])
+        )
+    if card.get("automation_risk") == "high":
+        unlocks.append("Accept a manual-review execution path for high automation risk.")
+    if not bool(card.get("cloud_safe", True)):
+        unlocks.append("Confirm provider policy and raw-image caching constraints.")
+    return unlocks
+
+
+def _card_to_speculative_entry(card: dict, rank: int) -> dict:
+    entry = _card_to_screening_entry(card)
+    entry["rank"] = rank
+    entry["speculative_status"] = "review_only"
+    entry["selectable"] = False
+    entry["why_speculative"] = (
+        "High-novelty technology candidate kept outside the safe shortlist "
+        "because it requires explicit human review before execution."
+    )
+    entry["unlock_requirements"] = _speculative_unlocks(card)
+    return entry
+
+
+def _prefix_speculative_candidate_ids(cards: list[dict], namespace: str) -> list[dict]:
+    prefixed: list[dict] = []
+    safe_namespace = namespace.replace("_experimental", "").replace("built_environment_health", "streetview")
+    for card in cards:
+        new_card = dict(card)
+        old_id = str(new_card.get("candidate_id", "candidate"))
+        new_id = f"spec_{safe_namespace}_{old_id}"
+        new_card["candidate_id"] = new_id
+        raw = dict(new_card.get("_raw") or {})
+        if raw:
+            raw["candidate_id"] = new_id
+            new_card["_raw"] = raw
+        prefixed.append(new_card)
+    return prefixed
+
+
+def _generate_speculative_cards(
+    state: dict,
+    *,
+    field_scan_summary: dict,
+    limit: int,
+) -> list[dict]:
+    template_id = "built_environment_health_experimental"
+    req = _compose_request(
+        state,
+        template_id=template_id,
+        max_candidates=state.get("speculative_max_candidates", 20),
+        enable_experimental=True,
+        preferred_technology=_enabled_technologies(
+            state, ["streetview_cv", "vision", "deep_learning"]
+        ),
+        automation_risk_tolerance="experimental",
+    )
+    candidates = compose_candidates(req)
+    if not candidates:
+        return []
+    template_dict = _load_template_dict(template_id)
+    cards, _ = _process_composed_candidates(
+        candidates, req=req, template_dict=template_dict, state=state
+    )
+    ranked = rerank_candidates(cards, state["domain_input"], field_scan_summary)
+    selected = _select_speculative_cards(ranked, limit)
+    return _prefix_speculative_candidate_ids(selected, template_id)
+
+
+def _write_speculative_candidates(
+    *,
+    run_id: str,
+    domain_input: str,
+    template_id: str,
+    entries: list[dict],
+) -> str:
+    payload = {
+        "run_id": run_id,
+        "status": "review_only",
+        "domain_input": domain_input,
+        "source_template_id": template_id,
+        "candidate_count": len(entries),
+        "candidates": entries,
+    }
+    path = settings.speculative_candidates_path()
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, indent=2, ensure_ascii=False)
+    logger.info("Wrote speculative_candidates.json — %d candidates", len(entries))
+    return path
+
+
+def run_candidate_factory_ideation(state: dict) -> dict:
+    """Stage 1 of the two-stage candidate flow.
+
+    Pipeline:
+      compose_candidates → normalize/enrich → precheck → repair → export_validate
+      → compute_readiness → score → rank full pool → diverse-select shortlist
+      → format display cards → write outputs
+
+    Stage 1 deliberately does NOT run novelty checks (cards carry
+    novelty_status="pending_literature_check") and does NOT generate
+    development packs.  Both are deferred to Stage 2 nodes that run after
+    the user picks one candidate at the HITL checkpoint.
+
+    candidate_cards.json         — safe/full production pool, ranked
+    topic_screening.json         — executable shortlist + speculative side lane
+    speculative_candidates.json  — review-only high-risk/new-technology ideas
+
+    Returns file-path references for downstream pipeline nodes.
+    """
+    template_id = state["template_id"]
+    domain_input = state["domain_input"]
+    # max_candidates controls the internal generation pool size, NOT the UI display count.
+    max_candidates = state.get("max_candidates", 40)
+    # shortlist_size controls how many candidates appear in topic_screening.json / UI.
+    shortlist_size = state.get("shortlist_size", 5)
+    speculative_size = state.get("speculative_size", 5)
+
+    logger.info(
+        "Candidate factory ideation — template: %s  pool: %d  shortlist: %d",
+        template_id, max_candidates, shortlist_size,
+    )
+
+    req = _compose_request(state, template_id=template_id, max_candidates=max_candidates)
+    candidates = compose_candidates(req)
+
+    if not candidates:
+        logger.error(
+            "compose_candidates() returned no candidates for template %s", template_id
+        )
+        return {
+            "execution_status": "failed",
+            "degraded_nodes": ["ideation:no_candidates_from_factory"],
+        }
+
+    template_dict = _load_template_dict(template_id)
+    cards, all_repair_histories = _process_composed_candidates(
+        candidates, req=req, template_dict=template_dict, state=state
+    )
+
+    field_scan_summary = _load_field_scan_summary(state)
+    run_id = settings.current_run_scope() or state.get("run_id") or "unknown"
 
     # Rerank full pool with domain-fit + research-value signals. This keeps
     # deterministic feasibility checks intact while improving the user-visible
@@ -660,10 +825,23 @@ def run_candidate_factory_ideation(state: dict) -> dict:
     # candidate_cards.json as diagnostics only.  No development pack
     # generation in Stage 1.
     shortlist_cards = select_diverse_shortlist(ranked_cards, shortlist_size)
+    speculative_cards = _select_speculative_cards(ranked_cards, speculative_size)
+    if _should_probe_speculative_template(state, template_id):
+        speculative_cards.extend(
+            _generate_speculative_cards(
+                state,
+                field_scan_summary=field_scan_summary,
+                limit=speculative_size,
+            )
+        )
+    speculative_cards = speculative_cards[:speculative_size]
 
     # Step 12a: write candidate_cards.json — full ranked pool (debug/QA use).
     cards_path = settings.output_dir() / "candidate_cards.json"
-    cards_path.write_text(json.dumps(ranked_cards, indent=2, ensure_ascii=False))
+    cards_path.write_text(
+        json.dumps(ranked_cards, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
     logger.info("Wrote %d candidate cards → %s", len(ranked_cards), cards_path)
 
     write_feasibility_report(run_id, ranked_cards)
@@ -674,6 +852,16 @@ def run_candidate_factory_ideation(state: dict) -> dict:
     # Convert each shortlist card to the screening entry format after ranking so
     # rank numbers are final.  Raw gate flags are kept in debug block only.
     shortlist_entries = [_card_to_screening_entry(c) for c in shortlist_cards]
+    speculative_entries = [
+        _card_to_speculative_entry(c, i)
+        for i, c in enumerate(speculative_cards, start=1)
+    ]
+    speculative_path = _write_speculative_candidates(
+        run_id=run_id,
+        domain_input=domain_input,
+        template_id="built_environment_health_experimental",
+        entries=speculative_entries,
+    )
     screening = {
         "run_id": run_id,
         "status": "pending_review",
@@ -681,14 +869,16 @@ def run_candidate_factory_ideation(state: dict) -> dict:
         "template_id": template_id,
         "shortlist_size": len(shortlist_entries),
         "pool_size": len(ranked_cards),
+        "speculative_size": len(speculative_entries),
         "candidates": shortlist_entries,
+        "speculative_candidates": speculative_entries,
     }
     screening_path = settings.topic_screening_path()
     with open(screening_path, "w", encoding="utf-8") as fh:
         json.dump(screening, fh, indent=2, ensure_ascii=False)
     logger.info(
-        "Wrote topic_screening.json — shortlist %d of %d candidates",
-        len(shortlist_entries), len(ranked_cards),
+        "Wrote topic_screening.json — shortlist %d of %d candidates; speculative %d",
+        len(shortlist_entries), len(ranked_cards), len(speculative_entries),
     )
 
     repair_history_path = settings.repair_history_path()
@@ -696,13 +886,14 @@ def run_candidate_factory_ideation(state: dict) -> dict:
         json.dump(all_repair_histories, fh, indent=2, ensure_ascii=False)
     logger.info("Wrote repair_history.json — %d entries", len(all_repair_histories))
 
-    first = shortlist_entries[0]
+    first = shortlist_entries[0] if shortlist_entries else None
     minimal_plan = {
         "run_id": run_id,
-        "project_title": first["title"],
-        "research_question": first["research_question"],
+        "project_title": first["title"] if first else f"{domain_input}: no executable candidate",
+        "research_question": first["research_question"] if first else "",
         "template_id": template_id,
         "candidates": shortlist_entries,
+        "speculative_candidates": speculative_entries,
     }
     plan_path = settings.research_plan_path()
     with open(plan_path, "w", encoding="utf-8") as fh:
@@ -712,6 +903,7 @@ def run_candidate_factory_ideation(state: dict) -> dict:
         "candidate_topics_path": str(screening_path),
         "current_plan_path": str(plan_path),
         "candidate_cards_path": str(cards_path),
+        "speculative_candidates_path": speculative_path,
         "repair_history_path": str(repair_history_path),
         "feasibility_report_path": str(settings.output_dir() / "feasibility_report.json"),
         "development_pack_index_path": str(settings.output_dir() / "development_pack_index.json"),

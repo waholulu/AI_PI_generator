@@ -548,6 +548,10 @@ def _normalize_candidate_card(candidate: dict[str, Any], fallback_idx: int) -> d
         },
         "gate_summary": gate_summary,
         "development_pack_status": candidate.get("development_pack_status", "not_generated"),
+        "speculative_status": candidate.get("speculative_status"),
+        "selectable": candidate.get("selectable", shortlist_status != "blocked"),
+        "why_speculative": candidate.get("why_speculative"),
+        "unlock_requirements": candidate.get("unlock_requirements", []),
         "_raw": candidate.get("_raw") or candidate,
     }
 
@@ -667,6 +671,37 @@ def _load_candidate_cards(run_id: str) -> list[dict]:
                 pass
         # Fall back to shortlist when full pool file is absent (e.g. legacy runs).
         return _load_shortlist_cards(run_id)
+    finally:
+        settings.deactivate_run_scope(token)
+
+
+def _load_speculative_cards(run_id: str) -> list[dict]:
+    """Load review-only speculative candidates from speculative_candidates.json."""
+    token = settings.activate_run_scope(run_id)
+    try:
+        output_path = Path(settings.speculative_candidates_path())
+        if output_path.exists():
+            try:
+                payload = json.loads(output_path.read_text(encoding="utf-8"))
+                candidates = payload.get("candidates", [])
+                return [
+                    _normalize_candidate_card(c, i)
+                    for i, c in enumerate(candidates, start=1)
+                ]
+            except json.JSONDecodeError:
+                pass
+        screening = Path(settings.topic_screening_path())
+        if screening.exists():
+            try:
+                payload = json.loads(screening.read_text(encoding="utf-8"))
+                candidates = payload.get("speculative_candidates", [])
+                return [
+                    _normalize_candidate_card(c, i)
+                    for i, c in enumerate(candidates, start=1)
+                ]
+            except json.JSONDecodeError:
+                pass
+        return []
     finally:
         settings.deactivate_run_scope(token)
 
@@ -812,6 +847,7 @@ async def list_candidates(run_id: str, view: str = "shortlist"):
     Query params:
       view=shortlist  (default) — non-blocked shortlist from topic_screening.json
       view=all                  — full ranked pool from candidate_cards.json (includes blocked)
+      view=speculative          — high-novelty review-only ideas from speculative_candidates.json
 
     Contract: shortlist view NEVER contains blocked candidates.  Blocked candidates
     are diagnostic artifacts and are only surfaced in view=all.
@@ -821,6 +857,8 @@ async def list_candidates(run_id: str, view: str = "shortlist"):
         raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found.")
     if view == "all":
         cards = _load_candidate_cards(run_id)
+    elif view == "speculative":
+        cards = _load_speculative_cards(run_id)
     else:
         cards = _load_shortlist_cards(run_id)
         if not cards:
@@ -841,7 +879,7 @@ async def get_candidate(run_id: str, candidate_id: str):
     run = run_manager.get_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found.")
-    candidates = _load_candidate_cards(run_id)
+    candidates = _load_candidate_cards(run_id) + _load_speculative_cards(run_id)
     for i, candidate in enumerate(candidates, start=1):
         if candidate.get("candidate_id") == candidate_id:
             return {"run_id": run_id, "candidate": _build_candidate_detail(candidate, i)}

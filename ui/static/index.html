@@ -1481,12 +1481,14 @@ async function renderHitlPicker(run) {
   // idea_validator node has been removed from the default graph).
   // Fall back to idea_validation.json when present (legacy/V0 runs).
   let ideas = [];
+  let speculativeIdeas = [];
   try {
     const screeningUrl = `/runs/${run.run_id}/outputs/${encodePath('output/topic_screening.json')}`;
     const sres = await fetch(screeningUrl);
     if (sres.ok) {
       const sdata = await sres.json();
       const screeningCandidates = Array.isArray(sdata.candidates) ? sdata.candidates : [];
+      const speculativeCandidates = Array.isArray(sdata.speculative_candidates) ? sdata.speculative_candidates : [];
       ideas = screeningCandidates.map(c => ({
         title: c.title || '',
         brief_rationale: c.brief_rationale || (c.display && c.display.rationale) || '',
@@ -1511,6 +1513,22 @@ async function renderHitlPicker(run) {
         _display: c.display || {},
         _unit_of_analysis: c.unit_of_analysis || '',
       }));
+      speculativeIdeas = speculativeCandidates.map(c => ({
+        title: c.polished_title || c.title || '',
+        brief_rationale: c.brief_rationale || (c.display && c.display.rationale) || '',
+        rank: c.rank || 0,
+        _executability_status: 'blocked',
+        _exposure_source: c.exposure_source || '',
+        _outcome_source: c.outcome_source || '',
+        _exposure_specific: c.exposure_variable || c.exposure_family || '',
+        _outcome_specific: c.outcome_variable || c.outcome_family || '',
+        _method: c.method || '',
+        _candidate_id: c.candidate_id || c.topic_id || '',
+        _display: c.display || {},
+        _unlock_requirements: Array.isArray(c.unlock_requirements) ? c.unlock_requirements : [],
+        _technology_tags: Array.isArray(c.technology_tags) ? c.technology_tags : [],
+        _why_speculative: c.why_speculative || '',
+      }));
       // Approval picker shows Ready + Needs Review only.  Blocked
       // candidates are diagnostic-only and hidden here.
       ideas = ideas.filter(i => i._executability_status !== 'blocked');
@@ -1534,7 +1552,7 @@ async function renderHitlPicker(run) {
     }
   }
 
-  if (!ideas.length) {
+  if (!ideas.length && !speculativeIdeas.length) {
     container.innerHTML = '<div style="color:#f87171">未找到候选选题，请检查 output/idea_validation.json。</div>';
     return;
   }
@@ -1615,6 +1633,34 @@ async function renderHitlPicker(run) {
     `;
   }).join('');
 
+  const speculativeHtml = speculativeIdeas.length ? `
+    <div style="margin-top:14px;margin-bottom:10px;padding:12px;border:1px dashed #475569;border-radius:8px;background:#020617">
+      <div style="font-weight:600;color:#cbd5e1;margin-bottom:6px">Speculative ideas · 高新技术候选（仅供人工评估）</div>
+      <div style="font-size:.8rem;color:#94a3b8;margin-bottom:8px">
+        这些想法保留了街景/视觉等新技术方向，但因 API 密钥、图像政策或自动化风险暂不进入可执行 shortlist。
+      </div>
+      ${speculativeIdeas.map((idea, i) => {
+        const display = idea._display || {};
+        const title = display.display_title || idea.title || '?';
+        const rq = display.research_question || '';
+        const tags = (idea._technology_tags || []).map(t => `<span class="badge">${escHtml(t)}</span>`).join(' ');
+        const unlocks = (idea._unlock_requirements || []).map(u => `<li>${escHtml(u)}</li>`).join('');
+        return `
+          <div style="padding:10px;margin-top:8px;border:1px solid #334155;border-radius:8px;background:#0f172a">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <span class="exec-blocked">Blocked</span>
+              <span style="font-weight:600;color:#e2e8f0">Spec ${i + 1}: ${escHtml(title)}</span>
+              ${tags}
+            </div>
+            ${rq ? `<div style="margin-top:4px;font-size:.82rem;color:#94a3b8">${escHtml(rq)}</div>` : ''}
+            ${idea._why_speculative ? `<div style="margin-top:4px;font-size:.8rem;color:#cbd5e1">${escHtml(idea._why_speculative)}</div>` : ''}
+            ${unlocks ? `<ul style="margin:6px 0 0 18px;color:#94a3b8;font-size:.78rem">${unlocks}</ul>` : ''}
+          </div>
+        `;
+      }).join('')}
+    </div>
+  ` : '';
+
   const canRegen = round < MAX_REGEN_ROUNDS;
   const regenHtml = `
     <label class="hitl-card" style="display:block;padding:12px;margin-bottom:10px;border:1px dashed #334155;border-radius:8px;cursor:${canRegen ? 'pointer' : 'not-allowed'};opacity:${canRegen ? '1' : '.55'}">
@@ -1632,6 +1678,7 @@ async function renderHitlPicker(run) {
 
   container.innerHTML = `
     ${cardsHtml}
+    ${speculativeHtml}
     ${regenHtml}
     <div class="hitl-actions" style="display:flex;gap:10px;margin-top:10px">
       <button class="btn btn-success" onclick="confirmHitl('${run.run_id}')">确认</button>

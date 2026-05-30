@@ -48,6 +48,9 @@ _NOVELTY_BY_EXPOSURE: dict[str, float] = {
     "street_view_greenery":     0.82,
     "street_view_safety":       0.80,
     "visual_environment":       0.80,
+    "streetview_built_form":    0.82,
+    "greenery_visibility":      0.82,
+    "sidewalk_presence":        0.80,
 }
 
 _NOVELTY_BY_OUTCOME: dict[str, float] = {
@@ -91,7 +94,10 @@ def _compute_novelty(exposure_family: str, outcome_family: str, tags: set[str]) 
         base = (exp_score * out_score) ** 0.5
 
     # Small bonus for combining multiple novel technology tags
-    novel_tags = tags & {"osmnx", "remote_sensing", "building_footprint", "gtfs", "viirs"}
+    novel_tags = tags & {
+        "osmnx", "remote_sensing", "building_footprint", "gtfs", "viirs",
+        "vision", "streetview_cv",
+    }
     if len(novel_tags) >= 2:
         base = min(base + 0.05, 0.85)
 

@@ -171,6 +171,10 @@ def topic_screening_path() -> str:
     return _path_str(output_dir() / "topic_screening.json")
 
 
+def speculative_candidates_path() -> str:
+    return _path_str(output_dir() / "speculative_candidates.json")
+
+
 def ideas_graveyard_path(domain: str | None = None) -> str:
     """Return the graveyard file path, namespaced by domain to prevent cross-run contamination.
 

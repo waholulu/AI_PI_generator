@@ -20,7 +20,7 @@ _GEOAI_TERMS = {
 
 _GEOAI_TECH = {
     "remote_sensing", "osmnx", "building_footprint", "gtfs", "viirs",
-    "geospatial", "vision",
+    "geospatial", "vision", "streetview_cv",
 }
 
 _STRONG_METHOD_TERMS = {
@@ -51,6 +51,9 @@ _EXPOSURE_MEASUREMENT_GAIN = {
     "walkability": 0.72,
     "park_access": 0.72,
     "green_space": 0.66,
+    "streetview_built_form": 0.94,
+    "greenery_visibility": 0.90,
+    "sidewalk_presence": 0.88,
 }
 
 _MECHANISM_PAIRS = {
@@ -66,6 +69,9 @@ _MECHANISM_PAIRS = {
     ("tree_canopy", "asthma"): 0.60,
     ("green_space", "asthma"): 0.54,
     ("street_network", "asthma"): 0.48,
+    ("streetview_built_form", "physical_inactivity"): 0.76,
+    ("streetview_built_form", "obesity"): 0.70,
+    ("streetview_built_form", "poor_mental_health"): 0.74,
 }
 
 _COMMON_EXPOSURES = {"green_space", "walkability"}
@@ -79,6 +85,9 @@ _DISPLAY_EXPOSURE_LABELS = {
     "destination_accessibility": "Destination Accessibility",
     "building_density": "Building Density",
     "green_space": "Green Space",
+    "streetview_built_form": "Street-Level Built Form",
+    "greenery_visibility": "Street-View Greenery",
+    "sidewalk_presence": "Sidewalk Presence",
 }
 
 
@@ -156,6 +165,8 @@ def _novelty_potential(card: dict, domain_tokens: set[str]) -> float:
     tags = set(card.get("technology_tags") or [])
     if tags & {"remote_sensing", "viirs", "building_footprint"}:
         base += 0.12
+    if tags & {"vision", "streetview_cv"}:
+        base += 0.16
     if tags & {"osmnx", "gtfs"}:
         base += 0.07
     if "geoai" in domain_tokens and tags & _GEOAI_TECH:
@@ -169,6 +180,8 @@ def _measurement_gain(card: dict) -> float:
     base = _EXPOSURE_MEASUREMENT_GAIN.get(exp, 0.48)
     if tags & {"remote_sensing", "viirs", "building_footprint"}:
         base += 0.04
+    if tags & {"vision", "streetview_cv"}:
+        base += 0.08
     if tags & {"osmnx", "gtfs", "mobility"}:
         base += 0.03
     if not tags:
@@ -224,6 +237,8 @@ def _tech_phrase(card: dict) -> str:
         return "Network-Derived"
     if "gtfs" in source:
         return "Schedule-Derived"
+    if "mapillary" in source or "street_view" in source or "streetview" in source:
+        return "Computer-Vision-Measured"
     tags = list(card.get("technology_tags") or [])
     for tag in tags:
         if tag in _TECH_TITLE_PREFIX:
