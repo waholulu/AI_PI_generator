@@ -41,8 +41,10 @@ def test_data_sources_yaml_path_ends_correctly():
     assert settings.data_sources_yaml_path().endswith("data_sources.yaml")
 
 
-def test_skill_registry_path_ends_correctly():
-    assert settings.skill_registry_path().endswith("skill_registry.yaml")
+def test_research_capability_registry_path_ends_correctly():
+    assert settings.research_capability_registry_path().endswith(
+        "research_capability_registry.yaml"
+    )
 
 
 def test_spatial_units_path_ends_correctly():
