@@ -9,13 +9,13 @@ description = "Auto-PI Research Scaffold"
 authors = [{name = "AutoPI", email = "auto@pi.org"}]
 requires-python = ">=3.11,<3.13"
 dependencies = [
-    "arxiv>=2.4.0",
-    "pandas>=2.3.3",
-    "pydantic>=2.8",
-    "pyalex>=0.21",
+    "arxiv>=2.4.0,<3",
+    "pandas>=2.3.3,<3",
+    "pydantic>=2.8,<3",
+    "pyalex>=0.21,<0.22",
     "pyyaml>=6.0",
-    "requests>=2.32.5",
-    "tenacity>=9.1.4",
+    "requests>=2.32.5,<3",
+    "tenacity>=9.1.4,<10",
 ]
 
 [project.scripts]

@@ -46,21 +46,21 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "arxiv", specifier = ">=2.4.0" },
+    { name = "arxiv", specifier = ">=2.4.0,<3" },
     { name = "geopandas", marker = "extra == 'geospatial'", specifier = ">=1.1.2" },
     { name = "networkx", marker = "extra == 'geospatial'", specifier = ">=3.0" },
     { name = "opencv-python-headless", marker = "extra == 'vision'", specifier = ">=4.9" },
     { name = "osmnx", marker = "extra == 'geospatial'", specifier = ">=2.1.0" },
-    { name = "pandas", specifier = ">=2.3.3" },
+    { name = "pandas", specifier = ">=2.3.3,<3" },
     { name = "pillow", marker = "extra == 'vision'", specifier = ">=10.0" },
-    { name = "pyalex", specifier = ">=0.21" },
-    { name = "pydantic", specifier = ">=2.8" },
+    { name = "pyalex", specifier = ">=0.21,<0.22" },
+    { name = "pydantic", specifier = ">=2.8,<3" },
     { name = "pyogrio", marker = "extra == 'geospatial'", specifier = ">=0.9" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "requests", specifier = ">=2.32.5" },
+    { name = "requests", specifier = ">=2.32.5,<3" },
     { name = "segment-anything", marker = "extra == 'deepvision'" },
     { name = "shapely", marker = "extra == 'geospatial'", specifier = ">=2.0" },
-    { name = "tenacity", specifier = ">=9.1.4" },
+    { name = "tenacity", specifier = ">=9.1.4,<10" },
     { name = "torch", marker = "extra == 'deepvision'" },
     { name = "transformers", marker = "extra == 'vision'", specifier = ">=4.40" },
 ]
