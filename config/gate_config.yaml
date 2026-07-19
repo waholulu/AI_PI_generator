@@ -59,7 +59,7 @@ gates:
     description: >
       Rule engine checks all skills_required (inferred from data_sources +
       identification.primary) are present with status=="available" in
-      skill_registry.yaml.
+      research_capability_registry.yaml.
 
   - id: G7
     name: contribution_clarity

@@ -98,7 +98,7 @@ class RuleEngine:
             self._identification_skill_map = id_map
             return skill_status, id_map
         except Exception as e:
-            logger.warning("skill_registry.yaml unavailable: %s", e)
+            logger.warning("research_capability_registry.yaml unavailable: %s", e)
             self._skill_registry = {}
             self._identification_skill_map = {}
             return {}, {}

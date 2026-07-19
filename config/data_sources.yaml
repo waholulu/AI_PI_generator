@@ -1,6 +1,6 @@
 # Local data source catalog — used by G3 (data_availability) and G6 (automation_feasibility)
 # Each entry must have: name, spatial_units, coverage_year_min, coverage_year_max
-# skills_required: skills from skill_registry.yaml needed to process this source
+# skills_required: capabilities from research_capability_registry.yaml needed to process this source
 
 data_sources:
 

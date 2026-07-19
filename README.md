@@ -1,206 +1,87 @@
-# Auto-PI (AI PI Generator)
+# Auto-PI
 
-Auto-PI is a multi-agent research automation pipeline for early-stage academic research.  
-It orchestrates field scanning, ideation, validation, literature harvesting, drafting, and data collection with a HITL checkpoint.
+Auto-PI is now a Codex-native research workflow for built-environment health studies. It combines a repository-level Codex Skill with a deterministic Python engine:
 
-At its core is the **Candidate Factory** — a deterministic pipeline that turns a research template into a ranked list of concrete, automatable research designs, each with a full development pack ready for Claude Code to implement.
+- Codex handles research judgment: search plans, candidate choice, novelty assessment, literature plan, and the final memo.
+- Python handles deterministic work: OpenAlex/arXiv retrieval, candidate generation, manifest state, artifact writing, development packs, and validation.
 
----
-
-## Two modes
-
-| Mode | What it does | LLM keys required |
-|------|-------------|-------------------|
-| **Mode 1: Candidate Factory** | Template → 20–40 ranked research designs with development packs | None (deterministic) |
-| **Mode 2: Legacy LLM Ideation** | LLM generates ideas → gates → HITL → literature | DEEPSEEK_API_KEY / LLM_API_KEY |
-
-Mode 1 is the recommended starting point. Mode 2 extends the pipeline with full literature harvesting and draft writing.
-
-## Quick start
+## Quick Start
 
 ```bash
-# 1. Install (Python 3.11–3.12 required)
-pip install -e ".[geospatial]"
+pip install -e .
 
-# 2. Run the test suite
-uv run pytest -q -m "not live_openalex and not live_llm"
+python .agents/skills/run-auto-pi-research/scripts/autopi.py init \
+  --domain "Built environment exposure and health outcomes"
 
-# 3. Validate the candidate factory meets thresholds
-uv run python scripts/eval_candidate_factory.py \
-  --template built_environment_health \
-  --check-thresholds
-
-# 4. Start the API server
-uvicorn api.server:app --reload
-
-# 5. Run E2E acceptance test (server must be running)
-python scripts/e2e_acceptance_test.py
-
-# 6. Build Docker image
-docker build -t ai-pi-generator .
+python .agents/skills/run-auto-pi-research/scripts/autopi.py status --run-id <run_id>
 ```
 
-Copy `.env.example` to `.env`. `DEEPSEEK_API_KEY` is only required for Mode 2.
-
----
-
-## Candidate factory: generate research designs
-
-The candidate factory takes a template and produces 20–40 concrete research candidates, each with:
-- Exposure × Outcome × Method specification
-- Feasibility gate check (no LLM needed)
-- Auto-repair for fixable issues
-- Composite score and ranking
-- Development pack for Claude Code (for ready candidates)
-
-### Via the UI
+When the manifest returns `awaiting_input`, submit the requested JSON or Markdown file:
 
 ```bash
-uvicorn api.server:app --reload
-# Open http://localhost:8000
+python .agents/skills/run-auto-pi-research/scripts/autopi.py submit \
+  --run-id <run_id> \
+  --kind search_plan \
+  --file plan.json
+
+python .agents/skills/run-auto-pi-research/scripts/autopi.py advance --run-id <run_id>
 ```
 
-**User flow:**
-
-1. Open the **New Run** form
-2. Enter a domain: `Built environment exposure and health outcomes`
-3. Select template: **Built Environment → Health Outcomes**
-4. Check **OSMnx** and **Remote sensing** under technology options
-5. Leave **Street View** and **Deep Learning** unchecked
-6. Click **Generate Candidates**
-7. In the **Candidate Review** tab, filter by **Claude Code Ready**
-8. Click any ready candidate → **View details**
-9. Click **Copy Task Prompt**
-10. Paste into a new Claude Code session and let it implement the pipeline
-
-### Via the API
+The packaged console entrypoint is equivalent:
 
 ```bash
-# Start a run with max_candidates=40 (new default)
-curl -X POST http://localhost:8000/runs \
-  -H "Content-Type: application/json" \
-  -d '{
-    "template_id": "built_environment_health",
-    "domain_input": "Built environment and health outcomes",
-    "max_candidates": 40,
-    "enable_experimental": false,
-    "cloud_constraints": {"no_paid_api": true}
-  }'
-
-# List candidates (after run completes)
-curl http://localhost:8000/runs/{run_id}/candidates
-
-# Get the Claude Code task prompt for a ready candidate
-curl http://localhost:8000/runs/{run_id}/outputs/development_packs/{candidate_id}/claude_task_prompt.md
+autopi init --domain "Built environment exposure and health outcomes"
 ```
 
-### Via the CLI
+## Commands
 
-```bash
-python main.py --mode level_2 --domain "GeoAI and Urban Planning"
+- `init --domain [--run-id]`
+- `list`
+- `status --run-id`
+- `submit --run-id --kind --file`
+- `advance --run-id`
+- `retry --run-id`
+- `abort --run-id`
+
+Commands emit JSON on stdout and diagnostics on stderr.
+
+## Run Storage
+
+Runs are stored under:
+
+```text
+AUTOPI_DATA_ROOT/runs/<run_id>/
+  manifest.json
+  inputs/
+  output/
+  data/
+  config/
 ```
 
----
+`manifest.json` is the resume contract across Codex threads. Do not edit it manually.
 
-## Architecture
+## Supported Flow
 
-```
-# Candidate Factory (deterministic, no LLM):
-Template → Composer → Precheck → Repair → Ranker → Dev Pack → Claude Code
+This branch intentionally exposes only the stable `built_environment_health` workflow. Other template/config files remain in the repository for future work, but the Skill CLI does not expose template selection.
 
-# Full pipeline (LLM-orchestrated, LangGraph):
-START → [field_scanner] → ideation → idea_validator
-      → [HITL checkpoint]
-      → literature → drafter → data_fetcher → END
-```
+The old FastAPI server, Streamlit UI, LangGraph orchestration, external LLM provider layer, and cloud deployment assets have been removed from the active product path.
 
-Field scanner is skipped in Level 1 mode (`--user-topic path.yaml`).
+## Environment
 
----
-
-## Environment variables
+Python 3.11-3.12 is supported.
 
 | Variable | Purpose |
-|----------|---------|
-| `LLM_PROVIDER` | LLM provider selector (default: `deepseek`) |
-| `DEEPSEEK_API_KEY` | DeepSeek API key (required for full pipeline by default) |
-| `LLM_FAST_MODEL` | Fast model name (default: `deepseek-v4-pro`) |
-| `LLM_PRO_MODEL` | Pro model name (default: `deepseek-v4-pro`) |
-| `OPENALEX_EMAIL` | OpenAlex polite pool email |
-| `AUTOPI_DATA_ROOT` | Output root directory (default: `.`) |
-| `DATABASE_URL` | PostgreSQL URL for cloud checkpointing |
-| `LOG_LEVEL` | Logging level (default: `INFO`) |
-
-See `.env.example` for the full list.
-
----
+| --- | --- |
+| `AUTOPI_DATA_ROOT` | Root for run manifests and artifacts |
+| `OPENALEX_EMAIL` | Optional OpenAlex polite-pool email |
+| `OPENALEX_API_KEY` | Optional OpenAlex API key |
+| `LITERATURE_FINAL_LIMIT` | OpenAlex papers retained during literature harvest |
+| `ARXIV_SEARCH_ENABLED` | Enable arXiv supplement |
+| `ARXIV_FINAL_LIMIT` | arXiv papers retained |
 
 ## Tests
 
-Four test tiers run in CI order:
-
-| Tier | Command | Keys needed | In CI |
-|------|---------|-------------|-------|
-| Unit/mock | `uv run pytest -q -m "not live_openalex and not live_llm"` | none | ✓ |
-| Candidate factory eval | `uv run python scripts/eval_candidate_factory.py --check-thresholds` | none | ✓ |
-| E2E acceptance | `python scripts/e2e_acceptance_test.py` | none (local server) | manual |
-| Live OpenAlex | `uv run pytest tests/test_field_scan_live.py` | OPENALEX_API_KEY | manual |
-
 ```bash
-# All mock tests
-uv run pytest tests/ -q -m "not live_openalex and not live_llm"
-
-# Candidate factory eval with threshold enforcement
-uv run python scripts/eval_candidate_factory.py \
-  --template built_environment_health \
-  --max-candidates 40 \
-  --enable-experimental false \
-  --check-thresholds
-
-# E2E acceptance (requires uvicorn api.server:app --reload in another terminal)
-python scripts/e2e_acceptance_test.py
+pytest -q
+python C:/Users/wahol/.codex/skills/.system/skill-creator/scripts/quick_validate.py .agents/skills/run-auto-pi-research
 ```
-
-**Eval thresholds (v1, enforced in CI):**
-
-| Metric | Threshold |
-|--------|-----------|
-| `candidate_count` | ≥ 20 |
-| `score_completion_rate` | ≥ 95% |
-| `implementation_spec_completion_rate` | ≥ 85% |
-| `development_pack_ready_rate` | ≥ 80% |
-| `low_or_medium_automation_risk_rate` | ≥ 70% |
-| `experimental_candidate_count` | = 0 (when experimental disabled) |
-
-**E2E acceptance thresholds:**
-
-| Check | Threshold |
-|-------|-----------|
-| `candidate_count` | ≥ 20 |
-| `exposure_families` | ≥ 6 |
-| `pass_or_warning_count` | ≥ 20 |
-| `claude_code_ready_count` | ≥ 8 |
-| `experimental_candidate_count` | = 0 (when disabled) |
-
----
-
-## Docker
-
-```bash
-docker build -t ai-pi-generator .
-docker run -p 8000:8000 \
-  --env-file .env \
-  -v $(pwd)/storage:/app/storage \
-  -e AUTOPI_DATA_ROOT=/app/storage \
-  ai-pi-generator
-```
-
----
-
-## Docs
-
-- [`docs/candidate_factory.md`](docs/candidate_factory.md) — full pipeline reference
-- [`docs/claude_code_development_pack.md`](docs/claude_code_development_pack.md) — using dev packs with Claude Code
-- [`docs/experimental_mode.md`](docs/experimental_mode.md) — street view, deep learning, paid APIs
-- [`docs/cloud_deployment.md`](docs/cloud_deployment.md) — Railway deployment and secrets
-- [`CLAUDE.md`](CLAUDE.md) — full codebase reference for Claude Code

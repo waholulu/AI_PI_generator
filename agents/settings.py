@@ -134,8 +134,13 @@ def data_sources_yaml_path() -> str:
     return _path_str(repo_config_dir() / "data_sources.yaml")
 
 
+def research_capability_registry_path() -> str:
+    return _path_str(repo_config_dir() / "research_capability_registry.yaml")
+
+
 def skill_registry_path() -> str:
-    return _path_str(repo_config_dir() / "skill_registry.yaml")
+    """Backward-compatible alias for older deterministic gate code."""
+    return research_capability_registry_path()
 
 
 def spatial_units_path() -> str:

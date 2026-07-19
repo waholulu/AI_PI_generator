@@ -1,0 +1,4 @@
+interface:
+  display_name: "Auto-PI Research"
+  short_description: "Run manifest-backed Auto-PI research workflows"
+  default_prompt: "Use $run-auto-pi-research to start and advance a built-environment health research run."

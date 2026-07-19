@@ -11,7 +11,8 @@ description: >
   intentionally narrow for the first release: SFT, LoRA, QLoRA only.
   RLHF / DPO / pretraining / distillation are out of scope (see roadmap).
 
-  When `GEMINI_API_KEY` is unset, task seeding falls back to a single
+  This template is preserved for future work but is not exposed by the
+  Codex Skill CLI in this branch. Historical task seeding fell back to a single
   generic classification task derived from the raw domain string so the
   pipeline stays deterministic.
 
